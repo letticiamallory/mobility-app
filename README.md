@@ -1,50 +1,70 @@
-# Welcome to your Expo app 👋
+# Mobility App 📱
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Aplicativo mobile desenvolvido em React Native com Expo para ajudar pessoas com deficiência a encontrarem rotas urbanas seguras e acessíveis.
 
-## Get started
+## Sobre o projeto
 
-1. Install dependencies
+O Mobility App é o cliente mobile da Mobility API, um sistema que combina inteligência artificial, Google Street View e análise de acessibilidade para guiar pessoas com deficiência por rotas urbanas. O app foi desenvolvido com foco em acessibilidade desde o primeiro commit, contemplando deficientes visuais, cadeirantes e pessoas com mobilidade reduzida.
 
-   ```bash
-   npm install
-   ```
+A identidade visual do projeto foi construída em torno do cão guia: símbolo universal de independência e acessibilidade, com uma paleta azul (#0057A8) que remete ao símbolo internacional de acesso.
 
-2. Start the app
+## Tech Stack
 
-   ```bash
-   npx expo start
-   ```
+- **React Native**: framework para desenvolvimento mobile multiplataforma
+- **Expo**: plataforma que simplifica o desenvolvimento, build e distribuição do app
+- **TypeScript**: tipagem estática para maior segurança
+- **Expo Router**: roteamento baseado em arquivos, padrão do ecossistema Expo
 
-In the output, you'll find options to open the app in a
+## Funcionalidades implementadas
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+- Tela de login com campos de email e senha
+- Identidade visual com ilustração de deficiente visual e cão guia
+- Paleta de acessibilidade baseada no azul internacional (#0057A8)
+- Estrutura base de navegação com Expo Router
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## Roadmap
 
-## Get a fresh project
+- [ ] Tela de cadastro
+- [ ] Autenticação JWT integrada com a Mobility API
+- [ ] Tela de busca de rotas com origem e destino
+- [ ] Exibição de rotas analisadas com alertas de acessibilidade
+- [ ] Tela de lugares acessíveis
+- [ ] Avaliações colaborativas de locais
+- [ ] Suporte a leitores de tela (TalkBack/VoiceOver)
+- [ ] Modo de alto contraste
+- [ ] Filtro de rotas por tipo de deficiência
+- [ ] Versão iOS
 
-When you're ready, run:
+## Pré-requisitos
+
+- Node.js 18+
+- Expo Go instalado no celular ([Android](https://play.google.com/store/apps/details?id=host.exp.exponent) / [iOS](https://apps.apple.com/app/expo-go/id982107779))
+
+## Instalação e uso
 
 ```bash
-npm run reset-project
+# Clone o repositório
+git clone https://github.com/seu-usuario/mobility-app.git
+cd mobility-app
+
+# Instale as dependências
+npm install
+
+# Inicie o projeto
+npx expo start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Escaneie o QR code com o Expo Go para visualizar o app no celular.
 
-## Learn more
+## Relação com o backend
 
-To learn more about developing your project with Expo, look at the following resources:
+Este app consome a [Mobility API](https://github.com/seu-usuario/mobility-api): uma API REST desenvolvida em NestJS responsável por:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+- Autenticação de usuários com JWT
+- Cálculo e análise de rotas acessíveis via Google Directions API
+- Análise de acessibilidade via Google Street View + Gemini 2.5 Flash
+- CRUD de lugares acessíveis e avaliações colaborativas
 
-## Join the community
+## Licença
 
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+MIT
