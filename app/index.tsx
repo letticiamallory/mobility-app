@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router'; // ← nova linha
 import { useState } from 'react';
 import {
   Image,
@@ -11,6 +12,7 @@ import {
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const router = useRouter(); // ← nova linha
 
   const handleLogin = () => {
     console.log('Login:', { email, password });
@@ -34,7 +36,9 @@ export default function LoginScreen() {
         </Text>
         <Text style={styles.subtitle}>
           Não tem conta?{' '}
-          <Text style={styles.link}>Cadastre-se</Text>
+          <Text style={styles.link} onPress={() => router.push('/register')}> {/* ← atualizado */}
+            Cadastre-se
+          </Text>
         </Text>
 
         <Text style={styles.label}>Email</Text>
@@ -97,7 +101,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
     marginBottom: 6,
-    lineHeight: 34,
+    lineHeight: 28,
   },
   titleHighlight: {
     fontSize: 40,
