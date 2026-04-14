@@ -1,29 +1,19 @@
+import { Picker } from '@react-native-picker/picker';
 import { useState } from 'react';
 import {
-    Image,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
 const STEPS = [
   { id: 1, question: "Como gostaria de ser chamado?", field: 'name', placeholder: 'Seu nome', keyboard: 'default', secure: false },
   { id: 2, question: "Escolha o seu melhor e-mail", field: 'email', placeholder: 'seu@email.com', keyboard: 'email-address', secure: false },
-  { id: 3, question: 'Crie uma senha', field: 'password', placeholder: 'Mínimo 6 caracteres, uma maiúscula e um número', keyboard: 'default', secure: true },
-];
-
-const DISABILITY_OPTIONS = [
-  { label: 'Deficiente visual', value: 'visual' },
-  { label: 'Cadeirante', value: 'wheelchair' },
-  { label: 'Mobilidade reduzida', value: 'reduced_mobility' },
-];
-
-const ACCOMPANIED_OPTIONS = [
-  { label: 'Sozinho', value: 'alone' },
-  { label: 'Acompanhado', value: 'accompanied' },
-  { label: 'Ambos', value: 'both' },
+  { id: 3, question: 'Crie uma senha', field: 'password', placeholder: 'Digite sua senha', keyboard: 'default', secure: true },
 ];
 
 export default function RegisterScreen() {
@@ -42,6 +32,11 @@ export default function RegisterScreen() {
   const handleBack = () => setStep((prev) => prev - 1);
   const handleSubmit = () => console.log('Register:', form);
 
+  const hasMinLength = form.password.length >= 6;
+  const hasUpperCase = /[A-Z]/.test(form.password);
+  const hasNumber = /[0-9]/.test(form.password);
+  const isPasswordValid = hasMinLength && hasUpperCase && hasNumber;
+
   const renderProgressBar = () => (
     <View style={styles.progressContainer}>
       {Array.from({ length: totalSteps }).map((_, i) => (
@@ -53,15 +48,50 @@ export default function RegisterScreen() {
     </View>
   );
 
+  const renderPasswordRequirements = () => (
+    <View style={styles.requirementsContainer}>
+      <View style={styles.requirementRow}>
+        <Text style={hasMinLength ? styles.checkIcon : styles.crossIcon}>
+          {hasMinLength ? '✓' : '✗'}
+        </Text>
+        <Text style={[styles.requirementText, hasMinLength && styles.requirementMet]}>
+          Mínimo 6 caracteres
+        </Text>
+      </View>
+      <View style={styles.requirementRow}>
+        <Text style={hasUpperCase ? styles.checkIcon : styles.crossIcon}>
+          {hasUpperCase ? '✓' : '✗'}
+        </Text>
+        <Text style={[styles.requirementText, hasUpperCase && styles.requirementMet]}>
+          Pelo menos uma letra maiúscula
+        </Text>
+      </View>
+      <View style={styles.requirementRow}>
+        <Text style={hasNumber ? styles.checkIcon : styles.crossIcon}>
+          {hasNumber ? '✓' : '✗'}
+        </Text>
+        <Text style={[styles.requirementText, hasNumber && styles.requirementMet]}>
+          Pelo menos um número
+        </Text>
+      </View>
+    </View>
+  );
+
   const renderTextStep = (index: number) => {
     const current = STEPS[index];
     return (
       <View style={styles.stepContainer}>
-        {index === 0 && (
+        {(index === 0 || index === 1 || index === 2) && (
           <View style={styles.imageContainer}>
             <Image
-              source={require('../assets/images/register-name.png')}
-              style={{ width: 300, height: 300 }}
+              source={
+                index === 0
+                  ? require('../assets/images/register-name.png')
+                  : index === 1
+                  ? require('../assets/images/register-email.png')
+                  : require('../assets/images/register-password.png')
+              }
+              style={{ width: '100%', height: 200 }}
               resizeMode="contain"
             />
           </View>
@@ -80,7 +110,11 @@ export default function RegisterScreen() {
           }
           autoFocus
         />
-        <TouchableOpacity style={styles.button} onPress={handleNext}>
+        {index === 2 && renderPasswordRequirements()}
+        <TouchableOpacity
+          style={[styles.button, index === 2 && !isPasswordValid && styles.buttonDisabled]}
+          onPress={index === 2 && !isPasswordValid ? undefined : handleNext}
+        >
           <Text style={styles.buttonText}>Continuar</Text>
         </TouchableOpacity>
       </View>
@@ -88,77 +122,75 @@ export default function RegisterScreen() {
   };
 
   const renderDisabilityStep = () => (
-    <View style={styles.stepContainer}>
+    <ScrollView showsVerticalScrollIndicator={false}>
+      <View style={styles.imageContainerSmall}>
+        <Image
+          source={require('../assets/images/register-disability.png')}
+          style={{ width: '100%', height: 230 }}
+          resizeMode="contain"
+        />
+      </View>
       <Text style={styles.question}>Como você se locomove?</Text>
-      <View style={styles.optionsContainer}>
-        {DISABILITY_OPTIONS.map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={[
-              styles.optionButton,
-              form.disability_type === option.value && styles.optionButtonActive,
-            ]}
-            onPress={() => setForm((prev) => ({ ...prev, disability_type: option.value }))}
-          >
-            <Text
-              style={[
-                styles.optionText,
-                form.disability_type === option.value && styles.optionTextActive,
-              ]}
-            >
-              {option.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={styles.pickerContainer}>
+        <Picker
+          selectedValue={form.disability_type}
+          onValueChange={(value) => setForm((prev) => ({ ...prev, disability_type: value }))}
+          style={styles.picker}
+        >
+          <Picker.Item label="Selecione..." value="" />
+          <Picker.Item label="Deficiente visual" value="visual" />
+          <Picker.Item label="Cadeirante" value="wheelchair" />
+          <Picker.Item label="Mobilidade reduzida" value="reduced_mobility" />
+        </Picker>
       </View>
       {form.disability_type !== '' && (
         <TouchableOpacity style={styles.button} onPress={handleNext}>
           <Text style={styles.buttonText}>Continuar</Text>
         </TouchableOpacity>
       )}
-    </View>
+    </ScrollView>
   );
 
   const renderAccompaniedStep = () => (
-    <View style={styles.stepContainer}>
+    <ScrollView showsVerticalScrollIndicator={false}>
+      <View style={styles.imageContainerSmall}>
+        <Image
+          source={require('../assets/images/register-accompanied.png')}
+          style={{ width: '100%', height: 230 }}
+          resizeMode="contain"
+        />
+      </View>
       <Text style={styles.question}>Você costuma sair sozinho?</Text>
-      <View style={styles.optionsContainer}>
-        {ACCOMPANIED_OPTIONS.map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={[
-              styles.optionButton,
-              form.accompanied === option.value && styles.optionButtonActive,
-            ]}
-            onPress={() => setForm((prev) => ({ ...prev, accompanied: option.value }))}
-          >
-            <Text
-              style={[
-                styles.optionText,
-                form.accompanied === option.value && styles.optionTextActive,
-              ]}
-            >
-              {option.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={styles.pickerContainer}>
+        <Picker
+          selectedValue={form.accompanied}
+          onValueChange={(value) => setForm((prev) => ({ ...prev, accompanied: value }))}
+          style={styles.picker}
+        >
+          <Picker.Item label="Selecione..." value="" />
+          <Picker.Item label="Sozinho" value="alone" />
+          <Picker.Item label="Acompanhado" value="accompanied" />
+          <Picker.Item label="Ambos" value="both" />
+        </Picker>
       </View>
       {form.accompanied !== '' && (
         <TouchableOpacity style={styles.button} onPress={handleSubmit}>
           <Text style={styles.buttonText}>Criar conta</Text>
         </TouchableOpacity>
       )}
-    </View>
+    </ScrollView>
   );
 
   return (
     <View style={styles.container}>
       {renderProgressBar()}
 
-      {step > 0 && (
+      {step > 0 ? (
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
           <Text style={styles.backButtonText}>← Voltar</Text>
         </TouchableOpacity>
+      ) : (
+        <View style={styles.backButton} />
       )}
 
       {step < STEPS.length
@@ -198,6 +230,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 48,
   },
+  imageContainerSmall: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
   question: {
     fontSize: 28,
     fontWeight: '700',
@@ -214,7 +250,33 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#1a1a2e',
     backgroundColor: '#F4F8FF',
+    marginBottom: 12,
+  },
+  requirementsContainer: {
+    gap: 6,
     marginBottom: 24,
+  },
+  requirementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  checkIcon: {
+    fontSize: 14,
+    color: '#22c55e',
+    fontWeight: '700',
+  },
+  crossIcon: {
+    fontSize: 14,
+    color: '#ef4444',
+    fontWeight: '700',
+  },
+  requirementText: {
+    fontSize: 13,
+    color: '#ef4444',
+  },
+  requirementMet: {
+    color: '#22c55e',
   },
   button: {
     backgroundColor: '#0057A8',
@@ -222,6 +284,10 @@ const styles = StyleSheet.create({
     height: 52,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 24,
+  },
+  buttonDisabled: {
+    backgroundColor: '#D0E2F5',
   },
   buttonText: {
     color: '#ffffff',
@@ -230,15 +296,24 @@ const styles = StyleSheet.create({
   },
   backButton: {
     marginBottom: 24,
+    height: 24,
   },
   backButtonText: {
     fontSize: 16,
     color: '#0057A8',
     fontWeight: '500',
   },
-  optionsContainer: {
-    gap: 12,
+  pickerContainer: {
+    borderWidth: 1.5,
+    borderColor: '#D0E2F5',
+    borderRadius: 12,
+    backgroundColor: '#F4F8FF',
     marginBottom: 32,
+    overflow: 'hidden',
+  },
+  picker: {
+    height: 52,
+    color: '#1a1a2e',
   },
   optionButton: {
     height: 56,
