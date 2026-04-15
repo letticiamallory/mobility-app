@@ -12,7 +12,7 @@ import {
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const router = useRouter(); // ← nova linha
+  const router = useRouter(); 
 
   const handleLogin = () => {
     console.log('Login:', { email, password });

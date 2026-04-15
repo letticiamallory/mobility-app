@@ -1,4 +1,3 @@
-import { Picker } from '@react-native-picker/picker';
 import { useState } from 'react';
 import {
   Image,
@@ -91,7 +90,7 @@ export default function RegisterScreen() {
                   ? require('../assets/images/register-email.png')
                   : require('../assets/images/register-password.png')
               }
-              style={{ width: '100%', height: 200 }}
+              style={{ width: '100%', height: index === 2 ? 220 : 280 }}
               resizeMode="contain"
             />
           </View>
@@ -125,29 +124,32 @@ export default function RegisterScreen() {
     <ScrollView showsVerticalScrollIndicator={false}>
       <View style={styles.imageContainerSmall}>
         <Image
-          source={require('../assets/images/register-disability.png')}
-          style={{ width: '100%', height: 230 }}
+          source={require('../assets/images/register-disability.jpeg')}
+          style={{ width: '100%', height: 235 }}
           resizeMode="contain"
         />
       </View>
       <Text style={styles.question}>Como você se locomove?</Text>
-      <View style={styles.pickerContainer}>
-        <Picker
-          selectedValue={form.disability_type}
-          onValueChange={(value) => setForm((prev) => ({ ...prev, disability_type: value }))}
-          style={styles.picker}
-        >
-          <Picker.Item label="Selecione..." value="" />
-          <Picker.Item label="Deficiente visual" value="visual" />
-          <Picker.Item label="Cadeirante" value="wheelchair" />
-          <Picker.Item label="Mobilidade reduzida" value="reduced_mobility" />
-        </Picker>
+      <View style={styles.optionsContainer}>
+        {[
+          { label: 'Deficiente visual', value: 'visual' },
+          { label: 'Cadeirante', value: 'wheelchair' },
+          { label: 'Mobilidade reduzida', value: 'reduced_mobility' },
+        ].map((option) => (
+          <TouchableOpacity
+            key={option.value}
+            style={[styles.optionButton, form.disability_type === option.value && styles.optionButtonActive]}
+            onPress={() => {
+              setForm((prev) => ({ ...prev, disability_type: option.value }));
+              handleNext();
+            }}
+          >
+            <Text style={[styles.optionText, form.disability_type === option.value && styles.optionTextActive]}>
+              {option.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
-      {form.disability_type !== '' && (
-        <TouchableOpacity style={styles.button} onPress={handleNext}>
-          <Text style={styles.buttonText}>Continuar</Text>
-        </TouchableOpacity>
-      )}
     </ScrollView>
   );
 
@@ -160,24 +162,27 @@ export default function RegisterScreen() {
           resizeMode="contain"
         />
       </View>
-      <Text style={styles.question}>Você costuma sair sozinho?</Text>
-      <View style={styles.pickerContainer}>
-        <Picker
-          selectedValue={form.accompanied}
-          onValueChange={(value) => setForm((prev) => ({ ...prev, accompanied: value }))}
-          style={styles.picker}
-        >
-          <Picker.Item label="Selecione..." value="" />
-          <Picker.Item label="Sozinho" value="alone" />
-          <Picker.Item label="Acompanhado" value="accompanied" />
-          <Picker.Item label="Ambos" value="both" />
-        </Picker>
+      <Text style={[styles.question, { fontWeight: '500' }]}>Você costuma sair sozinho?</Text>
+      <View style={styles.optionsContainer}>
+        {[
+          { label: 'Sozinho', value: 'alone' },
+          { label: 'Acompanhado', value: 'accompanied' },
+          { label: 'Ambos', value: 'both' },
+        ].map((option) => (
+          <TouchableOpacity
+            key={option.value}
+            style={[styles.optionButton, form.accompanied === option.value && styles.optionButtonActive]}
+            onPress={() => {
+              setForm((prev) => ({ ...prev, accompanied: option.value }));
+              handleSubmit();
+            }}
+          >
+            <Text style={[styles.optionText, form.accompanied === option.value && styles.optionTextActive]}>
+              {option.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
-      {form.accompanied !== '' && (
-        <TouchableOpacity style={styles.button} onPress={handleSubmit}>
-          <Text style={styles.buttonText}>Criar conta</Text>
-        </TouchableOpacity>
-      )}
     </ScrollView>
   );
 
@@ -236,7 +241,7 @@ const styles = StyleSheet.create({
   },
   question: {
     fontSize: 28,
-    fontWeight: '700',
+    fontWeight: '600',
     color: '#0057A8',
     marginBottom: 32,
     lineHeight: 36,
@@ -303,17 +308,9 @@ const styles = StyleSheet.create({
     color: '#0057A8',
     fontWeight: '500',
   },
-  pickerContainer: {
-    borderWidth: 1.5,
-    borderColor: '#D0E2F5',
-    borderRadius: 12,
-    backgroundColor: '#F4F8FF',
+  optionsContainer: {
+    gap: 12,
     marginBottom: 32,
-    overflow: 'hidden',
-  },
-  picker: {
-    height: 52,
-    color: '#1a1a2e',
   },
   optionButton: {
     height: 56,
