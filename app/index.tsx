@@ -1,6 +1,7 @@
-import { useRouter } from 'expo-router'; // ← nova linha
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
+  Alert,
   Image,
   StyleSheet,
   Text,
@@ -8,14 +9,31 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { login } from '../services/auth.service'; // ← nova linha
+import { saveToken } from '../services/token.service'; // ← nova linha
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const router = useRouter(); 
+  const [loading, setLoading] = useState(false); // ← nova linha
+  const router = useRouter();
 
-  const handleLogin = () => {
-    console.log('Login:', { email, password });
+  const handleLogin = async () => { // ← atualizado
+    if (!email || !password) {
+      Alert.alert('Atenção', 'Preencha o email e a senha');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const token = await login(email, password); // ← chama o backend
+      await saveToken(token); // ← salva o token no dispositivo
+      router.replace('/home'); // ← vai pra tela principal
+    } catch (error) {
+      Alert.alert('Erro', 'Email ou senha inválidos');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -36,7 +54,7 @@ export default function LoginScreen() {
         </Text>
         <Text style={styles.subtitle}>
           Não tem conta?{' '}
-          <Text style={styles.link} onPress={() => router.push('/register')}> {/* ← atualizado */}
+          <Text style={styles.link} onPress={() => router.push('/register')}>
             Cadastre-se
           </Text>
         </Text>
@@ -65,8 +83,14 @@ export default function LoginScreen() {
           onChangeText={setPassword}
         />
 
-        <TouchableOpacity style={styles.button} onPress={handleLogin}>
-          <Text style={styles.buttonText}>LOGIN</Text>
+        <TouchableOpacity
+          style={[styles.button, loading && styles.buttonDisabled]}
+          onPress={handleLogin}
+          disabled={loading}
+        >
+          <Text style={styles.buttonText}>
+            {loading ? 'Entrando...' : 'LOGIN'}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -148,6 +172,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
+  },
+  buttonDisabled: {
+    backgroundColor: '#D0E2F5',
   },
   buttonText: {
     color: '#ffffff',

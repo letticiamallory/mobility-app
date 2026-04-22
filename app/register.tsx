@@ -1,5 +1,7 @@
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
+  Alert,
   Image,
   ScrollView,
   StyleSheet,
@@ -8,6 +10,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { login, register } from '../services/auth.service';
+import { saveToken } from '../services/token.service';
 
 const STEPS = [
   { id: 1, question: "Como gostaria de ser chamado?", field: 'name', placeholder: 'Seu nome', keyboard: 'default', secure: false },
@@ -17,6 +21,7 @@ const STEPS = [
 
 export default function RegisterScreen() {
   const [step, setStep] = useState(0);
+  const router = useRouter();
   const [form, setForm] = useState({
     name: '',
     email: '',
@@ -29,7 +34,23 @@ export default function RegisterScreen() {
 
   const handleNext = () => setStep((prev) => prev + 1);
   const handleBack = () => setStep((prev) => prev - 1);
-  const handleSubmit = () => console.log('Register:', form);
+  const handleSubmit = async (accompanied: string) => {
+    const payload = { ...form, accompanied };
+
+    try {
+      await register(
+        payload.name,
+        payload.email,
+        payload.password,
+        payload.disability_type,
+      );
+      const token = await login(payload.email, payload.password);
+      await saveToken(token);
+      router.replace('/home');
+    } catch (error) {
+      Alert.alert('Erro', 'Não foi possível concluir o cadastro');
+    }
+  };
 
   const hasMinLength = form.password.length >= 6;
   const hasUpperCase = /[A-Z]/.test(form.password);
@@ -174,7 +195,7 @@ export default function RegisterScreen() {
             style={[styles.optionButton, form.accompanied === option.value && styles.optionButtonActive]}
             onPress={() => {
               setForm((prev) => ({ ...prev, accompanied: option.value }));
-              handleSubmit();
+              handleSubmit(option.value);
             }}
           >
             <Text style={[styles.optionText, form.accompanied === option.value && styles.optionTextActive]}>
