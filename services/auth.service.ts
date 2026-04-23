@@ -1,5 +1,11 @@
 import { API_URL } from '../constants/api';
 
+export type LoginResponse = {
+  access_token: string;
+  user_id: number;
+  name: string;
+};
+
 export async function login(email: string, password: string) {
   const loginUrl = `${API_URL}/auth/login`;
   console.log('[auth.login] Calling URL:', loginUrl);
@@ -23,7 +29,7 @@ export async function login(email: string, password: string) {
       throw new Error('Email ou senha inválidos');
     }
 
-    return data.access_token as string;
+    return data as LoginResponse;
   } catch (error) {
     console.error('[auth.login] Login request failed:', error);
     throw error;
