@@ -17,9 +17,7 @@ import {
 } from 'react-native-google-places-autocomplete';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { searchRoutes } from '../services/routes.service';
-import { getToken, removeToken } from '../services/token.service';
-
-type AccompaniedType = 'alone' | 'accompanied' | '';
+import { getToken, getUserInfo } from '../services/token.service';
 
 type RouteLeg = 'walk' | 'bus' | 'subway';
 
@@ -33,7 +31,7 @@ type NormalizedRoute = {
   description: string;
 };
 
-const DEFAULT_TRANSPORT_TYPES = ['bus', 'metro', 'walking'];
+const DEFAULT_TRANSPORT_TYPE = 'bus';
 
 const COLORS = {
   bg: '#FFFFFF',
@@ -156,9 +154,9 @@ export default function DirectionsScreen() {
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
   const [originLocationLoading, setOriginLocationLoading] = useState(true);
-  const [accompanied, setAccompanied] = useState<AccompaniedType>('alone');
   const [routes, setRoutes] = useState<NormalizedRoute[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [currentGps, setCurrentGps] = useState<{ latitude: number; longitude: number } | null>(null);
 
   const originPlacesRef = useRef<GooglePlacesAutocompleteRef>(null);
@@ -202,7 +200,7 @@ export default function DirectionsScreen() {
     loadCurrentLocation();
   }, []);
 
-  const fetchRoutes = useCallback(async (mode: 'alone' | 'accompanied') => {
+  const fetchRoutes = useCallback(async () => {
     const dest = destination.trim();
     if (!dest || dest === 'Destino') {
       Alert.alert('Destino', 'Informe o destino para buscar rotas.');
@@ -214,39 +212,36 @@ export default function DirectionsScreen() {
       router.replace('/login');
       return;
     }
+    const { userId } = await getUserInfo();
+    if (typeof userId !== 'number' || Number.isNaN(userId)) {
+      setErrorMessage('Sessao invalida. Faca login novamente.');
+      return;
+    }
 
-    setAccompanied(mode);
     setLoading(true);
     setRoutes(null);
+    setErrorMessage('');
 
     try {
       console.log('[directions] searchRoutes params', {
         origin: origin.trim() || 'Local atual',
         destination: dest,
-        transportType: DEFAULT_TRANSPORT_TYPES,
-        accompanied: mode,
+        user_id: userId,
+        transport_type: DEFAULT_TRANSPORT_TYPE,
       });
       const raw = await searchRoutes(
         origin.trim() || 'Local atual',
         dest,
-        DEFAULT_TRANSPORT_TYPES,
-        mode,
+        userId,
+        DEFAULT_TRANSPORT_TYPE,
       );
       setRoutes(normalizeRoutes(raw));
     } catch (error: unknown) {
-      const status =
-        typeof error === 'object' &&
-        error !== null &&
-        'status' in error &&
-        typeof (error as { status: unknown }).status === 'number'
-          ? (error as { status: number }).status
-          : undefined;
-      if (status === 401) {
-        await removeToken();
-        router.replace('/login');
-        return;
-      }
-      Alert.alert('Rotas', 'Nao foi possivel carregar as rotas. Tente novamente.');
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Nao foi possivel carregar as rotas. Tente novamente.';
+      setErrorMessage(message);
       setRoutes([]);
     } finally {
       setLoading(false);
@@ -259,7 +254,6 @@ export default function DirectionsScreen() {
     originPlacesRef.current?.setAddressText(destination);
     destinationPlacesRef.current?.setAddressText(origin);
     setRoutes(null);
-    setAccompanied('');
   };
 
   return (
@@ -329,16 +323,10 @@ export default function DirectionsScreen() {
               }}
               styles={GOOGLE_PLACES_STYLES}
               onPress={(data, details = null) => {
-                const detailObj =
-                  details != null && typeof details === 'object'
-                    ? (details as Record<string, unknown>)
-                    : null;
                 const formatted =
-                  typeof detailObj?.formatted_address === 'string'
-                    ? detailObj.formatted_address.trim()
-                    : typeof detailObj?.formattedAddress === 'string'
-                      ? detailObj.formattedAddress.trim()
-                      : '';
+                  typeof details?.formatted_address === 'string'
+                    ? details.formatted_address.trim()
+                    : '';
                 const label = (formatted || String(data.description ?? '').trim()).trim();
                 setDestination(label);
                 destinationPlacesRef.current?.setAddressText(label);
@@ -359,44 +347,18 @@ export default function DirectionsScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.sectionTitle}>Como vai?</Text>
-
-        <View style={styles.pillRow}>
-          <TouchableOpacity
-            style={[styles.pill, accompanied === 'alone' && styles.pillActive]}
-            onPress={() => fetchRoutes('alone')}
-          >
-            <MaterialCommunityIcons
-              name="account"
-              size={22}
-              color={accompanied === 'alone' ? COLORS.buttonText : COLORS.primary}
-            />
-            <Text style={[styles.pillText, accompanied === 'alone' && styles.pillTextActive]}>
-              Sozinho
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.pill, accompanied === 'accompanied' && styles.pillActive]}
-            onPress={() => fetchRoutes('accompanied')}
-          >
-            <MaterialCommunityIcons
-              name="account-multiple"
-              size={22}
-              color={accompanied === 'accompanied' ? COLORS.buttonText : COLORS.primary}
-            />
-            <Text
-              style={[styles.pillText, accompanied === 'accompanied' && styles.pillTextActive]}
-            >
-              Acompanhado
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={styles.searchButton} onPress={fetchRoutes}>
+          <MaterialCommunityIcons name="magnify" size={20} color={COLORS.buttonText} />
+          <Text style={styles.searchButtonText}>Buscar rotas</Text>
+        </TouchableOpacity>
 
         {loading && (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color={COLORS.primary} />
           </View>
         )}
+
+        {!loading && errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
         {!loading && routes !== null && routes.length === 0 && (
           <Text style={styles.emptyText}>Nenhuma rota encontrada.</Text>
@@ -544,8 +506,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   pillRow: {
-    flexDirection: 'row',
-    gap: 12,
     marginBottom: 20,
   },
   pill: {
@@ -572,6 +532,21 @@ const styles = StyleSheet.create({
   pillTextActive: {
     color: COLORS.buttonText,
   },
+  searchButton: {
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 20,
+  },
+  searchButtonText: {
+    color: COLORS.buttonText,
+    fontWeight: '700',
+    fontSize: 15,
+  },
   loadingBox: {
     paddingVertical: 48,
     alignItems: 'center',
@@ -581,6 +556,13 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     textAlign: 'center',
     marginTop: 16,
+  },
+  errorText: {
+    color: COLORS.error,
+    textAlign: 'center',
+    marginTop: 10,
+    marginBottom: 8,
+    fontWeight: '600',
   },
   routeResultCard: {
     backgroundColor: COLORS.surface,

@@ -4,8 +4,8 @@ import { getToken } from './token.service';
 export async function searchRoutes(
   origin: string,
   destination: string,
-  transportType: string[],
-  accompanied: string,
+  userId: number,
+  transportType: string,
 ) {
   try {
     const token = await getToken();
@@ -13,8 +13,8 @@ export async function searchRoutes(
     const body = {
       origin,
       destination,
-      transportType,
-      accompanied,
+      user_id: userId,
+      transport_type: transportType,
     };
     const bodyString = JSON.stringify(body);
 

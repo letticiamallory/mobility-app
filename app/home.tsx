@@ -2,7 +2,7 @@ import * as Location from 'expo-location';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Text as PaperText } from 'react-native-paper';
 import { getUserInfo } from '../services/token.service';
@@ -14,6 +14,7 @@ const FAVORITES = [
 
 export default function HomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [name, setName] = useState('');
   const [destination, setDestination] = useState('');
 
@@ -43,8 +44,9 @@ export default function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['left', 'right', 'bottom']}>
       <Stack.Screen options={{ headerShown: false }} />
+      <View style={[styles.topStripe, { height: insets.top }]} />
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
           <View>
@@ -126,6 +128,9 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  topStripe: {
+    backgroundColor: '#0057A8',
   },
   header: {
     backgroundColor: '#0057A8',
