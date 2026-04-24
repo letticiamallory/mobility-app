@@ -41,6 +41,20 @@
       ],
       "expo-secure-store"
     ],
+    "fonts": [
+      {
+        "family": "Agrandir-Regular",
+        "asset": "./assets/fonts/PPAgrandir-Regular.otf"
+      },
+      {
+        "family": "Agrandir-GrandHeavy",
+        "asset": "./assets/fonts/PPAgrandir-GrandHeavy.otf"
+      },
+      {
+        "family": "Agrandir-TextBold",
+        "asset": "./assets/fonts/PPAgrandirText-Bold.otf"
+      }
+    ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true

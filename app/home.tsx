@@ -8,8 +8,8 @@ import { Text as PaperText } from 'react-native-paper';
 import { getUserInfo } from '../services/token.service';
 
 const FAVORITES = [
-  { id: 'home', label: 'Casa', destination: 'Casa', icon: 'home' as const },
-  { id: 'work', label: 'Trabalho', destination: 'Trabalho', icon: 'briefcase' as const },
+  { id: 'home', label: 'Casa', destination: 'Casa', address: 'Rua principal', icon: 'map-marker' as const },
+  { id: 'work', label: 'Trabalho', destination: 'Trabalho', address: 'Av. central', icon: 'map-marker' as const },
 ];
 
 export default function HomeScreen() {
@@ -48,74 +48,86 @@ export default function HomeScreen() {
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topStripe, { height: insets.top }]} />
       <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <View>
-            <PaperText style={styles.greetingPrefix}>Olá,</PaperText>
-            <PaperText style={styles.greetingName}>{name || 'Usuario'}</PaperText>
-            <PaperText style={styles.subtitle}>Para onde você quer ir hoje?</PaperText>
-          </View>
-          <View style={styles.avatar}>
-            <PaperText style={styles.avatarText}>{initials}</PaperText>
-          </View>
-        </View>
-
-        <TouchableOpacity
-          style={styles.searchBar}
-          onPress={() => goToDirections(destination || 'Destino')}
-          activeOpacity={0.85}
-        >
-          <MaterialCommunityIcons name="magnify" size={22} color="#0057A8" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Buscar destino"
-            placeholderTextColor="#7D8590"
-            value={destination}
-            onChangeText={setDestination}
-            editable={false}
-            pointerEvents="none"
-            autoFocus={false}
-          />
-        </TouchableOpacity>
+        <PaperText style={styles.greetingName} accessibilityRole="header">
+          Olá, {name || 'Usuario'}!
+        </PaperText>
+        <PaperText style={styles.subtitle} accessibilityRole="header">
+          Para onde você vai hoje?
+        </PaperText>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.sectionHeader}>
-          <PaperText style={styles.sectionTitle}>Favoritos</PaperText>
-          <TouchableOpacity>
-            <PaperText style={styles.addLink}>Adicionar</PaperText>
-          </TouchableOpacity>
-        </View>
+      <TouchableOpacity
+        style={styles.searchBar}
+        onPress={() => goToDirections(destination || 'Destino')}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Buscar destino"
+      >
+        <MaterialCommunityIcons name="magnify" size={22} color="#0057A8" />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Buscar destino..."
+          placeholderTextColor="#7D8590"
+          value={destination}
+          onChangeText={setDestination}
+          editable={false}
+          pointerEvents="none"
+          autoFocus={false}
+          accessibilityLabel="Campo de destino"
+          accessibilityHint="Digite o destino para buscar rotas"
+        />
+      </TouchableOpacity>
 
-        <View style={styles.favoritesCard}>
-          {FAVORITES.map((item, index) => (
-            <View key={item.id}>
-              <TouchableOpacity
-                style={styles.favoriteRow}
-                onPress={() => goToDirections(item.destination)}
-              >
-                <MaterialCommunityIcons name={item.icon} size={22} color="#0057A8" />
-                <View style={styles.favoriteTextBlock}>
-                  <PaperText style={styles.favoriteText}>{item.label}</PaperText>
-                  <PaperText style={styles.favoriteSub}>Toque para editar</PaperText>
-                </View>
-                <MaterialCommunityIcons name="chevron-right" size={24} color="#7D8590" />
-              </TouchableOpacity>
-              {index < FAVORITES.length - 1 && <View style={styles.divider} />}
-            </View>
+      <ScrollView contentContainerStyle={styles.content}>
+        <PaperText style={styles.sectionTitle} accessibilityRole="header">
+          Favoritos
+        </PaperText>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.favoritesRow}
+        >
+          {FAVORITES.map((item) => (
+            <TouchableOpacity
+              key={item.id}
+              style={styles.favoriteCard}
+              onPress={() => goToDirections(item.destination)}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={`Favorito ${item.label}`}
+            >
+              <MaterialCommunityIcons name={item.icon} size={22} color="#0057A8" />
+              <PaperText style={styles.favoriteText}>{item.label}</PaperText>
+              <PaperText style={styles.favoriteSub}>{item.address}</PaperText>
+            </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
       </ScrollView>
 
       <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem}>
+        <TouchableOpacity
+          style={styles.navItem}
+          accessibilityRole="button"
+          accessibilityLabel="Ir para rotas"
+        >
           <MaterialCommunityIcons name="directions" size={24} color="#0057A8" />
           <PaperText style={styles.navLabelActive}>Rotas</PaperText>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
+        <TouchableOpacity
+          style={styles.navItem}
+          accessibilityRole="button"
+          accessibilityLabel="Ir para lugares"
+        >
           <MaterialCommunityIcons name="map-marker" size={24} color="#8ab3df" />
           <PaperText style={styles.navLabel}>Lugares</PaperText>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={() => router.push('/profile')}
+          accessibilityRole="button"
+          accessibilityLabel="Ir para perfil"
+        >
           <MaterialCommunityIcons name="account" size={24} color="#8ab3df" />
           <PaperText style={styles.navLabel}>Perfil</PaperText>
         </TouchableOpacity>
@@ -127,125 +139,85 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F5F7FA',
   },
   topStripe: {
     backgroundColor: '#0057A8',
   },
   header: {
     backgroundColor: '#0057A8',
-    paddingHorizontal: 26,
-    paddingTop: 28,
-    paddingBottom: 32,
-    borderBottomLeftRadius: 22,
-    borderBottomRightRadius: 22,
-  },
-  headerTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 24,
-  },
-  greetingPrefix: {
-    color: '#E6EDF3',
-    fontSize: 16,
-    fontWeight: '500',
-    marginBottom: 4,
+    padding: 20,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
   },
   greetingName: {
-    color: '#E6EDF3',
-    fontSize: 30,
-    fontWeight: '700',
-    lineHeight: 36,
-  },
-  subtitle: {
-    color: '#DCE6F5',
-    fontSize: 15,
-    marginTop: 10,
-  },
-  avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#D0D7DE',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: '#0057A8',
+    color: '#FFFFFF',
     fontSize: 20,
     fontWeight: '700',
+    fontFamily: 'Agrandir-GrandHeavy',
+  },
+  subtitle: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 14,
+    marginTop: 4,
+    fontFamily: 'Agrandir-Regular',
   },
   searchBar: {
-    height: 52,
-    borderRadius: 14,
+    marginTop: -20,
+    marginHorizontal: 16,
+    borderRadius: 16,
     backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#D0D7DE',
-    paddingHorizontal: 14,
+    padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   searchInput: {
     flex: 1,
-    color: '#0D1117',
-    fontSize: 16,
+    color: '#1E1D1D',
+    fontSize: 14,
+    fontFamily: 'Agrandir-Regular',
   },
   content: {
-    paddingHorizontal: 24,
-    paddingTop: 28,
+    paddingTop: 24,
     paddingBottom: 108,
   },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
   sectionTitle: {
-    color: '#1a1a1a',
-    fontSize: 18,
+    color: '#1E1D1D',
+    fontSize: 16,
     fontWeight: '700',
+    fontFamily: 'Agrandir-TextBold',
+    marginTop: 24,
+    marginHorizontal: 16,
+    marginBottom: 12,
   },
-  addLink: {
-    color: '#0057A8',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  favoritesCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#D0D7DE',
-  },
-  favoriteRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 18,
+  favoritesRow: {
     paddingHorizontal: 16,
-    gap: 14,
+    gap: 10,
   },
-  favoriteTextBlock: {
-    flex: 1,
-    gap: 4,
+  favoriteCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    width: 140,
   },
   favoriteText: {
-    color: '#1a1a1a',
-    fontSize: 16,
+    color: '#1E1D1D',
+    fontSize: 15,
     fontWeight: '600',
+    marginTop: 8,
+    fontFamily: 'Agrandir-TextBold',
   },
   favoriteSub: {
-    color: '#4B5563',
+    color: '#666666',
     fontSize: 13,
-    fontWeight: '500',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#E5E7EB',
-    marginHorizontal: 14,
+    marginTop: 2,
+    fontFamily: 'Agrandir-Regular',
   },
   bottomNav: {
     position: 'absolute',
@@ -269,10 +241,12 @@ const styles = StyleSheet.create({
     color: '#0057A8',
     fontSize: 12,
     fontWeight: '700',
+    fontFamily: 'Agrandir-TextBold',
   },
   navLabel: {
     color: '#4B5563',
     fontSize: 12,
     fontWeight: '600',
+    fontFamily: 'Agrandir-Regular',
   },
 });

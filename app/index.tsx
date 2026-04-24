@@ -1,10 +1,12 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   Alert,
-  Image,
+  Dimensions,
   KeyboardAvoidingView,
+  Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,468 +14,563 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import RegisterMailIllustration from '../assets/images/registermail.svg';
-import RegisterAloneIllustration from '../assets/images/registeralone.svg';
-import RegisterMobilityIllustration from '../assets/images/registermobility.svg';
-import RegisterNameIllustration from '../assets/images/registername.svg';
-import RegisterPasswordIllustration from '../assets/images/registerpassword.svg';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { login, register } from '../services/auth.service';
 import { saveToken, saveUserInfo } from '../services/token.service';
 
-const STEPS = [
-  { id: 1, question: "Como gostaria de ser chamado?", field: 'name', placeholder: 'Seu nome', keyboard: 'default', secure: false },
-  { id: 2, question: "Escolha o seu melhor e-mail", field: 'email', placeholder: 'seu@email.com', keyboard: 'email-address', secure: false },
-  { id: 3, question: 'Crie uma senha', field: 'password', placeholder: 'Digite sua senha', keyboard: 'default', secure: true },
+const SCREEN_H = Dimensions.get('window').height;
+const MENU_MARGIN = 12;
+const ROW_H = 52;
+const PRIMARY = '#0057A8';
+
+type DisabilityType = 'visual' | 'wheelchair' | 'reduced_mobility' | '';
+type AccompaniedType = 'alone' | 'accompanied' | 'both' | '';
+type MenuKind = 'group' | 'companied';
+
+const DISABILITY_OPTIONS = [
+  { label: 'Deficiencia Visual', value: 'visual' as const, icon: 'eye-off' as const },
+  { label: 'Cadeirante', value: 'wheelchair' as const, icon: 'wheelchair-accessibility' as const },
+  { label: 'Mobilidade Reduzida', value: 'reduced_mobility' as const, icon: 'walk' as const },
 ];
 
+const ACCOMPANIED_OPTIONS = [
+  { label: 'Sozinho', value: 'alone' as const, icon: 'account' as const },
+  { label: 'Acompanhado', value: 'accompanied' as const, icon: 'account-multiple' as const },
+  { label: 'Ambos', value: 'both' as const, icon: 'account-switch' as const },
+];
+
+type MenuAnchor = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  top: number;
+  listHeight: number;
+  scroll: boolean;
+};
+
+function computeMenuPlacement(
+  y: number,
+  h: number,
+  itemCount: number,
+  preferUp: boolean,
+): { top: number; listHeight: number; scroll: boolean } {
+  const fullH = itemCount * ROW_H;
+  const spaceBelow = SCREEN_H - y - h - MENU_MARGIN;
+  const spaceAbove = y - MENU_MARGIN;
+
+  /** Menu no fim do formul?rio: prioriza abrir para cima (mais espa?o ?til). */
+  if (preferUp) {
+    if (spaceAbove >= fullH) {
+      return { top: y - fullH, listHeight: fullH, scroll: false };
+    }
+    if (spaceAbove >= ROW_H) {
+      const listHeight = Math.max(ROW_H, Math.min(fullH, Math.floor(spaceAbove - 4)));
+      return { top: y - listHeight, listHeight, scroll: listHeight < fullH };
+    }
+    if (spaceBelow >= fullH) {
+      return { top: y + h, listHeight: fullH, scroll: false };
+    }
+    const listHeight = Math.max(ROW_H, Math.min(fullH, Math.floor(spaceBelow)));
+    return { top: y + h, listHeight, scroll: listHeight < fullH };
+  }
+
+  const fitsBelow = spaceBelow >= fullH;
+  if (fitsBelow) {
+    return { top: y + h, listHeight: fullH, scroll: false };
+  }
+
+  const fitsAbove = spaceAbove >= fullH;
+  if (fitsAbove) {
+    return { top: y - fullH, listHeight: fullH, scroll: false };
+  }
+
+  if (spaceAbove >= spaceBelow) {
+    const listHeight = Math.max(ROW_H, Math.min(fullH, Math.floor(spaceAbove - 4)));
+    return { top: y - listHeight, listHeight, scroll: listHeight < fullH };
+  }
+
+  const listHeight = Math.max(ROW_H, Math.min(fullH, Math.floor(spaceBelow)));
+  return { top: y + h, listHeight, scroll: listHeight < fullH };
+}
+
 export default function RegisterScreen() {
-  const [step, setStep] = useState(0);
   const router = useRouter();
-  const [form, setForm] = useState({
-    name: '',
-    email: '',
-    password: '',
-    disability_type: '',
-    accompanied: '',
-  });
+  const groupRef = useRef<View>(null);
+  const companiedRef = useRef<View>(null);
 
-  const totalSteps = STEPS.length + 2;
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [disabilityType, setDisabilityType] = useState<DisabilityType>('');
+  const [accompanied, setAccompanied] = useState<AccompaniedType>('');
+  const [loading, setLoading] = useState(false);
 
-  const handleNext = () => setStep((prev) => prev + 1);
-  const handleBack = () => setStep((prev) => prev - 1);
-  const handleSubmit = async (accompanied: string) => {
-    const payload = { ...form, accompanied };
+  const [menu, setMenu] = useState<MenuKind | null>(null);
+  const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
+
+  const closeMenu = useCallback(() => {
+    setMenu(null);
+    setAnchor(null);
+  }, []);
+
+  const openMenu = useCallback(
+    (kind: MenuKind, ref: React.RefObject<View | null>) => {
+      if (menu === kind) {
+        closeMenu();
+        return;
+      }
+      ref.current?.measureInWindow((x, y, width, height) => {
+        const count = kind === 'group' ? DISABILITY_OPTIONS.length : ACCOMPANIED_OPTIONS.length;
+        const preferUp = kind === 'companied';
+        const { top, listHeight, scroll } = computeMenuPlacement(y, height, count, preferUp);
+        setAnchor({
+          x,
+          y,
+          width,
+          height,
+          top,
+          listHeight,
+          scroll,
+        });
+        setMenu(kind);
+      });
+    },
+    [menu, closeMenu],
+  );
+
+  const disabilityLabel =
+    DISABILITY_OPTIONS.find((o) => o.value === disabilityType)?.label ?? null;
+  const accompaniedLabel =
+    ACCOMPANIED_OPTIONS.find((o) => o.value === accompanied)?.label ?? null;
+
+  const handleSubmit = async () => {
+    if (!name || !email || !password || !disabilityType || !accompanied) {
+      Alert.alert('Atencao', 'Preencha nome, email, senha, grupo e como costuma sair.');
+      return;
+    }
 
     try {
-      await register(
-        payload.name,
-        payload.email,
-        payload.password,
-        payload.disability_type,
-      );
-      const loginData = await login(payload.email, payload.password);
+      setLoading(true);
+      await register(name, email, password, disabilityType, accompanied);
+      const loginData = await login(email, password);
       await saveToken(loginData.access_token);
       await saveUserInfo(loginData.user_id, loginData.name);
       router.replace('/home');
     } catch (error) {
-      Alert.alert('Erro', 'Não foi possível concluir o cadastro');
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Nao foi possivel concluir o cadastro. Tente novamente.';
+      Alert.alert('Erro', message);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const hasMinLength = form.password.length >= 6;
-  const hasUpperCase = /[A-Z]/.test(form.password);
-  const hasNumber = /[0-9]/.test(form.password);
-  const isPasswordValid = hasMinLength && hasUpperCase && hasNumber;
-
-  const renderProgressBar = () => (
-    <View style={styles.progressContainer}>
-      {Array.from({ length: totalSteps }).map((_, i) => (
-        <View
-          key={i}
-          style={[styles.progressDot, i <= step && styles.progressDotActive]}
-        />
-      ))}
-    </View>
-  );
-
-  const renderPasswordRequirements = () => (
-    <View style={styles.requirementsContainer}>
-      <View style={styles.requirementRow}>
-        <Text style={hasMinLength ? styles.checkIcon : styles.crossIcon}>
-          {hasMinLength ? '✓' : '✗'}
-        </Text>
-        <Text style={[styles.requirementText, hasMinLength && styles.requirementMet]}>
-          Mínimo 6 caracteres
-        </Text>
-      </View>
-      <View style={styles.requirementRow}>
-        <Text style={hasUpperCase ? styles.checkIcon : styles.crossIcon}>
-          {hasUpperCase ? '✓' : '✗'}
-        </Text>
-        <Text style={[styles.requirementText, hasUpperCase && styles.requirementMet]}>
-          Pelo menos uma letra maiúscula
-        </Text>
-      </View>
-      <View style={styles.requirementRow}>
-        <Text style={hasNumber ? styles.checkIcon : styles.crossIcon}>
-          {hasNumber ? '✓' : '✗'}
-        </Text>
-        <Text style={[styles.requirementText, hasNumber && styles.requirementMet]}>
-          Pelo menos um número
-        </Text>
-      </View>
-    </View>
-  );
-
-  const renderTextStep = (index: number) => {
-    const current = STEPS[index];
-    return (
-      <View style={styles.stepContainer}>
-        {(index === 0 || index === 1 || index === 2) && (
-          <View
-            style={[
-              styles.imageContainer,
-              index === 0 && styles.imageContainerFirstStep,
-              index === 1 && styles.imageContainerEmailStep,
-              index === 2 && styles.imageContainerPasswordStep,
-            ]}
-          >
-            {index === 0 ? (
-              <RegisterNameIllustration width={320} height={290} />
-            ) : index === 1 ? (
-              <RegisterMailIllustration width={350} height={330} />
-            ) : index === 2 ? (
-              <RegisterPasswordIllustration width={320} height={260} />
-            ) : (
-              <Image
-                source={
-                  require('../assets/images/register-password.png')
-                }
-                style={{ width: '100%', height: index === 2 ? 220 : 280 }}
-                resizeMode="contain"
-              />
-            )}
-          </View>
-        )}
-        <Text
-          style={[
-            styles.question,
-            index === 0 && styles.questionFirstStep,
-            index === 1 && styles.questionEmailStep,
-            index === 2 && styles.questionPasswordStep,
-          ]}
-        >
-          {current.question}
-        </Text>
-        <TextInput
-          style={[styles.input, index === 2 && styles.inputPasswordStep]}
-          placeholder={current.placeholder}
-          placeholderTextColor="#7D8590"
-          keyboardType={current.keyboard as any}
-          secureTextEntry={current.secure}
-          autoCapitalize="none"
-          value={form[current.field as keyof typeof form]}
-          onChangeText={(text) =>
-            setForm((prev) => ({ ...prev, [current.field]: text }))
-          }
-          autoFocus
-        />
-        {index === 2 && (
-          <View style={styles.requirementsContainerPasswordStep}>
-            {renderPasswordRequirements()}
-          </View>
-        )}
+  const renderMenuRows = (
+    options: typeof DISABILITY_OPTIONS | typeof ACCOMPANIED_OPTIONS,
+    selected: string,
+    onPick: (value: DisabilityType | AccompaniedType) => void,
+  ) => {
+    const body = options.map((option, index) => {
+      const isSelected = selected === option.value;
+      const isLast = index === options.length - 1;
+      return (
         <TouchableOpacity
+          key={option.value}
           style={[
-            styles.button,
-            index === 2 && styles.buttonPasswordStep,
-            index === 2 && !isPasswordValid && styles.buttonDisabled,
+            styles.menuRow,
+            !isLast && styles.menuRowBorder,
+            isSelected && styles.menuRowSelected,
           ]}
-          onPress={index === 2 && !isPasswordValid ? undefined : handleNext}
+          onPress={() => {
+            onPick(option.value);
+            closeMenu();
+          }}
+          activeOpacity={0.75}
         >
-          <Text style={styles.buttonText}>Continuar</Text>
+          <MaterialCommunityIcons name={option.icon} size={20} color="#0057A8" />
+          <Text style={[styles.menuRowText, isSelected && styles.menuRowTextSelected]}>
+            {option.label}
+          </Text>
         </TouchableOpacity>
-      </View>
-    );
+      );
+    });
+
+    if (!anchor) return null;
+
+    if (anchor.scroll) {
+      return (
+        <ScrollView
+          style={{ maxHeight: anchor.listHeight }}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
+        >
+          {body}
+        </ScrollView>
+      );
+    }
+
+    return <View>{body}</View>;
   };
-
-  const renderDisabilityStep = () => (
-    <ScrollView showsVerticalScrollIndicator={false}>
-      <View style={styles.imageContainerSmall}>
-        <RegisterMobilityIllustration width={320} height={240} />
-      </View>
-      <Text style={[styles.question, styles.questionMobilityStep]}>A que grupo você pertence?</Text>
-      <View style={styles.optionsContainer}>
-        {[
-          { label: 'Deficiente visual', value: 'visual' },
-          { label: 'Cadeirante', value: 'wheelchair' },
-          { label: 'Mobilidade reduzida', value: 'reduced_mobility' },
-        ].map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={[
-              styles.optionButton,
-              styles.optionButtonMobilityStep,
-              form.disability_type === option.value && styles.optionButtonActiveMobilityStep,
-            ]}
-            onPress={() => {
-              setForm((prev) => ({ ...prev, disability_type: option.value }));
-              handleNext();
-            }}
-          >
-            <Text
-              style={[
-                styles.optionText,
-                styles.optionTextMobilityStep,
-                form.disability_type === option.value && styles.optionTextActiveMobilityStep,
-              ]}
-            >
-              {option.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </ScrollView>
-  );
-
-  const renderAccompaniedStep = () => (
-    <ScrollView showsVerticalScrollIndicator={false}>
-      <View style={styles.imageContainerSmall}>
-        <RegisterAloneIllustration width={320} height={240} />
-      </View>
-      <Text style={[styles.question, styles.questionAccompaniedStep]}>Geralmente você sai...</Text>
-      <View style={styles.optionsContainer}>
-        {[
-          { label: 'Sozinho', value: 'alone' },
-          { label: 'Acompanhado', value: 'accompanied' },
-          { label: 'Ambos', value: 'both' },
-        ].map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={[
-              styles.optionButton,
-              styles.optionButtonAccompaniedStep,
-              form.accompanied === option.value && styles.optionButtonActiveAccompaniedStep,
-            ]}
-            onPress={() => {
-              setForm((prev) => ({ ...prev, accompanied: option.value }));
-              handleSubmit(option.value);
-            }}
-          >
-            <Text
-              style={[
-                styles.optionText,
-                styles.optionTextAccompaniedStep,
-                form.accompanied === option.value && styles.optionTextActiveAccompaniedStep,
-              ]}
-            >
-              {option.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </ScrollView>
-  );
 
   return (
     <KeyboardAvoidingView
-      style={styles.keyboardContainer}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={24}
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.container}>
-        {renderProgressBar()}
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => router.push('/login')}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <MaterialCommunityIcons name="arrow-left" size={24} color={PRIMARY} />
+        </TouchableOpacity>
 
-        {step > 0 ? (
-          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <Text style={styles.backButtonText}>← Voltar</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity style={styles.backButton} onPress={() => router.push('/login')}>
-            <Text style={styles.backButtonText}>← Voltar</Text>
-          </TouchableOpacity>
-        )}
+        <View style={styles.avatarWrap}>
+          <View style={styles.avatarCircle}>
+            <View style={styles.editBadge}>
+              <MaterialCommunityIcons name="pencil" size={14} color="#FFFFFF" />
+            </View>
+          </View>
+        </View>
 
-        {step < STEPS.length
-          ? renderTextStep(step)
-          : step === STEPS.length
-          ? renderDisabilityStep()
-          : renderAccompaniedStep()}
-      </View>
+        <Text style={styles.label}>Nome</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Seu nome"
+          placeholderTextColor="#AAAAAA"
+          value={name}
+          onChangeText={setName}
+          autoCapitalize="words"
+        />
+
+        <Text style={styles.label}>Email</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="seu@email.com"
+          placeholderTextColor="#AAAAAA"
+          keyboardType="email-address"
+          autoCapitalize="none"
+          value={email}
+          onChangeText={setEmail}
+        />
+
+        <Text style={styles.label}>Senha</Text>
+        <View style={styles.inputWithIcon}>
+          <TextInput
+            style={styles.inputPassword}
+            placeholder="Minimo 6 caracteres"
+            placeholderTextColor="#AAAAAA"
+            secureTextEntry={!showPassword}
+            value={password}
+            onChangeText={setPassword}
+          />
+          <TouchableOpacity onPress={() => setShowPassword((prev) => !prev)}>
+            <MaterialCommunityIcons
+              name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+              size={20}
+              color="#AAAAAA"
+            />
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.label}>A que grupo voce pertence?</Text>
+        <View ref={groupRef} collapsable={false}>
+          <TouchableOpacity
+            style={[
+              styles.selectBox,
+              !!disabilityType && styles.selectBoxHasValue,
+              menu === 'group' && styles.selectBoxFocused,
+            ]}
+            onPress={() => openMenu('group', groupRef)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.selectBoxLeft}>
+              {disabilityType ? (
+                <>
+                  <MaterialCommunityIcons
+                    name={
+                      DISABILITY_OPTIONS.find((o) => o.value === disabilityType)?.icon ??
+                      'help-circle-outline'
+                    }
+                    size={20}
+                    color="#0057A8"
+                  />
+                  <Text style={[styles.selectBoxValue, styles.selectBoxValueBlue]}>
+                    {disabilityLabel}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.selectPlaceholder}>Selecione</Text>
+              )}
+            </View>
+            <MaterialCommunityIcons
+              name={menu === 'group' ? 'chevron-up' : 'chevron-down'}
+              size={22}
+              color="#AAAAAA"
+            />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.fieldSpacer} />
+
+        <Text style={styles.label}>Como voce costuma sair?</Text>
+        <View ref={companiedRef} collapsable={false}>
+          <TouchableOpacity
+            style={[
+              styles.selectBox,
+              !!accompanied && styles.selectBoxHasValue,
+              menu === 'companied' && styles.selectBoxFocused,
+            ]}
+            onPress={() => openMenu('companied', companiedRef)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.selectBoxLeft}>
+              {accompanied ? (
+                <>
+                  <MaterialCommunityIcons
+                    name={
+                      ACCOMPANIED_OPTIONS.find((o) => o.value === accompanied)?.icon ??
+                      'help-circle-outline'
+                    }
+                    size={20}
+                    color="#0057A8"
+                  />
+                  <Text style={[styles.selectBoxValue, styles.selectBoxValueBlue]}>
+                    {accompaniedLabel}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.selectPlaceholder}>Selecione</Text>
+              )}
+            </View>
+            <MaterialCommunityIcons
+              name={menu === 'companied' ? 'chevron-up' : 'chevron-down'}
+              size={22}
+              color="#AAAAAA"
+            />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.fieldSpacer} />
+
+        <TouchableOpacity
+          style={[styles.continueButton, loading && styles.continueButtonDisabled]}
+          onPress={handleSubmit}
+          disabled={loading}
+        >
+          <Text style={styles.continueText}>{loading ? 'Carregando...' : 'Continue'}</Text>
+        </TouchableOpacity>
+      </ScrollView>
+
+      <Modal visible={menu !== null && anchor !== null} transparent animationType="fade">
+        <View style={styles.modalRoot}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu} />
+          {anchor && menu ? (
+            <View
+              style={[
+                styles.menuPanel,
+                {
+                  left: anchor.x,
+                  width: anchor.width,
+                  top: anchor.top,
+                  maxHeight: anchor.listHeight,
+                },
+              ]}
+              pointerEvents="box-none"
+            >
+              {menu === 'group'
+                ? renderMenuRows(DISABILITY_OPTIONS, disabilityType, (v) =>
+                    setDisabilityType(v as DisabilityType),
+                  )
+                : renderMenuRows(ACCOMPANIED_OPTIONS, accompanied, (v) =>
+                    setAccompanied(v as AccompaniedType),
+                  )}
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  keyboardContainer: {
-    flex: 1,
-  },
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 28,
-    paddingTop: 60,
   },
-  progressContainer: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 40,
-  },
-  progressDot: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#D0D7DE',
-  },
-  progressDotActive: {
-    backgroundColor: '#0057A8',
-  },
-  stepContainer: {
-    flex: 1,
-  },
-  imageContainer: {
-    alignItems: 'center',
-    marginBottom: 48,
-  },
-  imageContainerFirstStep: {
-    marginBottom: 28,
-  },
-  imageContainerEmailStep: {
-    marginBottom: 24,
-  },
-  imageContainerPasswordStep: {
-    marginBottom: 20,
-  },
-  imageContainerSmall: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  question: {
-    fontSize: 25,
-    fontWeight: '600',
-    color: '#1a1a1a',
-    marginBottom: 32,
-    lineHeight: 33,
-  },
-  questionFirstStep: {
-    color: '#0057A8',
-    marginBottom: 24,
-  },
-  questionEmailStep: {
-    color: '#0057A8',
-    marginBottom: 22,
-  },
-  questionPasswordStep: {
-    color: '#0057A8',
-    marginBottom: 12,
-  },
-  questionMobilityStep: {
-    color: '#0057A8',
-  },
-  questionAccompaniedStep: {
-    color: '#0057A8',
-    fontWeight: '500',
-  },
-  input: {
-    height: 52,
-    borderWidth: 1.5,
-    borderColor: '#D0D7DE',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    color: '#1a1a1a',
-    backgroundColor: '#FFFFFF',
-    marginBottom: 12,
-  },
-  inputPasswordStep: {
-    marginBottom: 8,
-  },
-  requirementsContainerPasswordStep: {
-    marginBottom: 16,
-  },
-  requirementsContainer: {
-    gap: 6,
-    marginBottom: 0,
-  },
-  requirementRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  checkIcon: {
-    fontSize: 14,
-    color: '#22c55e',
-    fontWeight: '700',
-  },
-  crossIcon: {
-    fontSize: 14,
-    color: '#ef4444',
-    fontWeight: '700',
-  },
-  requirementText: {
-    fontSize: 13,
-    color: '#ef4444',
-  },
-  requirementMet: {
-    color: '#22c55e',
-  },
-  button: {
-    backgroundColor: '#0057A8',
-    borderRadius: 12,
-    height: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 24,
-  },
-  buttonPasswordStep: {
-    marginBottom: 16,
-  },
-  buttonDisabled: {
-    backgroundColor: '#9CA3AF',
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+  content: {
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 40,
   },
   backButton: {
-    marginBottom: 24,
-    height: 24,
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+    paddingVertical: 4,
+    paddingRight: 8,
   },
-  backButtonText: {
-    fontSize: 16,
-    color: '#0057A8',
-    fontWeight: '500',
-  },
-  optionsContainer: {
-    gap: 12,
+  avatarWrap: {
+    alignItems: 'center',
     marginBottom: 32,
   },
-  optionButton: {
-    height: 56,
-    borderWidth: 1.5,
-    borderColor: '#D0D7DE',
+  avatarCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#D9D9D9',
+    position: 'relative',
+  },
+  editBadge: {
+    width: 24,
+    height: 24,
     borderRadius: 12,
+    backgroundColor: '#0057A8',
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  label: {
+    color: '#1E1D1D',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 6,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  input: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: PRIMARY,
+    borderRadius: 8,
+    height: 52,
+    paddingHorizontal: 16,
+    fontSize: 14,
+    color: '#1E1D1D',
+    marginBottom: 16,
+    fontFamily: 'Agrandir-Regular',
+  },
+  inputWithIcon: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: PRIMARY,
+    borderRadius: 8,
+    height: 52,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  inputPassword: {
+    flex: 1,
+    color: '#1E1D1D',
+    fontSize: 14,
+    fontFamily: 'Agrandir-Regular',
+  },
+  selectBox: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: PRIMARY,
+    borderRadius: 8,
+    height: 52,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  selectBoxHasValue: {
+    borderColor: PRIMARY,
+    backgroundColor: '#EBF3FF',
+  },
+  selectBoxFocused: {
+    borderColor: PRIMARY,
+  },
+  selectBoxLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  selectPlaceholder: {
+    color: '#AAAAAA',
+    fontSize: 14,
+    fontFamily: 'Agrandir-Regular',
+  },
+  selectBoxValue: {
+    fontSize: 14,
+    marginLeft: 12,
+    fontFamily: 'Agrandir-Regular',
+  },
+  selectBoxValueBlue: {
+    color: '#0057A8',
+    fontWeight: '600',
+  },
+  fieldSpacer: {
+    height: 16,
+  },
+  continueButton: {
+    backgroundColor: PRIMARY,
+    borderWidth: 1,
+    borderColor: PRIMARY,
+    borderRadius: 40,
+    height: 52,
+    marginTop: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  continueButtonDisabled: {
+    opacity: 0.6,
+  },
+  continueText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontFamily: 'Agrandir-Regular',
+  },
+  modalRoot: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  menuPanel: {
+    position: 'absolute',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: PRIMARY,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  menuRow: {
+    height: ROW_H,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#FFFFFF',
   },
-  optionButtonMobilityStep: {
-    borderColor: '#0057A8',
+  menuRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
   },
-  optionButtonActiveMobilityStep: {
-    backgroundColor: '#E6F0FB',
-    borderColor: '#0057A8',
+  menuRowSelected: {
+    backgroundColor: '#EBF3FF',
   },
-  optionButtonAccompaniedStep: {
-    borderColor: '#0057A8',
+  menuRowText: {
+    color: '#1E1D1D',
+    fontSize: 14,
+    marginLeft: 12,
+    fontFamily: 'Agrandir-Regular',
   },
-  optionButtonActiveAccompaniedStep: {
-    backgroundColor: '#E6F0FB',
-    borderColor: '#0057A8',
-  },
-  optionButtonActive: {
-    backgroundColor: '#0057A8',
-    borderColor: '#0057A8',
-  },
-  optionText: {
-    fontSize: 15,
-    color: '#1a1a1a',
-    fontWeight: '500',
-  },
-  optionTextMobilityStep: {
+  menuRowTextSelected: {
     color: '#0057A8',
-  },
-  optionTextActiveMobilityStep: {
-    color: '#0057A8',
-  },
-  optionTextAccompaniedStep: {
-    color: '#0057A8',
-  },
-  optionTextActiveAccompaniedStep: {
-    color: '#0057A8',
-  },
-  optionTextActive: {
-    color: '#FFFFFF',
+    fontWeight: '600',
   },
 });

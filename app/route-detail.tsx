@@ -1,7 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo } from 'react';
+import * as Haptics from 'expo-haptics';
+import * as Speech from 'expo-speech';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  AccessibilityInfo,
   Dimensions,
   Image,
   ScrollView,
@@ -14,15 +17,16 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const MAP_HEIGHT = SCREEN_HEIGHT * 0.5;
+const MAP_HEIGHT = SCREEN_HEIGHT * 0.6;
+const PANEL_HEIGHT = SCREEN_HEIGHT * 0.45;
 
 const COLORS = {
   bg: '#FFFFFF',
-  surface: '#FFFFFF',
-  border: '#D0D7DE',
+  panel: '#1C1C1E',
+  card: '#262626',
   primary: '#0057A8',
-  text: '#1A1A1A',
-  textMuted: '#4B5563',
+  text: '#FFFFFF',
+  textMuted: '#999999',
   destPin: '#FF4444',
   error: '#ef4444',
 };
@@ -152,8 +156,31 @@ function mapRegion(route: SerializedRouteDetail) {
 export default function RouteDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ route?: string | string[] }>();
+  const [isReading, setIsReading] = useState(false);
+  const [currentStageIndex, setCurrentStageIndex] = useState(0);
 
   const route = useMemo(() => parseRouteParam(params.route), [params.route]);
+
+  const readRoute = () => {
+    if (!route) return;
+    if (isReading) {
+      Speech.stop();
+      setIsReading(false);
+      return;
+    }
+    setIsReading(true);
+    const instructions = route.stages
+      .map(
+        (s, i) =>
+          `Etapa ${i + 1}: ${s.instruction}. Distância: ${s.distance}. Duração: ${s.duration}.`,
+      )
+      .join(' ');
+    Speech.speak(instructions, {
+      language: 'pt-BR',
+      onDone: () => setIsReading(false),
+      onError: () => setIsReading(false),
+    });
+  };
 
   const polylineCoords = useMemo(() => {
     if (!route) return [];
@@ -171,12 +198,30 @@ export default function RouteDetailScreen() {
     return mapRegion(route);
   }, [route]);
 
+  useEffect(() => {
+    if (!route) return;
+    AccessibilityInfo.isScreenReaderEnabled().then((enabled) => {
+      if (enabled && route) readRoute();
+    });
+  }, [route]);
+
+  useEffect(() => {
+    if (currentStageIndex > 0) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+  }, [currentStageIndex]);
+
   if (!route) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
         <Stack.Screen options={{ headerShown: false }} />
         <View style={styles.errorBox}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            accessibilityLabel="Voltar"
+          >
             <MaterialCommunityIcons name="arrow-left" size={24} color={COLORS.primary} />
           </TouchableOpacity>
           <Text style={styles.errorText}>Rota invalida ou nao informada.</Text>
@@ -186,37 +231,9 @@ export default function RouteDetailScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.safeArea}>
       <Stack.Screen options={{ headerShown: false }} />
-
-      <View style={styles.topBar}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color={COLORS.primary} />
-        </TouchableOpacity>
-
-        <View style={styles.topMiddle}>
-          <View style={styles.readonlyField}>
-            <Text style={styles.readonlyLabel}>Origem</Text>
-            <Text style={styles.readonlyValue} numberOfLines={2}>
-              {route.origin}
-            </Text>
-          </View>
-          <View style={styles.fieldDivider} />
-          <View style={styles.readonlyField}>
-            <Text style={styles.readonlyLabel}>Destino</Text>
-            <Text style={styles.readonlyValue} numberOfLines={2}>
-              {route.destination}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.totalTimeBox}>
-          <Text style={styles.totalTimeLabel}>Total</Text>
-          <Text style={styles.totalTimeValue}>{route.totalTime}</Text>
-        </View>
-      </View>
-
-      <View style={styles.mapWrap}>
+      <View style={styles.mapArea}>
         <MapView style={StyleSheet.absoluteFill} initialRegion={region}>
           <Marker coordinate={route.originCoordinate} title="Origem" anchor={{ x: 0.5, y: 0.5 }}>
             <View style={styles.markerOrigin} />
@@ -238,50 +255,94 @@ export default function RouteDetailScreen() {
         </MapView>
       </View>
 
-      <ScrollView
-        style={styles.stagesScroll}
-        contentContainerStyle={styles.stagesContent}
-        showsVerticalScrollIndicator={false}
+      <TouchableOpacity
+        style={styles.backButton}
+        onPress={() => router.back()}
+        accessibilityRole="button"
+        accessibilityLabel="Voltar"
       >
-        {route.stages.map((stage, index) => (
-          <View key={index} style={styles.stageCard}>
-            <View style={styles.stageHeader}>
-              <MaterialCommunityIcons
-                name={MODE_ICONS[stage.mode]}
-                size={28}
-                color={COLORS.primary}
-              />
-              <View style={styles.stageHeaderText}>
-                <Text style={styles.stageInstruction}>{stage.instruction}</Text>
-                <Text style={styles.stageMeta}>
-                  {stage.distance}
-                  {stage.distance && stage.duration ? ' · ' : ''}
-                  {stage.duration}
-                </Text>
-              </View>
-            </View>
+        <MaterialCommunityIcons name="arrow-left" size={24} color={COLORS.primary} />
+      </TouchableOpacity>
 
-            {stage.accessible === false && (
-              <View style={styles.warningBlock}>
-                <View style={styles.badgeAtencao}>
-                  <Text style={styles.badgeAtencaoText}>Atencao</Text>
-                </View>
-                {stage.warning ? (
-                  <Text style={styles.warningText}>{stage.warning}</Text>
-                ) : null}
-              </View>
-            )}
+      <TouchableOpacity
+        style={styles.voiceButton}
+        onPress={readRoute}
+        accessibilityLabel="Ouvir instruções da rota"
+        accessibilityRole="button"
+      >
+        <MaterialCommunityIcons
+          name={isReading ? 'stop' : 'volume-high'}
+          size={24}
+          color="#0057A8"
+        />
+      </TouchableOpacity>
 
-            {stage.street_view_image ? (
-              <Image
-                source={{ uri: stage.street_view_image }}
-                style={styles.streetView}
-                resizeMode="cover"
-              />
-            ) : null}
+      <View style={styles.panel}>
+        <View style={styles.headerRow}>
+          <View style={styles.routeTextRow}>
+            <Text numberOfLines={1} style={styles.headerPlace} accessibilityRole="header">
+              {route.origin}
+            </Text>
+            <MaterialCommunityIcons name="arrow-right" size={16} color={COLORS.textMuted} />
+            <Text numberOfLines={1} style={styles.headerPlace} accessibilityRole="header">
+              {route.destination}
+            </Text>
           </View>
-        ))}
-      </ScrollView>
+          <Text style={styles.totalTimeValue}>{route.totalTime}</Text>
+        </View>
+
+        <ScrollView
+          style={styles.stagesScroll}
+          contentContainerStyle={styles.stagesContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {route.stages.map((stage, index) => (
+            <TouchableOpacity
+              key={index}
+              style={styles.stageCard}
+              activeOpacity={0.95}
+              onPress={() => setCurrentStageIndex(index)}
+              accessibilityRole="button"
+              accessibilityLabel={`Etapa ${index + 1} da rota`}
+            >
+              <View style={styles.stageHeader}>
+                <MaterialCommunityIcons
+                  name={MODE_ICONS[stage.mode]}
+                  size={26}
+                  color={COLORS.primary}
+                />
+                <View style={styles.stageHeaderText}>
+                  <Text style={styles.stageInstruction}>{stage.instruction}</Text>
+                  <Text style={styles.stageMeta}>
+                    {stage.distance}
+                    {stage.distance && stage.duration ? ' · ' : ''}
+                    {stage.duration}
+                  </Text>
+                </View>
+              </View>
+
+              {stage.accessible === false && (
+                <View style={styles.warningBlock}>
+                  <View style={styles.badgeAtencao}>
+                    <Text style={styles.badgeAtencaoText}>Atenção</Text>
+                  </View>
+                  {stage.warning ? (
+                    <Text style={styles.warningText}>{stage.warning}</Text>
+                  ) : null}
+                </View>
+              )}
+
+              {stage.street_view_image ? (
+                <Image
+                  source={{ uri: stage.street_view_image }}
+                  style={styles.streetView}
+                  resizeMode="cover"
+                />
+              ) : null}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -291,74 +352,83 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.bg,
   },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: COLORS.bg,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    gap: 10,
+  mapArea: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: MAP_HEIGHT,
   },
   backButton: {
+    position: 'absolute',
+    top: 50,
+    left: 16,
     width: 44,
     height: 44,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    alignSelf: 'flex-start',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 5,
   },
-  topMiddle: {
-    flex: 1,
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    overflow: 'hidden',
-  },
-  readonlyField: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  readonlyLabel: {
-    color: COLORS.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  readonlyValue: {
-    color: COLORS.text,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  fieldDivider: {
-    height: 1,
-    backgroundColor: COLORS.border,
-  },
-  totalTimeBox: {
+  voiceButton: {
+    position: 'absolute',
+    top: 50,
+    right: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'flex-end',
-    minWidth: 72,
-    paddingRight: 4,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 5,
   },
-  totalTimeLabel: {
+  panel: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: PANEL_HEIGHT,
+    backgroundColor: COLORS.panel,
+    borderTopLeftRadius: 40,
+    borderTopRightRadius: 40,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 10,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  routeTextRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginRight: 8,
+  },
+  headerPlace: {
     color: COLORS.textMuted,
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '600',
+    flexShrink: 1,
+    fontFamily: 'Agrandir-Regular',
   },
   totalTimeValue: {
     color: COLORS.primary,
     fontSize: 20,
     fontWeight: '800',
-    marginTop: 2,
-  },
-  mapWrap: {
-    height: MAP_HEIGHT,
-    backgroundColor: COLORS.surface,
+    fontFamily: 'Agrandir-GrandHeavy',
   },
   markerOrigin: {
     width: 18,
@@ -366,7 +436,7 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     backgroundColor: COLORS.primary,
     borderWidth: 2,
-    borderColor: '#E6EDF3',
+    borderColor: '#FFFFFF',
   },
   markerDest: {
     width: 18,
@@ -374,24 +444,19 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     backgroundColor: COLORS.destPin,
     borderWidth: 2,
-    borderColor: '#E6EDF3',
+    borderColor: '#FFFFFF',
   },
   stagesScroll: {
     flex: 1,
-    backgroundColor: COLORS.bg,
   },
   stagesContent: {
-    padding: 16,
-    paddingBottom: 32,
-    gap: 12,
+    paddingBottom: 18,
   },
   stageCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    borderRadius: 12,
     padding: 14,
-    gap: 10,
+    marginTop: 8,
   },
   stageHeader: {
     flexDirection: 'row',
@@ -403,40 +468,46 @@ const styles = StyleSheet.create({
   },
   stageInstruction: {
     color: COLORS.text,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    lineHeight: 22,
+    lineHeight: 21,
+    fontFamily: 'Agrandir-TextBold',
   },
   stageMeta: {
     color: COLORS.textMuted,
-    fontSize: 13,
+    fontSize: 12,
     marginTop: 6,
+    fontFamily: 'Agrandir-Regular',
   },
   warningBlock: {
     gap: 8,
+    marginTop: 10,
   },
   badgeAtencao: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    backgroundColor: COLORS.error,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
   },
   badgeAtencaoText: {
-    color: COLORS.error,
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
+    fontFamily: 'Agrandir-TextBold',
   },
   warningText: {
     color: COLORS.textMuted,
     fontSize: 13,
     lineHeight: 18,
+    fontFamily: 'Agrandir-Regular',
   },
   streetView: {
     width: '100%',
-    height: 160,
+    height: 140,
     borderRadius: 10,
-    backgroundColor: COLORS.border,
+    backgroundColor: '#3B3B3B',
+    marginTop: 10,
   },
   errorBox: {
     flex: 1,
@@ -446,5 +517,6 @@ const styles = StyleSheet.create({
   errorText: {
     color: COLORS.textMuted,
     fontSize: 15,
+    fontFamily: 'Agrandir-Regular',
   },
 });
