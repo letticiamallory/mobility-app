@@ -92,8 +92,8 @@ export default function SplashScreen() {
             style={{ opacity: mOpacity, transform: [{ translateY: mTranslateY }], marginBottom: 12 }}
           >
             <Image
-              source={require('../assets/images/mobility_icon.png')}
-              style={{ width: 140, height: 140, borderRadius: 36 }}
+              source={require('../assets/images/mobility_icon (2).png')}
+              style={{ width: 140, height: 140 }}
               resizeMode="contain"
             />
           </Animated.View>
