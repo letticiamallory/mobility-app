@@ -23,7 +23,7 @@ export default function RootLayout() {
       <Stack>
         <Stack.Screen name="profile" />
       </Stack>
-      <Redirect href="/" />
+      <Redirect href={'/splash' as any} />
     </>
   );
 }

@@ -17,6 +17,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { login, register } from '../services/auth.service';
 import { saveToken, saveUserInfo } from '../services/token.service';
+import WomanAvatarIllustration from '../assets/images/undraw_a-woman-avatar_ifsl.svg';
 
 const SCREEN_H = Dimensions.get('window').height;
 const MENU_MARGIN = 12;
@@ -236,6 +237,7 @@ export default function RegisterScreen() {
 
         <View style={styles.avatarWrap}>
           <View style={styles.avatarCircle}>
+            <WomanAvatarIllustration width={80} height={80} />
             <View style={styles.editBadge}>
               <MaterialCommunityIcons name="pencil" size={14} color="#FFFFFF" />
             </View>
