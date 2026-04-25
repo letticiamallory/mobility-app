@@ -169,6 +169,7 @@ export default function DirectionsScreen() {
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [isPanelAnimated, setIsPanelAnimated] = useState(false);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const [iosKeyboardOffset, setIosKeyboardOffset] = useState(0);
 
   useEffect(() => {
     const loadCurrentLocation = async () => {
@@ -253,6 +254,22 @@ export default function DirectionsScreen() {
     });
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
       setKeyboardOffset(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [insets.bottom]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+
+    const showSub = Keyboard.addListener('keyboardWillShow', (e) => {
+      setIosKeyboardOffset(Math.max(0, e.endCoordinates.height - insets.bottom));
+    });
+    const hideSub = Keyboard.addListener('keyboardWillHide', () => {
+      setIosKeyboardOffset(0);
     });
 
     return () => {
@@ -461,10 +478,6 @@ export default function DirectionsScreen() {
         <MaterialCommunityIcons name="arrow-left" size={24} color="#0057A8" />
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.locationButton} onPress={centerOnCurrentLocation}>
-        <MaterialCommunityIcons name="crosshairs-gps" size={22} color="#0057A8" />
-      </TouchableOpacity>
-
       {guidanceActive && selectedRoute ? (
         <View style={styles.guidanceCard}>
           <Text style={styles.guidanceText}>
@@ -484,6 +497,10 @@ export default function DirectionsScreen() {
           isPanelAnimated ? { height: panelHeight } : null,
         ]}
       >
+        <TouchableOpacity style={styles.locationButton} onPress={centerOnCurrentLocation}>
+          <MaterialCommunityIcons name="crosshairs-gps" size={22} color="#0057A8" />
+        </TouchableOpacity>
+
         <View style={styles.inputBlock}>
           <View style={styles.pointsColumn}>
             <View style={styles.originDot} />
@@ -493,12 +510,56 @@ export default function DirectionsScreen() {
 
           <View style={styles.inputsColumn}>
             <View style={styles.inputRow}>
-              <TextInput
-                style={styles.inputText}
+              <GooglePlacesAutocomplete
                 placeholder={originLocationLoading ? 'Obtendo localização...' : 'Minha localização'}
-                placeholderTextColor="#AAAAAA"
-                value={origin}
-                editable={false}
+                onPress={(data) => setOrigin(data.description)}
+                query={{ key: process.env.EXPO_PUBLIC_GOOGLE_API_KEY ?? '', language: 'pt-BR' }}
+                keyboardShouldPersistTaps="handled"
+                listViewDisplayed="auto"
+                numberOfLines={3}
+                listViewProps={{ nestedScrollEnabled: true }}
+                styles={{
+                  container: { flex: 1 },
+                  textInput: {
+                    flex: 1,
+                    fontSize: 14,
+                    color: '#1E1D1D',
+                    paddingVertical: 12,
+                    fontFamily: 'Agrandir-Regular',
+                    backgroundColor: 'transparent',
+                    margin: 0,
+                    paddingHorizontal: 0,
+                  },
+                  listView: {
+                    maxHeight: 140,
+                    overflow: 'hidden',
+                    backgroundColor: '#FFFFFF',
+                    borderRadius: 12,
+                    marginTop: 4,
+                    marginBottom: 8,
+                    borderWidth: 1,
+                    borderColor: '#EEEEEE',
+                  },
+                  row: {
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                  },
+                  description: {
+                    fontSize: 14,
+                    color: '#1E1D1D',
+                  },
+                  separator: {
+                    height: 1,
+                    backgroundColor: '#EEEEEE',
+                  },
+                }}
+                fetchDetails
+                enablePoweredByContainer={false}
+                textInputProps={{
+                  value: origin,
+                  onChangeText: setOrigin,
+                  placeholderTextColor: '#AAAAAA',
+                }}
               />
             </View>
 
@@ -645,7 +706,7 @@ export default function DirectionsScreen() {
                     })
                   }
                 >
-                  <Text style={styles.detailButtonText}>Ver trajeto �??</Text>
+                  <Text style={styles.detailButtonText}>Ver trajeto</Text>
                 </TouchableOpacity>
                 {selectedRoute?.id === route.id && (
                   <View style={styles.inlineActions}>
@@ -725,7 +786,7 @@ const styles = StyleSheet.create({
   },
   locationButton: {
     position: 'absolute',
-    bottom: 260,
+    top: -58,
     right: 16,
     width: 44,
     height: 44,
@@ -737,7 +798,8 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.12,
     shadowRadius: 8,
-    elevation: 4,
+    elevation: 6,
+    zIndex: 6,
   },
   originMarker: {
     width: 12,
