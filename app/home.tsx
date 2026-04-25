@@ -1,4 +1,4 @@
-﻿import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -120,7 +120,11 @@ export default function HomeScreen() {
             <PaperText style={styles.hello}>Olá, {name || 'Usuário'}!</PaperText>
             <PaperText style={styles.headerTitle}>Para onde você quer ir?</PaperText>
 
-            <View style={styles.searchWrap}>
+            <TouchableOpacity
+              style={styles.searchWrap}
+              onPress={() => router.push('/directions')}
+              activeOpacity={0.9}
+            >
               <TextInput
                 style={styles.searchInput}
                 placeholder="Digite o destino..."
@@ -129,11 +133,12 @@ export default function HomeScreen() {
                 onChangeText={setDestination}
                 onSubmitEditing={submitSearch}
                 returnKeyType="search"
+                editable={false}
               />
-              <TouchableOpacity style={styles.searchButton} onPress={submitSearch}>
+              <View style={styles.searchButton}>
                 <MaterialCommunityIcons name="magnify" size={22} color="#9CA3AF" />
-              </TouchableOpacity>
-            </View>
+              </View>
+            </TouchableOpacity>
           </View>
         </ImageBackground>
 

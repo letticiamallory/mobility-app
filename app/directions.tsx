@@ -1,4 +1,4 @@
-import * as Haptics from 'expo-haptics';
+ï»¿import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
@@ -9,15 +9,11 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import {
-  GooglePlacesAutocomplete,
-  type GooglePlacesAutocompleteRef,
-} from 'react-native-google-places-autocomplete';
 import MapView, { Marker, Polyline } from 'react-native-maps';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { searchRoutes } from '../services/routes.service';
 import { getToken, getUserInfo } from '../services/token.service';
 
@@ -50,18 +46,6 @@ type NormalizedRoute = {
 };
 
 const DEFAULT_TRANSPORT_TYPE = 'bus';
-
-const COLORS = {
-  bg: '#FFFFFF',
-  panel: '#0057A8',
-  primary: '#0057A8',
-  white: '#FFFFFF',
-  pin: '#FF4444',
-  success: '#4ADE80',
-  successBg: 'rgba(34,197,94,0.25)',
-  error: '#FCA5A5',
-  errorBg: 'rgba(239,68,68,0.25)',
-};
 
 function normalizeMode(input: string): RouteLeg {
   const s = input.toLowerCase();
@@ -144,42 +128,9 @@ const LEG_ICONS: Record<RouteLeg, keyof typeof MaterialCommunityIcons.glyphMap> 
   subway: 'subway-variant',
 };
 
-const GOOGLE_PLACES_STYLES = {
-  container: { flex: 1, flexGrow: 0 },
-  textInputContainer: {
-    backgroundColor: 'transparent',
-    borderWidth: 0,
-    borderRadius: 12,
-    paddingHorizontal: 0,
-  },
-  textInput: {
-    backgroundColor: 'transparent',
-    color: '#FFFFFF',
-    fontSize: 14,
-    height: 52,
-    paddingVertical: 0,
-    paddingHorizontal: 0,
-    marginBottom: 0,
-  },
-  listView: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    marginTop: 6,
-  },
-  row: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  description: {
-    color: '#1E1D1D',
-  },
-};
-
 export default function DirectionsScreen() {
   const router = useRouter();
   const mapRef = useRef<MapView>(null);
-  const originPlacesRef = useRef<GooglePlacesAutocompleteRef>(null);
-  const destinationPlacesRef = useRef<GooglePlacesAutocompleteRef>(null);
 
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
@@ -217,7 +168,6 @@ export default function DirectionsScreen() {
         }
 
         setOrigin(resolvedOrigin);
-        originPlacesRef.current?.setAddressText(resolvedOrigin);
       } finally {
         setOriginLocationLoading(false);
       }
@@ -225,6 +175,26 @@ export default function DirectionsScreen() {
 
     loadCurrentLocation();
   }, []);
+
+  useEffect(() => {
+    const geocodeDestination = async () => {
+      const dest = destination.trim();
+      if (!dest) {
+        setDestinationCoord(null);
+        return;
+      }
+      try {
+        const points = await Location.geocodeAsync(dest);
+        if (points.length > 0) {
+          setDestinationCoord({ latitude: points[0].latitude, longitude: points[0].longitude });
+        }
+      } catch {
+        setDestinationCoord(null);
+      }
+    };
+
+    geocodeDestination();
+  }, [destination]);
 
   useEffect(() => {
     if (!mapRef.current || !currentGps) return;
@@ -246,6 +216,19 @@ export default function DirectionsScreen() {
       );
     }
   }, [currentGps, destinationCoord]);
+
+  const centerOnCurrentLocation = () => {
+    if (!currentGps || !mapRef.current) return;
+    mapRef.current.animateToRegion(
+      {
+        latitude: currentGps.latitude,
+        longitude: currentGps.longitude,
+        latitudeDelta: 0.008,
+        longitudeDelta: 0.008,
+      },
+      500,
+    );
+  };
 
   const fetchRoutes = useCallback(async () => {
     const dest = destination.trim();
@@ -315,14 +298,14 @@ export default function DirectionsScreen() {
           </Marker>
         )}
         {destinationCoord && (
-          <Marker coordinate={destinationCoord}>
-            <MaterialCommunityIcons name="map-marker" size={34} color={COLORS.pin} />
+          <Marker coordinate={destinationCoord} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.destinationMarker} />
           </Marker>
         )}
         {currentGps && destinationCoord && (
           <Polyline
             coordinates={[currentGps, destinationCoord]}
-            strokeColor={COLORS.primary}
+            strokeColor="#0057A8"
             strokeWidth={3}
             lineDashPattern={[8, 6]}
           />
@@ -330,78 +313,44 @@ export default function DirectionsScreen() {
       </MapView>
 
       <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-        <MaterialCommunityIcons name="arrow-left" size={24} color={COLORS.primary} />
+        <MaterialCommunityIcons name="arrow-left" size={24} color="#0057A8" />
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.locationButton} onPress={centerOnCurrentLocation}>
+        <MaterialCommunityIcons name="crosshairs-gps" size={22} color="#0057A8" />
       </TouchableOpacity>
 
       <View style={styles.panel}>
-        <Text style={styles.title}>Para onde?</Text>
+        <View style={styles.inputBlock}>
+          <View style={styles.pointsColumn}>
+            <View style={styles.originDot} />
+            <View style={styles.dashedLine} />
+            <MaterialCommunityIcons name="map-marker" size={18} color="#FF4444" />
+          </View>
 
-        <View style={styles.inputRow}>
-          <MaterialCommunityIcons name="circle-medium" size={20} color="#FFFFFF" />
-          <GooglePlacesAutocomplete
-            ref={originPlacesRef}
-            placeholder={originLocationLoading ? 'Obtendo localização...' : 'Local atual'}
-            fetchDetails
-            enablePoweredByContainer={false}
-            keyboardShouldPersistTaps="handled"
-            query={{ key: process.env.EXPO_PUBLIC_GOOGLE_API_KEY ?? '', language: 'pt-BR' }}
-            textInputProps={{
-              placeholderTextColor: 'rgba(255,255,255,0.6)',
-              onChangeText: setOrigin,
-            }}
-            styles={GOOGLE_PLACES_STYLES}
-            onPress={(data, details = null) => {
-              const addr = details?.formatted_address ?? data.description;
-              setOrigin(addr);
-            }}
-          />
-        </View>
+          <View style={styles.inputsColumn}>
+            <View style={styles.inputRow}>
+              <TextInput
+                style={styles.inputText}
+                placeholder={originLocationLoading ? 'Obtendo localizaÃ§Ã£o...' : 'Minha localizaÃ§Ã£o'}
+                placeholderTextColor="#AAAAAA"
+                value={origin}
+                editable={false}
+              />
+            </View>
 
-        <View style={[styles.inputRow, styles.inputGap]}>
-          <MaterialCommunityIcons name="map-marker" size={20} color={COLORS.pin} />
-          <GooglePlacesAutocomplete
-            ref={destinationPlacesRef}
-            placeholder="Para onde?"
-            fetchDetails
-            enablePoweredByContainer={false}
-            keyboardShouldPersistTaps="handled"
-            currentLocation
-            currentLocationLabel="Localização atual"
-            nearbyPlacesAPI="GooglePlacesSearch"
-            filterReverseGeocodingByTypes={['locality', 'administrative_area_level_3']}
-            query={{
-              key: process.env.EXPO_PUBLIC_GOOGLE_API_KEY ?? '',
-              language: 'pt-BR',
-              components: 'country:br',
-              ...(currentGps
-                ? {
-                    location: `${currentGps.latitude},${currentGps.longitude}`,
-                    radius: 50000,
-                  }
-                : {}),
-            }}
-            textInputProps={{
-              placeholderTextColor: 'rgba(255,255,255,0.6)',
-              onChangeText: (text: string) => {
-                setDestination(text);
-                if (!text.trim()) setDestinationCoord(null);
-              },
-            }}
-            styles={GOOGLE_PLACES_STYLES}
-            onPress={(data, details = null) => {
-              const formatted =
-                typeof details?.formatted_address === 'string' ? details.formatted_address.trim() : '';
-              const label = (formatted || String(data.description ?? '').trim()).trim();
-              setDestination(label);
-              destinationPlacesRef.current?.setAddressText(label);
+            <View style={styles.divider} />
 
-              const lat = details?.geometry?.location?.lat;
-              const lng = details?.geometry?.location?.lng;
-              if (typeof lat === 'number' && typeof lng === 'number') {
-                setDestinationCoord({ latitude: lat, longitude: lng });
-              }
-            }}
-          />
+            <View style={styles.inputRow}>
+              <TextInput
+                style={styles.inputText}
+                placeholder="Para onde?"
+                placeholderTextColor="#AAAAAA"
+                value={destination}
+                onChangeText={setDestination}
+              />
+            </View>
+          </View>
         </View>
 
         <TouchableOpacity style={styles.searchButton} onPress={fetchRoutes}>
@@ -410,7 +359,7 @@ export default function DirectionsScreen() {
 
         {loading && (
           <View style={styles.loadingWrap}>
-            <ActivityIndicator size="large" color="#FFFFFF" />
+            <ActivityIndicator size="large" color="#0057A8" />
           </View>
         )}
 
@@ -432,23 +381,23 @@ export default function DirectionsScreen() {
                         key={`${route.id}-${leg}-${i}`}
                         name={LEG_ICONS[leg]}
                         size={20}
-                        color="#FFFFFF"
+                        color="#0057A8"
                       />
                     ))}
                   </View>
                 </View>
 
                 <Text style={styles.routeMeta}>
-                  Distância {route.totalDistance} · Duração {route.totalDuration}
+                  DistÃ¢ncia {route.totalDistance} Â· DuraÃ§Ã£o {route.totalDuration}
                 </Text>
 
                 <View style={styles.badgesRow}>
                   <View style={styles.badgeSuccess}>
-                    <Text style={styles.badgeSuccessText}>Acessível</Text>
+                    <Text style={styles.badgeSuccessText}>AcessÃ­vel</Text>
                   </View>
                   {!route.accessible && (
                     <View style={styles.badgeError}>
-                      <Text style={styles.badgeErrorText}>Atenção</Text>
+                      <Text style={styles.badgeErrorText}>AtenÃ§Ã£o</Text>
                     </View>
                   )}
                 </View>
@@ -462,7 +411,7 @@ export default function DirectionsScreen() {
                     })
                   }
                 >
-                  <Text style={styles.detailButtonText}>Ver trajeto ?</Text>
+                  <Text style={styles.detailButtonText}>Ver trajeto â??</Text>
                 </TouchableOpacity>
               </View>
             ))}
@@ -494,56 +443,110 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
+  locationButton: {
+    position: 'absolute',
+    bottom: 260,
+    right: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+  },
   originMarker: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#0057A8',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
+  },
+  destinationMarker: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#FF4444',
   },
   panel: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#0057A8',
+    backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 40,
     borderTopRightRadius: 40,
     padding: 24,
     paddingBottom: 40,
-    maxHeight: 380,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 8,
+    maxHeight: 430,
   },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 16,
-    fontFamily: 'Agrandir-TextBold',
+  inputBlock: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    marginBottom: 20,
+  },
+  pointsColumn: {
+    width: 24,
+    alignItems: 'center',
+  },
+  originDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#0057A8',
+    marginTop: 14,
+  },
+  dashedLine: {
+    flex: 1,
+    borderLeftWidth: 1,
+    borderLeftColor: '#CCCCCC',
+    borderStyle: 'dashed',
+    marginVertical: 4,
+  },
+  destinationDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#FF4444',
+    marginBottom: 14,
+  },
+  inputsColumn: {
+    flex: 1,
+    marginLeft: 12,
   },
   inputRow: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 12,
-    height: 52,
-    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
   },
-  inputGap: {
-    marginTop: 10,
+  inputText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1E1D1D',
+    paddingVertical: 12,
+    fontFamily: 'Agrandir-Regular',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#EEEEEE',
   },
   searchButton: {
-    marginTop: 16,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#0057A8',
     borderRadius: 40,
     height: 52,
+    marginTop: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   searchButtonText: {
-    color: '#0057A8',
-    fontWeight: '800',
+    color: '#FFFFFF',
+    fontWeight: '700',
     fontSize: 15,
     fontFamily: 'Agrandir-TextBold',
   },
@@ -552,26 +555,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   errorText: {
-    color: '#FCA5A5',
+    color: '#ef4444',
     marginTop: 10,
     textAlign: 'center',
     fontFamily: 'Agrandir-Regular',
   },
   emptyText: {
-    color: 'rgba(255,255,255,0.8)',
+    color: '#666666',
     marginTop: 10,
     textAlign: 'center',
     fontFamily: 'Agrandir-Regular',
   },
   resultsScroll: {
-    marginTop: 10,
-    maxHeight: 380,
+    marginTop: 8,
+    maxHeight: 280,
   },
   resultsContent: {
     paddingBottom: 14,
   },
   routeCard: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: '#F5F5F5',
     borderRadius: 16,
     padding: 16,
     marginTop: 10,
@@ -582,8 +585,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   routeTime: {
-    color: '#FFFFFF',
-    fontSize: 24,
+    color: '#0057A8',
+    fontSize: 22,
     fontWeight: '800',
     fontFamily: 'Agrandir-GrandHeavy',
   },
@@ -592,9 +595,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   routeMeta: {
-    color: 'rgba(255,255,255,0.7)',
+    color: '#666666',
     fontSize: 13,
-    marginTop: 6,
+    marginTop: 4,
     fontFamily: 'Agrandir-Regular',
   },
   badgesRow: {
@@ -625,7 +628,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Agrandir-Regular',
   },
   detailButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#0057A8',
     borderRadius: 40,
     height: 40,
     marginTop: 12,
@@ -633,7 +636,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   detailButtonText: {
-    color: '#0057A8',
+    color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 14,
     fontFamily: 'Agrandir-TextBold',
