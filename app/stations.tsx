@@ -82,21 +82,35 @@ const getWalkTime = (distanceNum: number): string => {
 const getMinutesUntil = (time: string): number => {
   const now = new Date();
   const [h, m] = time.split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return 0;
+
   const target = new Date();
-  target.setHours(h, m, 0);
+  target.setHours(h, m, 0, 0);
+  if (target.getTime() < now.getTime()) {
+    target.setDate(target.getDate() + 1);
+  }
+
   return Math.max(0, (target.getTime() - now.getTime()) / 60000);
+};
+
+const formatArrivalTime = (minutesRaw: number): string => {
+  const minutes = Math.max(0, Math.round(minutesRaw));
+  if (minutes < 60) return `${minutes} min`;
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (remainingMinutes === 0) return `${hours}h`;
+  return `${hours}h ${remainingMinutes}min`;
 };
 
 const getArrivalStatus = (nextBus: string | null, distanceNum: number) => {
   if (!nextBus) return null;
-  const now = new Date();
   const [h, m] = nextBus.split(':').map(Number);
-  const busTime = new Date();
-  busTime.setHours(h, m, 0);
-  const minutesUntilBus = (busTime.getTime() - now.getTime()) / 60000;
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+
+  const minutesUntilBus = getMinutesUntil(nextBus);
   const walkMinutes = distanceNum / 80;
 
-  if (minutesUntilBus < 0) return { status: 'passed', label: 'Ônibus já passou', color: '#EF4444' };
   if (walkMinutes <= minutesUntilBus) return { status: 'ok', label: 'Você chegará a tempo', color: '#22c55e' };
   return { status: 'late', label: 'Pode não chegar a tempo', color: '#F59E0B' };
 };
@@ -144,7 +158,7 @@ export default function StationsScreen() {
   const [search, setSearch] = useState('');
   const [stations, setStations] = useState<Station[]>([]);
   const [filtered, setFiltered] = useState<Station[]>([]);
-  const [selectedTab, setSelectedTab] = useState<'all' | 'favorites' | 'nearby'>('all');
+  const [selectedTab, setSelectedTab] = useState<'all' | 'favorites'>('all');
   const [selectedStation, setSelectedStation] = useState<Station | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [isDemo, setIsDemo] = useState(false);
@@ -263,11 +277,24 @@ export default function StationsScreen() {
     if (selectedTab === 'favorites') {
       next = next.filter((station) => favorites.includes(station.id));
     }
-    if (selectedTab === 'nearby') {
-      next = [...next].sort((a, b) => a.distanceNum - b.distanceNum);
+    next = [...next].sort((a, b) => {
+      if (!userLocation) return a.distanceNum - b.distanceNum;
+      return (
+        calculateDistanceNum(userLocation.latitude, userLocation.longitude, a.lat, a.lng) -
+        calculateDistanceNum(userLocation.latitude, userLocation.longitude, b.lat, b.lng)
+      );
+    });
+    if (userLocation) {
+      next = next.filter((station) => {
+        const status = getArrivalStatus(
+          station.nextBus,
+          calculateDistanceNum(userLocation.latitude, userLocation.longitude, station.lat, station.lng),
+        );
+        return status?.status === 'ok';
+      });
     }
     setFiltered(next);
-  }, [stations, search, selectedTab, favorites]);
+  }, [stations, search, selectedTab, favorites, userLocation]);
 
   const toggleFavorite = async (id: string) => {
     const newFavs = favorites.includes(id) ? favorites.filter((f) => f !== id) : [...favorites, id];
@@ -317,7 +344,7 @@ export default function StationsScreen() {
     ];
   }, [selectedStation]);
 
-  const nearestStations = useMemo(() => {
+  const nearestAccessibleStation = useMemo(() => {
     if (!userLocation || stations.length === 0) return [];
 
     const sorted = [...stations].sort((a, b) =>
@@ -325,16 +352,8 @@ export default function StationsScreen() {
       calculateDistanceNum(userLocation.latitude, userLocation.longitude, b.lat, b.lng),
     );
 
-    const first = sorted[0];
-
-    let second;
-    if (!first.accessible) {
-      second = sorted.find((s) => s.id !== first.id && s.accessible) ?? sorted[1];
-    } else {
-      second = sorted[1];
-    }
-
-    return [first, second].filter(Boolean);
+    const nearestAccessible = sorted.find((s) => s.accessible) ?? sorted[0];
+    return nearestAccessible ? [nearestAccessible] : [];
   }, [stations, userLocation]);
 
   return (
@@ -408,10 +427,6 @@ export default function StationsScreen() {
           <Text style={[styles.tabText, selectedTab === 'favorites' && styles.tabTextActive]}>Favoritas</Text>
           <View style={[styles.tabLine, selectedTab === 'favorites' && styles.tabLineActive]} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabButton} onPress={() => setSelectedTab('nearby')}>
-          <Text style={[styles.tabText, selectedTab === 'nearby' && styles.tabTextActive]}>Próximas</Text>
-          <View style={[styles.tabLine, selectedTab === 'nearby' && styles.tabLineActive]} />
-        </TouchableOpacity>
       </View>
 
       {loading ? (
@@ -422,8 +437,8 @@ export default function StationsScreen() {
         <SectionList
           ListHeaderComponent={
             <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
-              {nearestStations
-                .filter((_, index) => index === 1)
+              {nearestAccessibleStation
+                .slice(0, 1)
                 .map((station) => (
                 <View
                   key={station.id}
@@ -491,7 +506,7 @@ export default function StationsScreen() {
                       )}
                     </View>
 
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginTop: 6 }}>
                       <View style={{ alignItems: 'flex-start', gap: 6 }}>
                         {station.accessible ? (
                           <View
@@ -526,13 +541,16 @@ export default function StationsScreen() {
                         )}
                       </View>
                       {station.nextBus && (
+                      <View style={{ alignItems: 'flex-end' }}>
                         <Text style={{ color: '#22c55e', fontSize: 13, fontWeight: '700' }}>
-                          {Math.round(getMinutesUntil(station.nextBus))} min
+                          Ônibus em {formatArrivalTime(getMinutesUntil(station.nextBus))}
                         </Text>
+                        <Text style={{ color: '#999999', fontSize: 11 }}>{station.nextBus}</Text>
+                      </View>
                       )}
                     </View>
 
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
                       {station.lines.map((lineCode) => (
                         <View
                           key={lineCode}
@@ -574,7 +592,7 @@ export default function StationsScreen() {
               title: 'Ônibus',
               type: 'bus' as const,
               icon: 'bus' as const,
-              data: filtered.filter((s) => s.type === 'bus' && s.id !== nearestStations[0]?.id),
+              data: filtered.filter((s) => s.type === 'bus' && s.id !== nearestAccessibleStation[0]?.id),
             },
           ]}
           keyExtractor={(item) => item.id}
@@ -670,7 +688,7 @@ export default function StationsScreen() {
                     ) : null}
                   </View>
 
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginTop: 6 }}>
                     <View style={{ alignItems: 'flex-start', gap: 6 }}>
                       {item.accessible ? (
                         <View style={styles.accessibleBadge}>
@@ -693,9 +711,12 @@ export default function StationsScreen() {
                       )}
                     </View>
                     {item.nextBus ? (
-                      <Text style={{ color: '#22c55e', fontSize: 13, fontWeight: '700' }}>
-                        {Math.round(getMinutesUntil(item.nextBus))} min
-                      </Text>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={{ color: '#22c55e', fontSize: 13, fontWeight: '700' }}>
+                          Ônibus em {formatArrivalTime(getMinutesUntil(item.nextBus))}
+                        </Text>
+                        <Text style={{ color: '#999999', fontSize: 11 }}>{item.nextBus}</Text>
+                      </View>
                     ) : null}
                   </View>
 
@@ -764,7 +785,20 @@ export default function StationsScreen() {
           </View>
 
           <Text style={styles.arrivalsTitle}>Próximas chegadas</Text>
-          {selectedStation?.lines.map((lineCode) => {
+          {selectedStation?.lines
+            .filter((lineCode) => {
+              const distanceNum = userLocation
+                ? calculateDistanceNum(
+                    userLocation.latitude,
+                    userLocation.longitude,
+                    selectedStation.lat,
+                    selectedStation.lng,
+                  )
+                : selectedStation.distanceNum;
+              const arrivalStatus = getArrivalStatus(selectedStation.nextBus, distanceNum);
+              return arrivalStatus?.status === 'ok';
+            })
+            .map((lineCode) => {
             const distanceNum = userLocation
               ? calculateDistanceNum(
                   userLocation.latitude,
@@ -797,7 +831,7 @@ export default function StationsScreen() {
                   <View style={styles.arrivalRight}>
                     <Text style={styles.arrivalMinutes}>
                       {selectedStation.nextBus
-                        ? `${Math.round(getMinutesUntil(selectedStation.nextBus))} min`
+                        ? formatArrivalTime(getMinutesUntil(selectedStation.nextBus))
                         : '--'}
                     </Text>
                     <Text style={styles.arrivalClock}>{selectedStation.nextBus ?? ''}</Text>
@@ -930,7 +964,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   notAccessibleBadgeText: { color: '#EF4444', fontSize: 11, fontWeight: '600' },
-  linesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 8 },
+  linesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   lineChip: { backgroundColor: '#FFFFFF', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden', position: 'relative' },
   lineChipText: { color: '#1E1D1D', fontSize: 11, fontWeight: '600' },
   lineChipBottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5 },
