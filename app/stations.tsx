@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
-  FlatList,
+  SectionList,
+  Image,
   Modal,
   SafeAreaView,
   StyleSheet,
@@ -22,6 +23,7 @@ import { getToken } from '../services/token.service';
 
 type Station = {
   id: string;
+  type: 'bus' | 'subway';
   name: string;
   address: string;
   distance: string;
@@ -36,15 +38,80 @@ type Station = {
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MAP_CENTER = { latitude: -16.7167, longitude: -43.8647 };
 
+const getLineColor = (code: string): string => {
+  const colors = [
+    '#E53935', '#FB8C00', '#43A047', '#1E88E5',
+    '#8E24AA', '#00897B', '#F4511E', '#D81B60',
+    '#6D4C41', '#546E7A', '#039BE5', '#7CB342',
+    '#FFB300', '#3949AB', '#00ACC1', '#E91E63',
+  ];
+  const hash = code.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return colors[hash % colors.length];
+};
+
+const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): string => {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return dist < 1000 ? `${Math.round(dist)}m` : `${(dist / 1000).toFixed(1)}km`;
+};
+
+const calculateDistanceNum = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const getWalkTime = (distanceNum: number): string => {
+  const minutes = Math.round(distanceNum / 80);
+  return minutes < 1 ? '1 min a pé' : `${minutes} min a pé`;
+};
+
+const getMinutesUntil = (time: string): number => {
+  const now = new Date();
+  const [h, m] = time.split(':').map(Number);
+  const target = new Date();
+  target.setHours(h, m, 0);
+  return Math.max(0, (target.getTime() - now.getTime()) / 60000);
+};
+
+const getArrivalStatus = (nextBus: string | null, distanceNum: number) => {
+  if (!nextBus) return null;
+  const now = new Date();
+  const [h, m] = nextBus.split(':').map(Number);
+  const busTime = new Date();
+  busTime.setHours(h, m, 0);
+  const minutesUntilBus = (busTime.getTime() - now.getTime()) / 60000;
+  const walkMinutes = distanceNum / 80;
+
+  if (minutesUntilBus < 0) return { status: 'passed', label: 'Ônibus já passou', color: '#EF4444' };
+  if (walkMinutes <= minutesUntilBus) return { status: 'ok', label: 'Você chegará a tempo', color: '#22c55e' };
+  return { status: 'late', label: 'Pode não chegar a tempo', color: '#F59E0B' };
+};
+
+const getLineName = (lineCode: string): string => `Linha ${lineCode}`;
+
 const MOCK_STATIONS: Station[] = [
-  { id: '1', name: 'Terminal Central', address: 'Praça Dr. Carlos Versiani, Centro', distance: '200m', distanceNum: 200, accessible: true, lines: ['1501', '1701', '2201', '6201'], nextBus: '09:15', lat: -16.729, lng: -43.8617 },
-  { id: '2', name: 'Parada Ibituruna', address: 'Av. Deputado Esteves Rodrigues, Ibituruna', distance: '1,2km', distanceNum: 1200, accessible: true, lines: ['5801', '6901'], nextBus: '09:22', lat: -16.7089, lng: -43.8723 },
-  { id: '3', name: 'Parada Montes Claros Shopping', address: 'Av. Donato Quintino, Cidade Nova', distance: '2,1km', distanceNum: 2100, accessible: true, lines: ['2603', '3301'], nextBus: '09:30', lat: -16.7445, lng: -43.8534 },
-  { id: '4', name: 'Parada Unimontes', address: 'Av. Rui Braga, Vila Mauricéia', distance: '3,4km', distanceNum: 3400, accessible: true, lines: ['6901', '7101'], nextBus: '09:18', lat: -16.7012, lng: -43.8456 },
-  { id: '5', name: 'Parada Hospital Aroldo Tourinho', address: 'Av. Silvio Menicucci, Funcionários', distance: '1,8km', distanceNum: 1800, accessible: true, lines: ['4601', '5801'], nextBus: '09:45', lat: -16.7234, lng: -43.8789 },
-  { id: '6', name: 'Parada Parque Cândido Portinari', address: 'Av. Osmane Barbosa, JK', distance: '2,5km', distanceNum: 2500, accessible: false, lines: ['2201', '3301'], nextBus: null, lat: -16.7167, lng: -43.8345 },
-  { id: '7', name: 'Parada Rodoviária', address: 'Praça Presidente Tancredo Neves, Canelas', distance: '3,0km', distanceNum: 3000, accessible: true, lines: ['1601', '5601'], nextBus: '09:50', lat: -16.7389, lng: -43.8678 },
-  { id: '8', name: 'Parada UFMG', address: 'Av. Universitária, Universitário', distance: '4,2km', distanceNum: 4200, accessible: true, lines: ['2201', '5101'], nextBus: '10:00', lat: -16.6978, lng: -43.8512 },
+  { id: '1', type: 'bus', name: 'Terminal Central', address: 'Praça Dr. Carlos Versiani, Centro', distance: '200m', distanceNum: 200, accessible: true, lines: ['1501', '1701', '2201', '6201'], nextBus: '09:15', lat: -16.729, lng: -43.8617 },
+  { id: '2', type: 'bus', name: 'Parada Ibituruna', address: 'Av. Deputado Esteves Rodrigues, Ibituruna', distance: '1,2km', distanceNum: 1200, accessible: true, lines: ['5801', '6901'], nextBus: '09:22', lat: -16.7089, lng: -43.8723 },
+  { id: '3', type: 'bus', name: 'Parada Montes Claros Shopping', address: 'Av. Donato Quintino, Cidade Nova', distance: '2,1km', distanceNum: 2100, accessible: true, lines: ['2603', '3301'], nextBus: '09:30', lat: -16.7445, lng: -43.8534 },
+  { id: '4', type: 'bus', name: 'Parada Unimontes', address: 'Av. Rui Braga, Vila Mauricéia', distance: '3,4km', distanceNum: 3400, accessible: true, lines: ['6901', '7101'], nextBus: '09:18', lat: -16.7012, lng: -43.8456 },
+  { id: '5', type: 'bus', name: 'Parada Hospital Aroldo Tourinho', address: 'Av. Silvio Menicucci, Funcionários', distance: '1,8km', distanceNum: 1800, accessible: true, lines: ['4601', '5801'], nextBus: '09:45', lat: -16.7234, lng: -43.8789 },
+  { id: '6', type: 'bus', name: 'Parada Parque Cândido Portinari', address: 'Av. Osmane Barbosa, JK', distance: '2,5km', distanceNum: 2500, accessible: false, lines: ['2201', '3301'], nextBus: null, lat: -16.7167, lng: -43.8345 },
+  { id: '7', type: 'bus', name: 'Parada Rodoviária', address: 'Praça Presidente Tancredo Neves, Canelas', distance: '3,0km', distanceNum: 3000, accessible: true, lines: ['1601', '5601'], nextBus: '09:50', lat: -16.7389, lng: -43.8678 },
+  { id: '8', type: 'bus', name: 'Parada UFMG', address: 'Av. Universitária, Universitário', distance: '4,2km', distanceNum: 4200, accessible: true, lines: ['2201', '5101'], nextBus: '10:00', lat: -16.6978, lng: -43.8512 },
 ];
 
 function parseStations(data: unknown): Station[] {
@@ -53,6 +120,7 @@ function parseStations(data: unknown): Station[] {
     const row = raw as Record<string, unknown>;
     return {
       id: String(row.id ?? `s-${index}`),
+      type: row.type === 'subway' ? 'subway' : 'bus',
       name: String(row.name ?? 'Estação'),
       address: String(row.address ?? '-'),
       distance: String(row.distance ?? '-'),
@@ -76,12 +144,15 @@ export default function StationsScreen() {
   const [search, setSearch] = useState('');
   const [stations, setStations] = useState<Station[]>([]);
   const [filtered, setFiltered] = useState<Station[]>([]);
-  const [selectedTab, setSelectedTab] = useState<'around' | 'favorites'>('around');
+  const [selectedTab, setSelectedTab] = useState<'all' | 'favorites' | 'nearby'>('all');
   const [selectedStation, setSelectedStation] = useState<Station | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [isDemo, setIsDemo] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [reviewStats, setReviewStats] = useState<Record<string, { average: number; total: number }>>({});
+  const [stationPhotos, setStationPhotos] = useState<Record<string, string>>({});
+  const [photoErrors, setPhotoErrors] = useState<Record<string, boolean>>({});
+  const [sheetPhotoError, setSheetPhotoError] = useState(false);
 
   const sheetTranslateY = sheetAnim.interpolate({
     inputRange: [0, 1],
@@ -152,6 +223,34 @@ export default function StationsScreen() {
     loadRatings();
   }, [stations]);
 
+  const fetchStationPhoto = async (station: Station) => {
+    try {
+      const apiKey = process.env.EXPO_PUBLIC_GOOGLE_API_KEY;
+      const searchUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(station.name + ' Montes Claros')}&inputtype=textquery&fields=photos,place_id&key=${apiKey}`;
+      const searchRes = await fetch(searchUrl);
+      const searchData = await searchRes.json();
+
+      const photoRef = searchData.candidates?.[0]?.photos?.[0]?.photo_reference as string | undefined;
+      if (photoRef) {
+        const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${photoRef}&key=${apiKey}`;
+        setStationPhotos((prev) => ({ ...prev, [station.id]: photoUrl }));
+      } else {
+        const svUrl = `https://maps.googleapis.com/maps/api/streetview?size=400x200&location=${station.lat},${station.lng}&pitch=-15&fov=80&key=${apiKey}`;
+        setStationPhotos((prev) => ({ ...prev, [station.id]: svUrl }));
+      }
+    } catch {
+      // sem foto
+    }
+  };
+
+  useEffect(() => {
+    stations.forEach((s) => {
+      if (!stationPhotos[s.id]) {
+        fetchStationPhoto(s);
+      }
+    });
+  }, [stations]);
+
   useEffect(() => {
     let next = [...stations];
     if (search.trim()) {
@@ -163,7 +262,8 @@ export default function StationsScreen() {
     }
     if (selectedTab === 'favorites') {
       next = next.filter((station) => favorites.includes(station.id));
-    } else {
+    }
+    if (selectedTab === 'nearby') {
       next = [...next].sort((a, b) => a.distanceNum - b.distanceNum);
     }
     setFiltered(next);
@@ -176,6 +276,7 @@ export default function StationsScreen() {
   };
 
   const openSheet = (station: Station) => {
+    setSheetPhotoError(false);
     setSelectedStation(station);
     mapRef.current?.animateToRegion(
       {
@@ -215,6 +316,26 @@ export default function StationsScreen() {
       '13:10',
     ];
   }, [selectedStation]);
+
+  const nearestStations = useMemo(() => {
+    if (!userLocation || stations.length === 0) return [];
+
+    const sorted = [...stations].sort((a, b) =>
+      calculateDistanceNum(userLocation.latitude, userLocation.longitude, a.lat, a.lng) -
+      calculateDistanceNum(userLocation.latitude, userLocation.longitude, b.lat, b.lng),
+    );
+
+    const first = sorted[0];
+
+    let second;
+    if (!first.accessible) {
+      second = sorted.find((s) => s.id !== first.id && s.accessible) ?? sorted[1];
+    } else {
+      second = sorted[1];
+    }
+
+    return [first, second].filter(Boolean);
+  }, [stations, userLocation]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -279,13 +400,17 @@ export default function StationsScreen() {
       </MapView>
 
       <View style={styles.tabsRow}>
-        <TouchableOpacity style={styles.tabButton} onPress={() => setSelectedTab('around')}>
-          <Text style={[styles.tabText, selectedTab === 'around' && styles.tabTextActive]}>Ao redor</Text>
-          <View style={[styles.tabLine, selectedTab === 'around' && styles.tabLineActive]} />
+        <TouchableOpacity style={styles.tabButton} onPress={() => setSelectedTab('all')}>
+          <Text style={[styles.tabText, selectedTab === 'all' && styles.tabTextActive]}>Todos</Text>
+          <View style={[styles.tabLine, selectedTab === 'all' && styles.tabLineActive]} />
         </TouchableOpacity>
         <TouchableOpacity style={styles.tabButton} onPress={() => setSelectedTab('favorites')}>
           <Text style={[styles.tabText, selectedTab === 'favorites' && styles.tabTextActive]}>Favoritas</Text>
           <View style={[styles.tabLine, selectedTab === 'favorites' && styles.tabLineActive]} />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.tabButton} onPress={() => setSelectedTab('nearby')}>
+          <Text style={[styles.tabText, selectedTab === 'nearby' && styles.tabTextActive]}>Próximas</Text>
+          <View style={[styles.tabLine, selectedTab === 'nearby' && styles.tabLineActive]} />
         </TouchableOpacity>
       </View>
 
@@ -294,45 +419,297 @@ export default function StationsScreen() {
           <Text style={styles.emptyText}>Carregando estações...</Text>
         </View>
       ) : (
-        <FlatList
-          data={filtered}
+        <SectionList
+          ListHeaderComponent={
+            <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
+              {nearestStations
+                .filter((_, index) => index === 1)
+                .map((station) => (
+                <View
+                  key={station.id}
+                  style={{
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 8,
+                    marginTop: 4,
+                    borderRadius: 16,
+                    overflow: 'hidden',
+                    shadowColor: '#000',
+                    shadowOpacity: 0.08,
+                    shadowRadius: 8,
+                    elevation: 3,
+                    borderWidth: 1.5,
+                    borderColor: station.accessible ? '#22c55e' : '#CCCCCC',
+                  }}
+                >
+                  <View
+                    style={{
+                      backgroundColor: station.accessible ? '#22c55e' : '#999999',
+                      paddingHorizontal: 14,
+                      paddingVertical: 6,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <MaterialCommunityIcons name="map-marker-radius" size={14} color="#FFFFFF" />
+                    <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
+                      {station.accessible ? 'Opção acessível mais próxima' : '2ª estação mais próxima'}
+                    </Text>
+                  </View>
+
+                  <View style={{ padding: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={{ color: '#1E1D1D', fontSize: 15, fontWeight: '700' }}>{station.name}</Text>
+                        <Text style={{ color: '#999999', fontSize: 12, marginTop: 2 }}>{station.address}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                          <MaterialCommunityIcons name="walk" size={13} color="#0057A8" />
+                          <Text style={{ color: '#0057A8', fontSize: 12, fontWeight: '600' }}>
+                            {userLocation
+                              ? calculateDistance(userLocation.latitude, userLocation.longitude, station.lat, station.lng)
+                              : station.distance}
+                            {' • '}
+                            {userLocation
+                              ? getWalkTime(
+                                  calculateDistanceNum(
+                                    userLocation.latitude,
+                                    userLocation.longitude,
+                                    station.lat,
+                                    station.lng,
+                                  ),
+                                )
+                              : ''}
+                          </Text>
+                        </View>
+                      </View>
+                      {stationPhotos[station.id] && (
+                        <Image
+                          source={{ uri: stationPhotos[station.id] }}
+                          style={{ width: 64, height: 64, borderRadius: 8 }}
+                          resizeMode="cover"
+                        />
+                      )}
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                      <View style={{ alignItems: 'flex-start', gap: 6 }}>
+                        {station.accessible ? (
+                          <View
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                              backgroundColor: '#DCFCE7',
+                              borderRadius: 6,
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                            }}
+                          >
+                            <MaterialCommunityIcons name="wheelchair-accessibility" size={12} color="#16A34A" />
+                            <Text style={{ color: '#16A34A', fontSize: 11, fontWeight: '600' }}>Acessível</Text>
+                          </View>
+                        ) : (
+                          <View
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                              backgroundColor: '#FEE2E2',
+                              borderRadius: 6,
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                            }}
+                          >
+                            <MaterialCommunityIcons name="wheelchair-accessibility" size={12} color="#EF4444" />
+                            <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '600' }}>Não acessível</Text>
+                          </View>
+                        )}
+                      </View>
+                      {station.nextBus && (
+                        <Text style={{ color: '#22c55e', fontSize: 13, fontWeight: '700' }}>
+                          {Math.round(getMinutesUntil(station.nextBus))} min
+                        </Text>
+                      )}
+                    </View>
+
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                      {station.lines.map((lineCode) => (
+                        <View
+                          key={lineCode}
+                          style={{
+                            backgroundColor: '#FFFFFF',
+                            borderRadius: 6,
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <Text style={{ color: '#1E1D1D', fontSize: 12, fontWeight: '700' }}>{lineCode}</Text>
+                          <View
+                            style={{
+                              position: 'absolute',
+                              bottom: 0,
+                              left: 0,
+                              right: 0,
+                              height: 2.5,
+                              backgroundColor: getLineColor(lineCode),
+                            }}
+                          />
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </View>
+          }
+          sections={[
+            {
+              title: 'Metrô',
+              type: 'metro' as const,
+              icon: 'subway-variant' as const,
+              data: filtered.filter((s) => s.type === 'subway'),
+            },
+            {
+              title: 'Ônibus',
+              type: 'bus' as const,
+              icon: 'bus' as const,
+              data: filtered.filter((s) => s.type === 'bus' && s.id !== nearestStations[0]?.id),
+            },
+          ]}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.card} onPress={() => openSheet(item)}>
-              <View style={styles.iconCircle}>
-                <MaterialCommunityIcons name="bus" size={22} color="#0057A8" />
+          renderSectionHeader={({ section }) => (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 16,
+                paddingVertical: 12,
+                backgroundColor: '#FFFFFF',
+                borderTopWidth: 1,
+                borderTopColor: '#EEEEEE',
+                borderBottomWidth: 1,
+                borderBottomColor: '#EEEEEE',
+                marginTop: 8,
+                width: '100%',
+                alignSelf: 'stretch',
+              }}
+            >
+              <MaterialCommunityIcons
+                name={section.type === 'metro' ? 'subway-variant' : 'bus'}
+                size={18}
+                color="#1E1D1D"
+              />
+              <Text style={{ color: '#1E1D1D', fontSize: 14, fontWeight: '700', marginLeft: 8 }}>
+                {section.type === 'metro' ? 'Metrô' : 'Ônibus'}
+              </Text>
+            </View>
+          )}
+          renderSectionFooter={({ section }) =>
+            section.type === 'metro' && section.data.length === 0 ? (
+              <View style={styles.metroEmptyWrap}>
+                <MaterialCommunityIcons name="subway-variant" size={32} color="#CCCCCC" />
+                <Text style={styles.metroEmptyText}>
+                  Nenhuma estação de metrô{'\n'}encontrada na sua região
+                </Text>
               </View>
-              <View style={styles.cardMain}>
-                <Text style={styles.cardTitle}>{item.name}</Text>
-                <Text style={styles.cardAddress}>{item.address}</Text>
-                <View style={styles.linesWrap}>
-                  {item.lines.map((line) => (
-                    <View key={`${item.id}-${line}`} style={styles.lineChip}>
-                      <Text style={styles.lineChipText}>{line}</Text>
+            ) : null
+          }
+          renderItem={({ item, index, section }) => (
+            <TouchableOpacity
+              style={[
+                styles.card,
+                section.type === 'bus' && index === 0 ? { marginTop: 8 } : null,
+              ]}
+              onPress={() => openSheet(item)}
+            >
+              <View style={styles.cardRow}>
+                <View style={styles.cardMain}>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={styles.cardTitle}>{item.name}</Text>
+                      <Text style={styles.cardAddress}>{item.address}</Text>
+                      <View style={styles.walkInfoRow}>
+                        <MaterialCommunityIcons name="walk" size={13} color="#0057A8" />
+                        <Text style={styles.walkInfoText}>
+                          {userLocation
+                            ? calculateDistance(
+                                userLocation.latitude,
+                                userLocation.longitude,
+                                item.lat,
+                                item.lng,
+                              )
+                            : item.distance}
+                          {' • '}
+                          {userLocation
+                            ? getWalkTime(
+                                calculateDistanceNum(
+                                  userLocation.latitude,
+                                  userLocation.longitude,
+                                  item.lat,
+                                  item.lng,
+                                ),
+                              )
+                            : ''}
+                        </Text>
+                      </View>
                     </View>
-                  ))}
-                </View>
-                {item.nextBus ? <Text style={styles.nextText}>Próximo: {item.nextBus}</Text> : null}
-                {(reviewStats[item.id]?.total ?? 0) > 0 ? (
-                  <View style={styles.ratingRow}>
-                    <Text style={styles.ratingStars}>
-                      {'★'.repeat(Math.round(reviewStats[item.id].average))}
-                      {'☆'.repeat(5 - Math.round(reviewStats[item.id].average))}
-                    </Text>
-                    <Text style={styles.ratingValue}>{reviewStats[item.id].average.toFixed(1)}</Text>
+                    {!photoErrors[item.id] && stationPhotos[item.id] ? (
+                      <Image
+                        source={{ uri: stationPhotos[item.id] }}
+                        style={{ width: 64, height: 64, borderRadius: 8 }}
+                        resizeMode="cover"
+                        onError={() =>
+                          setPhotoErrors((prev) => ({
+                            ...prev,
+                            [item.id]: true,
+                          }))
+                        }
+                      />
+                    ) : null}
                   </View>
-                ) : null}
-              </View>
-              <View style={styles.cardRight}>
-                <Text style={styles.distanceText}>{item.distance}</Text>
-                <TouchableOpacity onPress={() => toggleFavorite(item.id)} style={styles.favoriteBtn}>
-                  <MaterialCommunityIcons
-                    name={favorites.includes(item.id) ? 'heart' : 'heart-outline'}
-                    size={18}
-                    color="#FF4444"
-                  />
-                </TouchableOpacity>
+
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                    <View style={{ alignItems: 'flex-start', gap: 6 }}>
+                      {item.accessible ? (
+                        <View style={styles.accessibleBadge}>
+                          <MaterialCommunityIcons
+                            name="wheelchair-accessibility"
+                            size={12}
+                            color="#16A34A"
+                          />
+                          <Text style={styles.accessibleBadgeText}>Acessível</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.notAccessibleBadge}>
+                          <MaterialCommunityIcons
+                            name="wheelchair-accessibility"
+                            size={12}
+                            color="#EF4444"
+                          />
+                          <Text style={styles.notAccessibleBadgeText}>Não acessível</Text>
+                        </View>
+                      )}
+                    </View>
+                    {item.nextBus ? (
+                      <Text style={{ color: '#22c55e', fontSize: 13, fontWeight: '700' }}>
+                        {Math.round(getMinutesUntil(item.nextBus))} min
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.linesWrap}>
+                    {item.lines.map((line) => (
+                      <View key={`${item.id}-${line}`} style={styles.lineChip}>
+                        <Text style={styles.lineChipText}>{line}</Text>
+                        <View
+                          style={[styles.lineChipBottomBar, { backgroundColor: getLineColor(line) }]}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                </View>
               </View>
             </TouchableOpacity>
           )}
@@ -345,6 +722,17 @@ export default function StationsScreen() {
           <View style={styles.handle} />
           <Text style={styles.sheetTitle}>{selectedStation?.name}</Text>
           <Text style={styles.sheetAddress}>{selectedStation?.address}</Text>
+
+          {!sheetPhotoError && selectedStation ? (
+            <View style={styles.sheetPhotoContainer}>
+              <Image
+                source={{ uri: stationPhotos[selectedStation.id] }}
+                style={styles.sheetPhoto}
+                resizeMode="cover"
+                onError={() => setSheetPhotoError(true)}
+              />
+            </View>
+          ) : null}
 
           {selectedStation ? (
             <MapView
@@ -368,9 +756,62 @@ export default function StationsScreen() {
                 onPress={() => router.push({ pathname: '/lines', params: { search: line } })}
               >
                 <Text style={styles.sheetLineChipText}>{line}</Text>
+                <View
+                  style={[styles.sheetLineChipBottomBar, { backgroundColor: getLineColor(line) }]}
+                />
               </TouchableOpacity>
             ))}
           </View>
+
+          <Text style={styles.arrivalsTitle}>Próximas chegadas</Text>
+          {selectedStation?.lines.map((lineCode) => {
+            const distanceNum = userLocation
+              ? calculateDistanceNum(
+                  userLocation.latitude,
+                  userLocation.longitude,
+                  selectedStation.lat,
+                  selectedStation.lng,
+                )
+              : selectedStation.distanceNum;
+            const arrivalStatus = getArrivalStatus(selectedStation.nextBus, distanceNum);
+            return (
+              <View key={`arrival-${lineCode}`} style={styles.arrivalWrap}>
+                <View style={styles.arrivalRow}>
+                  <View style={styles.arrivalBadge}>
+                    <View style={styles.arrivalBadgeRow}>
+                      <MaterialCommunityIcons name="bus" size={13} color="#1E1D1D" />
+                      <Text style={styles.arrivalBadgeText}>{lineCode}</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.arrivalBadgeBottom,
+                        { backgroundColor: getLineColor(lineCode) },
+                      ]}
+                    />
+                  </View>
+
+                  <Text style={styles.arrivalLineName} numberOfLines={2}>
+                    {getLineName(lineCode)}
+                  </Text>
+
+                  <View style={styles.arrivalRight}>
+                    <Text style={styles.arrivalMinutes}>
+                      {selectedStation.nextBus
+                        ? `${Math.round(getMinutesUntil(selectedStation.nextBus))} min`
+                        : '--'}
+                    </Text>
+                    <Text style={styles.arrivalClock}>{selectedStation.nextBus ?? ''}</Text>
+                  </View>
+                </View>
+
+                {arrivalStatus ? (
+                  <Text style={[styles.arrivalStatusText, { color: arrivalStatus.color }]}>
+                    {arrivalStatus.label}
+                  </Text>
+                ) : null}
+              </View>
+            );
+          })}
 
           <View style={styles.scheduleGrid}>
             {stationSchedules.map((time, idx) => (
@@ -442,21 +883,62 @@ const styles = StyleSheet.create({
   tabLineActive: { backgroundColor: '#0057A8' },
   centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { color: '#999999' },
-  listContent: { padding: 16, paddingBottom: 24 },
-  card: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, elevation: 2, flexDirection: 'row', alignItems: 'flex-start' },
+  listContent: { paddingBottom: 24 },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F5F5F5',
+  },
+  sectionHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sectionHeaderTitle: { color: '#666666', fontSize: 13, fontWeight: '600' },
+  sectionHeaderCount: { color: '#999999', fontSize: 12 },
+  metroEmptyWrap: { padding: 20, alignItems: 'center' },
+  metroEmptyText: { color: '#999999', fontSize: 13, marginTop: 8, textAlign: 'center' },
+  card: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginBottom: 12, marginHorizontal: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
+  sheetPhotoContainer: { backgroundColor: '#F5F5F5', borderRadius: 12, marginTop: 12, overflow: 'hidden' },
+  sheetPhoto: { width: '100%', height: 180, borderRadius: 12 },
+  cardRow: { flexDirection: 'row', alignItems: 'flex-start' },
   iconCircle: { width: 44, height: 44, backgroundColor: '#EBF3FF', borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   cardMain: { flex: 1, marginLeft: 12 },
   cardTitle: { color: '#1E1D1D', fontSize: 15, fontWeight: '700' },
   cardAddress: { color: '#999999', fontSize: 12, marginTop: 2 },
+  walkInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  walkInfoText: { color: '#0057A8', fontSize: 12, fontWeight: '600' },
+  accessBadgeRow: { marginTop: 8 },
+  accessibleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DCFCE7',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    alignSelf: 'flex-start',
+  },
+  accessibleBadgeText: { color: '#16A34A', fontSize: 11, fontWeight: '600' },
+  notAccessibleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    alignSelf: 'flex-start',
+  },
+  notAccessibleBadgeText: { color: '#EF4444', fontSize: 11, fontWeight: '600' },
   linesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 8 },
-  lineChip: { backgroundColor: '#F5F5F5', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
+  lineChip: { backgroundColor: '#FFFFFF', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden', position: 'relative' },
   lineChipText: { color: '#1E1D1D', fontSize: 11, fontWeight: '600' },
+  lineChipBottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5 },
   nextText: { color: '#22c55e', fontSize: 12, marginTop: 6, fontWeight: '600' },
   ratingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6 },
   ratingStars: { color: '#F59E0B', fontSize: 12 },
   ratingValue: { color: '#666666', fontSize: 12, fontWeight: '600' },
   cardRight: { alignItems: 'flex-end', marginLeft: 8 },
-  distanceText: { color: '#0057A8', fontSize: 14, fontWeight: '700' },
   favoriteBtn: { marginTop: 10 },
   modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: '#FFFFFF', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, paddingBottom: 28 },
@@ -465,8 +947,34 @@ const styles = StyleSheet.create({
   sheetAddress: { color: '#666666', fontSize: 14, marginTop: 4 },
   sheetMap: { height: 120, borderRadius: 12, marginTop: 12 },
   sheetLinesWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 12, gap: 8 },
-  sheetLineChip: { backgroundColor: '#0057A8', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
-  sheetLineChipText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  sheetLineChip: { backgroundColor: '#FFFFFF', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden', position: 'relative' },
+  sheetLineChipText: { color: '#1E1D1D', fontSize: 13, fontWeight: '700' },
+  sheetLineChipBottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 3 },
+  arrivalsTitle: { color: '#1E1D1D', fontSize: 15, fontWeight: '700', marginTop: 14 },
+  arrivalWrap: { marginTop: 6 },
+  arrivalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  arrivalBadge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    overflow: 'hidden',
+  },
+  arrivalBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  arrivalBadgeText: { color: '#1E1D1D', fontSize: 13, fontWeight: '700' },
+  arrivalBadgeBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 3 },
+  arrivalLineName: { flex: 1, color: '#1E1D1D', fontSize: 13, marginHorizontal: 12 },
+  arrivalRight: { alignItems: 'flex-end' },
+  arrivalMinutes: { color: '#22c55e', fontSize: 18, fontWeight: '800' },
+  arrivalClock: { color: '#999999', fontSize: 11 },
+  arrivalStatusText: { fontSize: 12, marginTop: 4, marginBottom: 8 },
   scheduleGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 },
   scheduleCell: { width: '23%', backgroundColor: '#F5F5F5', borderRadius: 8, paddingVertical: 8, margin: 4, alignItems: 'center' },
   scheduleCellText: { color: '#1E1D1D', fontSize: 13 },

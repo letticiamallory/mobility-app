@@ -22,6 +22,7 @@ import { getToken } from '../services/token.service';
 
 type LineItem = {
   id: string;
+  type: 'bus' | 'metro';
   code: string;
   name: string;
   origin: string;
@@ -34,16 +35,16 @@ type LineItem = {
 };
 
 const MOCK_LINES: LineItem[] = [
-  { id: '1', code: '1501', name: 'Vila Atlantida / Vila Analia', origin: 'Vila Atlantida', destination: 'Vila Analia', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:30', '06:00', '06:30', '07:00', '07:30', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'] },
-  { id: '2', code: '1701', name: 'Castelo Branco / Sao Geraldo', origin: 'Castelo Branco', destination: 'Sao Geraldo', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:45', '06:15', '07:00', '08:00', '09:00', '10:00', '12:00', '14:00', '17:30', '18:30'] },
-  { id: '3', code: '2201', name: 'UFMG / Centro', origin: 'UFMG', destination: 'Centro (Prefeitura)', via: 'JK e Planalto', accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '06:30', '07:00', '07:30', '08:00', '09:00', '10:00', '12:00', '13:00', '17:00', '18:00', '19:00'] },
-  { id: '4', code: '2603', name: 'Jaragua II / Santo Amaro', origin: 'Jaragua II', destination: 'Santo Amaro', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00'] },
-  { id: '5', code: '3301', name: 'Jardim Primavera / Centro', origin: 'Jardim Primavera', destination: 'Centro (Prefeitura)', via: 'Aeroporto', accessible: false, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '09:00', '12:00', '15:00', '17:00', '18:00'] },
-  { id: '6', code: '4601', name: 'Independencia / N. S. das Gracas', origin: 'Independencia', destination: 'Nossa Senhora das Gracas', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:30', '06:30', '07:30', '09:00', '12:00', '15:00', '17:00', '18:30'] },
-  { id: '7', code: '5801', name: 'Vila Sion II / Vila Mauriceia', origin: 'Vila Sion II', destination: 'Vila Mauriceia', via: 'Santa Rita e Ibituruna', accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00', '19:00'] },
-  { id: '8', code: '6201', name: 'Renascenca / Centro', origin: 'Renascenca', destination: 'Centro', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:45', '06:15', '07:15', '09:00', '12:00', '15:00', '17:15', '18:15'] },
-  { id: '9', code: '6901', name: 'Maracana / Vila Oliveira', origin: 'Maracana', destination: 'Vila Oliveira', via: 'Unimontes', accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00'] },
-  { id: '10', code: '7101', name: 'Major Prates / Vila Sao Francisco', origin: 'Major Prates', destination: 'Vila Sao Francisco de Assis', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '09:00', '12:00', '15:00', '17:00', '18:00'] },
+  { id: '1', type: 'bus', code: '1501', name: 'Vila Atlantida / Vila Analia', origin: 'Vila Atlantida', destination: 'Vila Analia', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:30', '06:00', '06:30', '07:00', '07:30', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'] },
+  { id: '2', type: 'bus', code: '1701', name: 'Castelo Branco / Sao Geraldo', origin: 'Castelo Branco', destination: 'Sao Geraldo', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:45', '06:15', '07:00', '08:00', '09:00', '10:00', '12:00', '14:00', '17:30', '18:30'] },
+  { id: '3', type: 'bus', code: '2201', name: 'UFMG / Centro', origin: 'UFMG', destination: 'Centro (Prefeitura)', via: 'JK e Planalto', accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '06:30', '07:00', '07:30', '08:00', '09:00', '10:00', '12:00', '13:00', '17:00', '18:00', '19:00'] },
+  { id: '4', type: 'bus', code: '2603', name: 'Jaragua II / Santo Amaro', origin: 'Jaragua II', destination: 'Santo Amaro', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00'] },
+  { id: '5', type: 'bus', code: '3301', name: 'Jardim Primavera / Centro', origin: 'Jardim Primavera', destination: 'Centro (Prefeitura)', via: 'Aeroporto', accessible: false, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '09:00', '12:00', '15:00', '17:00', '18:00'] },
+  { id: '6', type: 'bus', code: '4601', name: 'Independencia / N. S. das Gracas', origin: 'Independencia', destination: 'Nossa Senhora das Gracas', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:30', '06:30', '07:30', '09:00', '12:00', '15:00', '17:00', '18:30'] },
+  { id: '7', type: 'bus', code: '5801', name: 'Vila Sion II / Vila Mauriceia', origin: 'Vila Sion II', destination: 'Vila Mauriceia', via: 'Santa Rita e Ibituruna', accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00', '19:00'] },
+  { id: '8', type: 'bus', code: '6201', name: 'Renascenca / Centro', origin: 'Renascenca', destination: 'Centro', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:45', '06:15', '07:15', '09:00', '12:00', '15:00', '17:15', '18:15'] },
+  { id: '9', type: 'bus', code: '6901', name: 'Maracana / Vila Oliveira', origin: 'Maracana', destination: 'Vila Oliveira', via: 'Unimontes', accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00'] },
+  { id: '10', type: 'bus', code: '7101', name: 'Major Prates / Vila Sao Francisco', origin: 'Major Prates', destination: 'Vila Sao Francisco de Assis', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '09:00', '12:00', '15:00', '17:00', '18:00'] },
 ];
 
 const TABS = ['todos', 'favoritos', 'recentes', 'acessiveis'] as const;
@@ -56,10 +57,16 @@ const TAB_LABELS: Record<(typeof TABS)[number], string> = {
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-function getLineColor(code: string) {
-  const colors = ['#0057A8', '#E53935', '#43A047', '#FB8C00', '#8E24AA', '#00897B'];
-  return colors[(parseInt(code, 10) || 0) % colors.length];
-}
+const getLineColor = (code: string): string => {
+  const colors = [
+    '#E53935', '#FB8C00', '#43A047', '#1E88E5',
+    '#8E24AA', '#00897B', '#F4511E', '#D81B60',
+    '#6D4C41', '#546E7A', '#039BE5', '#7CB342',
+    '#FFB300', '#3949AB', '#00ACC1', '#E91E63',
+  ];
+  const hash = code.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return colors[hash % colors.length];
+};
 
 function nextSchedule(schedules: string[]) {
   if (!schedules.length) return null;
@@ -87,6 +94,7 @@ function lineCoordinates(code: string) {
 function normalizeLine(raw: Record<string, unknown>, index: number): LineItem {
   return {
     id: String(raw.id ?? `line-${index}`),
+    type: raw.type === 'metro' ? 'metro' : 'bus',
     code: String(raw.code ?? raw.number ?? '-'),
     name: String(raw.name ?? 'Linha'),
     origin: String(raw.origin ?? '-'),
@@ -230,7 +238,25 @@ export default function LinesScreen() {
     [recentLines, lines],
   );
 
-  const sections = useMemo(() => [{ title: 'MOC BUS', type: 'Ônibus', data: filtered }], [filtered]);
+  const sections = useMemo(
+    () => [
+      {
+        title: 'Metrô',
+        subtitle: 'Metrô',
+        icon: 'subway-variant' as const,
+          type: 'metro' as const,
+        data: filtered.filter((l) => l.type === 'metro'),
+      },
+      {
+        title: 'MOC BUS',
+        subtitle: 'Ônibus',
+        icon: 'bus' as const,
+          type: 'bus' as const,
+        data: filtered.filter((l) => l.type === 'bus'),
+      },
+    ],
+    [filtered],
+  );
 
   const selectedIsFavorite = selectedLine ? favorites.includes(selectedLine.id) : false;
   const selectedNext = selectedLine ? nextSchedule(selectedLine.schedules) : null;
@@ -312,21 +338,70 @@ export default function LinesScreen() {
           sections={sections}
           keyExtractor={(item) => item.id}
           renderSectionHeader={({ section }) => (
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>{section.title}</Text>
-              <Text style={styles.sectionType}>{section.type}</Text>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 16,
+                paddingVertical: 10,
+                backgroundColor: '#FFFFFF',
+                borderTopWidth: 1,
+                borderTopColor: '#EEEEEE',
+                borderBottomWidth: 1,
+                borderBottomColor: '#EEEEEE',
+                marginTop: 8,
+                width: '100%',
+                alignSelf: 'stretch',
+              }}
+            >
+              <MaterialCommunityIcons
+                name={section.type === 'metro' ? 'subway-variant' : 'bus'}
+                size={18}
+                color="#1E1D1D"
+              />
+              <Text style={{ color: '#1E1D1D', fontSize: 14, fontWeight: '700', marginLeft: 8 }}>
+                {section.type === 'metro' ? 'Metrô' : 'Ônibus'}
+              </Text>
             </View>
           )}
+          renderSectionFooter={({ section }) =>
+            section.type === 'metro' && section.data.length === 0 ? (
+              <View style={styles.metroEmptyWrap}>
+                <MaterialCommunityIcons name="subway-variant" size={32} color="#CCCCCC" />
+                <Text style={styles.metroEmptyText}>
+                  Nenhuma linha de metrô{'\n'}encontrada na sua região
+                </Text>
+              </View>
+            ) : null
+          }
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.lineItem} onPress={() => handleSelectLine(item)}>
-              <View style={[styles.lineCodeBadge, { backgroundColor: getLineColor(item.code) }]}>
-                <MaterialCommunityIcons name="bus" size={14} color="#FFFFFF" />
-                <Text style={styles.lineCodeText}>{item.code}</Text>
+              <View style={styles.lineCodeBadge}>
+                <View style={styles.lineCodeRow}>
+                  <MaterialCommunityIcons name="bus" size={13} color="#1E1D1D" />
+                  <Text style={styles.lineCodeText}>{item.code}</Text>
+                </View>
+                <View style={[styles.lineCodeBottomBar, { backgroundColor: getLineColor(item.code) }]} />
               </View>
               <View style={styles.lineMain}>
-                <Text style={styles.lineName} numberOfLines={1}>
-                  {item.name}
-                </Text>
+                <View style={styles.lineTitleRow}>
+                  <Text style={styles.lineName} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  {item.accessible ? (
+                    <MaterialCommunityIcons
+                      name="wheelchair-accessibility"
+                      size={14}
+                      color="#16A34A"
+                    />
+                  ) : (
+                    <MaterialCommunityIcons
+                      name="wheelchair-accessibility"
+                      size={14}
+                      color="#EF4444"
+                    />
+                  )}
+                </View>
                 {item.via ? <Text style={styles.lineVia}>Via {item.via}</Text> : null}
                 {nextSchedule(item.schedules) ? (
                   <Text style={styles.nextBusText}>Próximo: {nextSchedule(item.schedules)}</Text>
@@ -366,7 +441,9 @@ export default function LinesScreen() {
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.sheetName}>{selectedLine?.name}</Text>
+          <Text style={[styles.sheetName, { color: getLineColor(selectedLine?.code || '0') }]}>
+            {selectedLine?.name}
+          </Text>
           <View style={styles.routeRow}>
             <MaterialCommunityIcons name="map-marker" size={16} color="#0057A8" />
             <Text style={styles.routeText}>{selectedLine?.origin}</Text>
@@ -494,12 +571,36 @@ const styles = StyleSheet.create({
   emptyText: { color: '#999999' },
   sectionContent: { paddingBottom: 24 },
   sectionHeader: { backgroundColor: '#F5F5F5', paddingHorizontal: 20, paddingVertical: 8, flexDirection: 'row', justifyContent: 'space-between' },
+  sectionHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sectionTitle: { color: '#666666', fontSize: 12, fontWeight: '600' },
   sectionType: { color: '#999999', fontSize: 12 },
+  metroEmptyWrap: { padding: 20, alignItems: 'center' },
+  metroEmptyText: { color: '#999999', fontSize: 13, marginTop: 8, textAlign: 'center' },
   lineItem: { backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F5F5F5', flexDirection: 'row', alignItems: 'center' },
-  lineCodeBadge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  lineCodeText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  lineCodeBadge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'center',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  lineCodeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  lineCodeBottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+  },
+  lineCodeText: { color: '#1E1D1D', fontSize: 13, fontWeight: '700' },
   lineMain: { flex: 1, marginLeft: 12 },
+  lineTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   lineName: { color: '#1E1D1D', fontSize: 14, fontWeight: '500' },
   lineVia: { color: '#999999', fontSize: 12, marginTop: 2 },
   nextBusText: { color: '#22c55e', fontSize: 12, marginTop: 3, fontWeight: '600' },
