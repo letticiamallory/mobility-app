@@ -1,9 +1,15 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import {
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text as PaperText } from 'react-native-paper';
 import { API_URL } from '../constants/api';
 import { getToken, removeToken } from '../services/token.service';
 
@@ -14,60 +20,96 @@ type MeResponse = {
   accompanied?: string;
 };
 
-function accompaniedLabel(value?: string) {
+type ReviewResponseItem = {
+  id?: number | string;
+  place_name?: string;
+  rating?: number;
+  comment?: string;
+  created_at?: string;
+};
+
+type FontSizeOption = 'A' | 'AA' | 'AAA';
+
+function transportLabel(value?: string) {
   if (value === 'alone') return 'Sozinho';
   if (value === 'accompanied') return 'Acompanhado';
   if (value === 'both') return 'Ambos';
   return '-';
 }
 
+function initialsFromName(name?: string) {
+  const source = (name || 'U').trim();
+  return source
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => (part[0] || '').toUpperCase())
+    .join('');
+}
+
+function starsFromRating(rating?: number) {
+  const safe = Math.max(0, Math.min(5, Math.round(rating ?? 0)));
+  return '★'.repeat(safe) + '☆'.repeat(5 - safe);
+}
+
+function formattedDate(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('pt-BR');
+}
+
 export default function ProfileScreen() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [profile, setProfile] = useState<MeResponse>({});
+  const [reviews, setReviews] = useState<ReviewResponseItem[]>([]);
+  const [readAloud, setReadAloud] = useState(false);
+  const [highContrast, setHighContrast] = useState(false);
+  const [fontSize, setFontSize] = useState<FontSizeOption>('AA');
 
   useEffect(() => {
-    const loadProfile = async () => {
+    const loadData = async () => {
+      const token = await getToken();
+      if (!token) {
+        router.replace('/login');
+        return;
+      }
+
       try {
-        setError('');
-        const token = await getToken();
-        if (!token) {
-          router.replace('/login');
+        const meResponse = await fetch(`${API_URL}/users/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (meResponse.ok) {
+          const meData = (await meResponse.json()) as MeResponse;
+          setProfile(meData);
+        }
+      } catch {
+        setProfile({});
+      }
+
+      try {
+        const reviewsResponse = await fetch(`${API_URL}/reviews/my`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!reviewsResponse.ok) {
+          setReviews([]);
           return;
         }
-
-        const response = await fetch(`${API_URL}/users/me`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error('Nao foi possivel carregar o perfil.');
+        const data = (await reviewsResponse.json()) as unknown;
+        if (Array.isArray(data)) {
+          setReviews(data as ReviewResponseItem[]);
+        } else {
+          setReviews([]);
         }
-
-        const data = (await response.json()) as MeResponse;
-        setProfile(data);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Erro ao carregar perfil.');
-      } finally {
-        setLoading(false);
+      } catch {
+        setReviews([]);
       }
     };
 
-    loadProfile();
+    loadData();
   }, [router]);
 
-  const initials = useMemo(() => {
-    const name = (profile.name || 'U').trim();
-    return name
-      .split(' ')
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase() ?? '')
-      .join('');
-  }, [profile.name]);
+  const initials = useMemo(() => initialsFromName(profile.name), [profile.name]);
 
   const handleLogout = async () => {
     await removeToken();
@@ -77,50 +119,159 @@ export default function ProfileScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <Stack.Screen options={{ headerShown: false }} />
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
-          <View style={styles.avatarCircle}>
-            <PaperText style={styles.avatarInitials}>{initials}</PaperText>
+          <View style={styles.headerTopRow}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => router.back()}
+              accessibilityRole="button"
+              accessibilityLabel="Voltar"
+            >
+              <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Perfil</Text>
+            <View style={styles.headerRightSpacer} />
           </View>
-          <PaperText style={styles.nameText}>{profile.name || '-'}</PaperText>
-          <PaperText style={styles.disabilityHeaderText}>{profile.disability_type || '-'}</PaperText>
+
+          <View style={styles.initialsCircle}>
+            <Text style={styles.initialsText}>{initials}</Text>
+          </View>
+          <Text style={styles.userName}>{profile.name || '-'}</Text>
+          <Text style={styles.disabilityType}>{profile.disability_type || '-'}</Text>
+
+          <TouchableOpacity style={styles.editButton}>
+            <Text style={styles.editButtonText}>Editar perfil</Text>
+          </TouchableOpacity>
+
+          <View style={styles.headerDivider} />
         </View>
 
-        {loading ? (
-          <ActivityIndicator size="large" color="#0057A8" style={styles.loader} />
-        ) : error ? (
-          <PaperText style={styles.errorText}>{error}</PaperText>
-        ) : (
-          <View style={styles.infoSection}>
-            <View style={styles.infoCard}>
-              <MaterialCommunityIcons name="email-outline" size={22} color="#0057A8" />
-              <View style={styles.infoTextBlock}>
-                <PaperText style={styles.infoLabel}>Email</PaperText>
-                <PaperText style={styles.infoValue}>{profile.email || '-'}</PaperText>
-              </View>
-            </View>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Minhas informações</Text>
 
-            <View style={styles.infoCard}>
-              <MaterialCommunityIcons name="wheelchair-accessibility" size={22} color="#0057A8" />
-              <View style={styles.infoTextBlock}>
-                <PaperText style={styles.infoLabel}>Tipo de deficiência</PaperText>
-                <PaperText style={styles.infoValue}>{profile.disability_type || '-'}</PaperText>
-              </View>
-            </View>
+          <View style={styles.infoItem}>
+            <MaterialCommunityIcons
+              name="email-outline"
+              size={20}
+              color="#0057A8"
+              style={styles.infoIcon}
+            />
+            <Text style={styles.infoLabel}>Email</Text>
+            <Text style={styles.infoValue}>{profile.email || '-'}</Text>
+          </View>
 
-            <View style={styles.infoCard}>
-              <MaterialCommunityIcons name="account-group-outline" size={22} color="#0057A8" />
-              <View style={styles.infoTextBlock}>
-                <PaperText style={styles.infoLabel}>Acompanhamento</PaperText>
-                <PaperText style={styles.infoValue}>{accompaniedLabel(profile.accompanied)}</PaperText>
-              </View>
+          <View style={styles.infoItem}>
+            <MaterialCommunityIcons
+              name="wheelchair-accessibility"
+              size={20}
+              color="#0057A8"
+              style={styles.infoIcon}
+            />
+            <Text style={styles.infoLabel}>Deficiência</Text>
+            <Text style={styles.infoValue}>{profile.disability_type || '-'}</Text>
+          </View>
+
+          <View style={[styles.infoItem, styles.noBorder]}>
+            <MaterialCommunityIcons name="bus" size={20} color="#0057A8" style={styles.infoIcon} />
+            <Text style={styles.infoLabel}>Transporte</Text>
+            <Text style={styles.infoValue}>{transportLabel(profile.accompanied)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Acessibilidade</Text>
+
+          <View style={styles.accessibilityRow}>
+            <View style={styles.accessibilityLeft}>
+              <MaterialCommunityIcons name="volume-high" size={20} color="#0057A8" />
+              <Text style={styles.accessibilityText}>Leitura por voz</Text>
+            </View>
+            <Switch
+              value={readAloud}
+              onValueChange={setReadAloud}
+              trackColor={{ true: '#0057A8' }}
+            />
+          </View>
+
+          <View style={styles.accessibilityRow}>
+            <View style={styles.accessibilityLeft}>
+              <MaterialCommunityIcons name="contrast-circle" size={20} color="#0057A8" />
+              <Text style={styles.accessibilityText}>Alto contraste</Text>
+            </View>
+            <Switch
+              value={highContrast}
+              onValueChange={setHighContrast}
+              trackColor={{ true: '#0057A8' }}
+            />
+          </View>
+
+          <View style={[styles.accessibilityRow, styles.noBorder]}>
+            <Text style={styles.accessibilityText}>Tamanho da fonte</Text>
+            <View style={styles.fontButtonsWrap}>
+              {(['A', 'AA', 'AAA'] as FontSizeOption[]).map((option) => {
+                const selected = fontSize === option;
+                return (
+                  <TouchableOpacity
+                    key={option}
+                    style={[styles.fontButton, selected && styles.fontButtonSelected]}
+                    onPress={() => setFontSize(option)}
+                  >
+                    <Text style={[styles.fontButtonText, selected && styles.fontButtonTextSelected]}>
+                      {option}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
-        )}
+        </View>
 
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <PaperText style={styles.logoutText}>Sair</PaperText>
-        </TouchableOpacity>
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Minhas avaliações</Text>
+            <TouchableOpacity>
+              <Text style={styles.seeAllText}>Ver todas</Text>
+            </TouchableOpacity>
+          </View>
+
+          {reviews.length === 0 ? (
+            <View style={styles.emptyReviewWrap}>
+              <MaterialCommunityIcons name="star-outline" size={36} color="#CCCCCC" />
+              <Text style={styles.emptyReviewText}>Nenhuma avaliação ainda</Text>
+            </View>
+          ) : (
+            reviews.map((review, index) => (
+              <View key={String(review.id ?? index)} style={styles.reviewCard}>
+                <Text style={styles.reviewPlace}>{review.place_name || 'Local não informado'}</Text>
+                <Text style={styles.reviewStars}>{starsFromRating(review.rating)}</Text>
+                <Text style={styles.reviewComment}>{review.comment || 'Sem comentário.'}</Text>
+                <Text style={styles.reviewDate}>{formattedDate(review.created_at)}</Text>
+              </View>
+            ))
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Conta</Text>
+
+          <TouchableOpacity style={styles.accountItem}>
+            <View style={styles.accountItemLeft}>
+              <MaterialCommunityIcons name="lock-outline" size={20} color="#1E1D1D" />
+              <Text style={styles.accountItemText}>Alterar senha</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
+          </TouchableOpacity>
+
+          <View style={styles.accountDivider} />
+
+          <TouchableOpacity style={styles.accountItem} onPress={handleLogout}>
+            <View style={styles.accountItemLeft}>
+              <MaterialCommunityIcons name="logout" size={20} color="#FF4444" />
+              <Text style={styles.logoutItemText}>Sair</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -129,97 +280,224 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F5F5F5',
   },
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  content: {
-    paddingBottom: 32,
+  scrollContent: {
+    paddingBottom: 40,
   },
   header: {
-    backgroundColor: '#0057A8',
+    backgroundColor: '#FFFFFF',
     padding: 24,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    alignItems: 'center',
+    paddingTop: 16,
   },
-  avatarCircle: {
-    width: 80,
-    height: 80,
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  backButton: {
+    width: 24,
+    alignItems: 'flex-start',
+  },
+  headerTitle: {
+    color: '#1E1D1D',
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  headerRightSpacer: {
+    width: 24,
+  },
+  initialsCircle: {
+    width: 72,
+    height: 72,
+    backgroundColor: '#EBF3FF',
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginTop: 20,
+  },
+  initialsText: {
+    color: '#0057A8',
+    fontSize: 26,
+    fontWeight: '700',
+  },
+  userName: {
+    color: '#1E1D1D',
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginTop: 12,
+  },
+  disabilityType: {
+    color: '#666666',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  editButton: {
+    borderWidth: 1,
+    borderColor: '#0057A8',
     borderRadius: 40,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 20,
+    height: 36,
+    marginTop: 16,
+    alignSelf: 'center',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarInitials: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '700',
-  },
-  nameText: {
-    marginTop: 12,
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  disabilityHeaderText: {
-    marginTop: 4,
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  loader: {
-    marginTop: 28,
-  },
-  errorText: {
-    marginTop: 24,
-    marginHorizontal: 24,
-    color: '#ef4444',
-    fontSize: 14,
+  editButtonText: {
+    color: '#0057A8',
+    fontSize: 13,
     fontWeight: '600',
-    textAlign: 'center',
   },
-  infoSection: {
-    marginTop: 20,
-    paddingHorizontal: 24,
+  headerDivider: {
+    height: 1,
+    backgroundColor: '#EEEEEE',
+    marginTop: 24,
   },
-  infoCard: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 8,
+  section: {
+    backgroundColor: '#FFFFFF',
+    marginTop: 12,
+    padding: 20,
+  },
+  sectionTitle: {
+    color: '#1E1D1D',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 16,
+  },
+  infoItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
   },
-  infoTextBlock: {
-    flex: 1,
+  infoIcon: {
+    marginRight: 12,
   },
   infoLabel: {
-    color: '#666666',
-    fontSize: 13,
+    color: '#999999',
+    fontSize: 12,
   },
   infoValue: {
     color: '#1E1D1D',
-    fontSize: 15,
-    fontWeight: '600',
-    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '500',
+    marginLeft: 8,
+    flexShrink: 1,
   },
-  logoutButton: {
-    marginTop: 32,
-    marginHorizontal: 24,
-    backgroundColor: '#ef4444',
-    borderRadius: 40,
-    height: 52,
+  accessibilityRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
   },
-  logoutText: {
+  accessibilityLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  accessibilityText: {
+    color: '#1E1D1D',
+    fontSize: 14,
+    marginLeft: 12,
+  },
+  fontButtonsWrap: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  fontButton: {
+    backgroundColor: '#F0F0F0',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  fontButtonSelected: {
+    backgroundColor: '#0057A8',
+  },
+  fontButtonText: {
+    color: '#666666',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  fontButtonTextSelected: {
     color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 15,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  seeAllText: {
+    color: '#0057A8',
+    fontSize: 13,
+  },
+  emptyReviewWrap: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  emptyReviewText: {
+    color: '#999999',
+    fontSize: 13,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  reviewCard: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 10,
+  },
+  reviewPlace: {
+    color: '#1E1D1D',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  reviewStars: {
+    color: '#F59E0B',
+    fontSize: 16,
+    marginTop: 4,
+  },
+  reviewComment: {
+    color: '#666666',
+    fontSize: 13,
+    marginTop: 4,
+  },
+  reviewDate: {
+    color: '#AAAAAA',
+    fontSize: 11,
+    marginTop: 6,
+  },
+  accountItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+  },
+  accountItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  accountItemText: {
+    color: '#1E1D1D',
+    fontSize: 14,
+    marginLeft: 12,
+  },
+  accountDivider: {
+    height: 1,
+    backgroundColor: '#F0F0F0',
+  },
+  logoutItemText: {
+    color: '#FF4444',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 12,
+  },
+  noBorder: {
+    borderBottomWidth: 0,
   },
 });

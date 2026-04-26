@@ -155,7 +155,7 @@ function mapRegion(route: SerializedRouteDetail) {
 
 export default function RouteDetailScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ route?: string | string[] }>();
+  const params = useLocalSearchParams<{ route?: string | string[]; id?: string; name?: string }>();
   const [isReading, setIsReading] = useState(false);
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
 
@@ -341,6 +341,31 @@ export default function RouteDetailScreen() {
               ) : null}
             </TouchableOpacity>
           ))}
+
+          {currentStageIndex === route.stages.length - 1 ? (
+            <View style={styles.reviewCard}>
+              <Text style={styles.reviewTitle}>Como foi sua viagem?</Text>
+              <View style={styles.reviewStarsRow}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <TouchableOpacity
+                    key={star}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/write-review',
+                        params: {
+                          type: 'route',
+                          id: params.id ?? 'route',
+                          name: params.name ?? route.destination,
+                        },
+                      })
+                    }
+                  >
+                    <MaterialCommunityIcons name="star" size={28} color="#F59E0B" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ) : null}
         </ScrollView>
       </View>
     </SafeAreaView>
@@ -508,6 +533,23 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#3B3B3B',
     marginTop: 10,
+  },
+  reviewCard: {
+    backgroundColor: '#2F2F2F',
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 12,
+  },
+  reviewTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+    fontFamily: 'Agrandir-TextBold',
+  },
+  reviewStarsRow: {
+    flexDirection: 'row',
+    marginTop: 10,
+    gap: 6,
   },
   errorBox: {
     flex: 1,

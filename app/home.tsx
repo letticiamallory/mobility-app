@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
+import * as Location from 'expo-location';
 import {
   ImageBackground,
   Linking,
@@ -36,6 +37,7 @@ export default function HomeScreen() {
   const [destination, setDestination] = useState('');
   const [recentRoutes, setRecentRoutes] = useState<RecentRoute[]>([]);
   const [loadingRecents, setLoadingRecents] = useState(true);
+  const [userLocation, setUserLocation] = useState<Location.LocationObjectCoords | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -88,6 +90,12 @@ export default function HomeScreen() {
     fetchRecentRoutes();
   }, []);
 
+  useEffect(() => {
+    Location.getCurrentPositionAsync({}).then((loc) => {
+      setUserLocation(loc.coords);
+    });
+  }, []);
+
   const goToDirections = (dest: string, origin?: string) => {
     router.push({
       pathname: '/directions',
@@ -103,7 +111,14 @@ export default function HomeScreen() {
   };
 
   const openUber = async () => {
-    await Linking.openURL('https://uber.com');
+    const uberDeepLink = `uber://?action=setPickup&pickup[latitude]=${userLocation?.latitude}&pickup[longitude]=${userLocation?.longitude}&pickup[nickname]=Minha%20localização`;
+    const canOpen = await Linking.canOpenURL(uberDeepLink);
+
+    if (canOpen) {
+      await Linking.openURL(uberDeepLink);
+    } else {
+      await Linking.openURL('https://m.uber.com/looking');
+    }
   };
 
   const hasRecents = recentRoutes.length > 0;
@@ -226,11 +241,11 @@ export default function HomeScreen() {
           <MaterialCommunityIcons name="map-marker-path" size={23} color="#0057A8" />
           <PaperText style={styles.navActive}>Direções</PaperText>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/home')}>
+        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/stations')}>
           <MaterialCommunityIcons name="train" size={23} color="#AAAAAA" />
           <PaperText style={styles.navText}>Estações</PaperText>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/home')}>
+        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/lines')}>
           <MaterialCommunityIcons name="vector-polyline" size={23} color="#AAAAAA" />
           <PaperText style={styles.navText}>Linhas</PaperText>
         </TouchableOpacity>
