@@ -159,7 +159,7 @@ export default function RegisterScreen() {
       await register(name, email, password, disabilityType, accompanied);
       const loginData = await login(email, password);
       await saveToken(loginData.access_token);
-      await saveUserInfo(loginData.user_id, loginData.name);
+      await saveUserInfo(loginData.user_id, loginData.name, email);
       router.push('/email-confirmation');
     } catch (error) {
       const message =

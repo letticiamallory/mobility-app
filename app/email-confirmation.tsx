@@ -27,7 +27,7 @@ export default function EmailConfirmationScreen() {
   useEffect(() => {
     (async () => {
       const info = await getUserInfo();
-      if (info?.name) setUserEmail(info.name);
+      if (info?.email) setUserEmail(info.email);
     })();
   }, []);
 
@@ -151,7 +151,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 24,
-    paddingTop: 40,
+    paddingTop: 132,
     alignItems: 'center',
   },
   illustrationWrap: {

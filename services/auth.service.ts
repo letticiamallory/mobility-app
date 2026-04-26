@@ -27,6 +27,7 @@ export type LoginResponse = {
   access_token: string;
   user_id: number;
   name: string;
+  email?: string;
 };
 
 export async function login(email: string, password: string) {
@@ -79,11 +80,12 @@ export async function login(email: string, password: string) {
 
   const userId = data.user_id as number | undefined;
   const name = (data.name as string | undefined) ?? '';
+  const userEmail = (data.email as string | undefined) ?? email;
   if (userId === undefined || userId === null) {
     throw new Error('Resposta do login sem user_id. Verifique o contrato da API.');
   }
 
-  await saveUserInfo(userId, name);
+  await saveUserInfo(userId, name, userEmail);
   return data as LoginResponse;
 }
 

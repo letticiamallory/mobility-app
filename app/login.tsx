@@ -30,7 +30,7 @@ export default function LoginScreen() {
       setLoading(true);
       const loginData = await login(email, password); // ← chama o backend
       await saveToken(loginData.access_token); // ← salva o token no dispositivo
-      await saveUserInfo(loginData.user_id, loginData.name);
+      await saveUserInfo(loginData.user_id, loginData.name, email);
       router.replace('/home'); // ← vai pra tela principal
     } catch (error) {
       const message =
