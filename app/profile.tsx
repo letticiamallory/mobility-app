@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TouchableOpacity,
   View,
@@ -28,15 +27,6 @@ type ReviewResponseItem = {
   created_at?: string;
 };
 
-type FontSizeOption = 'A' | 'AA' | 'AAA';
-
-function transportLabel(value?: string) {
-  if (value === 'alone') return 'Sozinho';
-  if (value === 'accompanied') return 'Acompanhado';
-  if (value === 'both') return 'Ambos';
-  return '-';
-}
-
 function initialsFromName(name?: string) {
   const source = (name || 'U').trim();
   return source
@@ -47,25 +37,10 @@ function initialsFromName(name?: string) {
     .join('');
 }
 
-function starsFromRating(rating?: number) {
-  const safe = Math.max(0, Math.min(5, Math.round(rating ?? 0)));
-  return '★'.repeat(safe) + '☆'.repeat(5 - safe);
-}
-
-function formattedDate(value?: string) {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString('pt-BR');
-}
-
 export default function ProfileScreen() {
   const router = useRouter();
   const [profile, setProfile] = useState<MeResponse>({});
   const [reviews, setReviews] = useState<ReviewResponseItem[]>([]);
-  const [readAloud, setReadAloud] = useState(false);
-  const [highContrast, setHighContrast] = useState(false);
-  const [fontSize, setFontSize] = useState<FontSizeOption>('AA');
 
   useEffect(() => {
     const loadData = async () => {
@@ -134,142 +109,85 @@ export default function ProfileScreen() {
             <View style={styles.headerRightSpacer} />
           </View>
 
-          <View style={styles.initialsCircle}>
-            <Text style={styles.initialsText}>{initials}</Text>
-          </View>
-          <Text style={styles.userName}>{profile.name || '-'}</Text>
-          <Text style={styles.disabilityType}>{profile.disability_type || '-'}</Text>
-
-          <TouchableOpacity style={styles.editButton}>
-            <Text style={styles.editButtonText}>Editar perfil</Text>
-          </TouchableOpacity>
-
-          <View style={styles.headerDivider} />
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Minhas informações</Text>
-
-          <View style={styles.infoItem}>
-            <MaterialCommunityIcons
-              name="email-outline"
-              size={20}
-              color="#0057A8"
-              style={styles.infoIcon}
-            />
-            <Text style={styles.infoLabel}>Email</Text>
-            <Text style={styles.infoValue}>{profile.email || '-'}</Text>
-          </View>
-
-          <View style={styles.infoItem}>
-            <MaterialCommunityIcons
-              name="wheelchair-accessibility"
-              size={20}
-              color="#0057A8"
-              style={styles.infoIcon}
-            />
-            <Text style={styles.infoLabel}>Deficiência</Text>
-            <Text style={styles.infoValue}>{profile.disability_type || '-'}</Text>
-          </View>
-
-          <View style={[styles.infoItem, styles.noBorder]}>
-            <MaterialCommunityIcons name="bus" size={20} color="#0057A8" style={styles.infoIcon} />
-            <Text style={styles.infoLabel}>Transporte</Text>
-            <Text style={styles.infoValue}>{transportLabel(profile.accompanied)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Acessibilidade</Text>
-
-          <View style={styles.accessibilityRow}>
-            <View style={styles.accessibilityLeft}>
-              <MaterialCommunityIcons name="volume-high" size={20} color="#0057A8" />
-              <Text style={styles.accessibilityText}>Leitura por voz</Text>
+          <View style={styles.profileRow}>
+            <View style={styles.initialsCircle}>
+              <Text style={styles.initialsText}>{initials}</Text>
             </View>
-            <Switch
-              value={readAloud}
-              onValueChange={setReadAloud}
-              trackColor={{ true: '#0057A8' }}
-            />
-          </View>
-
-          <View style={styles.accessibilityRow}>
-            <View style={styles.accessibilityLeft}>
-              <MaterialCommunityIcons name="contrast-circle" size={20} color="#0057A8" />
-              <Text style={styles.accessibilityText}>Alto contraste</Text>
+            <View style={styles.headerInfoWrap}>
+              <Text style={styles.userName}>{profile.name || '-'}</Text>
+              <Text style={styles.userEmail}>{profile.email || '-'}</Text>
+              <Text style={styles.disabilityType}>{profile.disability_type || '-'}</Text>
             </View>
-            <Switch
-              value={highContrast}
-              onValueChange={setHighContrast}
-              trackColor={{ true: '#0057A8' }}
-            />
-          </View>
-
-          <View style={[styles.accessibilityRow, styles.noBorder]}>
-            <Text style={styles.accessibilityText}>Tamanho da fonte</Text>
-            <View style={styles.fontButtonsWrap}>
-              {(['A', 'AA', 'AAA'] as FontSizeOption[]).map((option) => {
-                const selected = fontSize === option;
-                return (
-                  <TouchableOpacity
-                    key={option}
-                    style={[styles.fontButton, selected && styles.fontButtonSelected]}
-                    onPress={() => setFontSize(option)}
-                  >
-                    <Text style={[styles.fontButtonText, selected && styles.fontButtonTextSelected]}>
-                      {option}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Minhas avaliações</Text>
-            <TouchableOpacity>
-              <Text style={styles.seeAllText}>Ver todas</Text>
+            <TouchableOpacity style={styles.editButton}>
+              <Text style={styles.editButtonText}>Editar</Text>
             </TouchableOpacity>
           </View>
-
-          {reviews.length === 0 ? (
-            <View style={styles.emptyReviewWrap}>
-              <MaterialCommunityIcons name="star-outline" size={36} color="#CCCCCC" />
-              <Text style={styles.emptyReviewText}>Nenhuma avaliação ainda</Text>
-            </View>
-          ) : (
-            reviews.map((review, index) => (
-              <View key={String(review.id ?? index)} style={styles.reviewCard}>
-                <Text style={styles.reviewPlace}>{review.place_name || 'Local não informado'}</Text>
-                <Text style={styles.reviewStars}>{starsFromRating(review.rating)}</Text>
-                <Text style={styles.reviewComment}>{review.comment || 'Sem comentário.'}</Text>
-                <Text style={styles.reviewDate}>{formattedDate(review.created_at)}</Text>
-              </View>
-            ))
-          )}
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Conta</Text>
-
-          <TouchableOpacity style={styles.accountItem}>
-            <View style={styles.accountItemLeft}>
-              <MaterialCommunityIcons name="lock-outline" size={20} color="#1E1D1D" />
-              <Text style={styles.accountItemText}>Alterar senha</Text>
+        <View style={styles.listGroup}>
+          <TouchableOpacity style={styles.listItem}>
+            <View style={styles.listItemLeft}>
+              <MaterialCommunityIcons name="account-edit" size={22} color="#0057A8" />
+              <Text style={styles.listItemText}>Minhas informações</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
           </TouchableOpacity>
+          <TouchableOpacity style={[styles.listItem, styles.noBorder]}>
+            <View style={styles.listItemLeft}>
+              <MaterialCommunityIcons name="human" size={22} color="#0057A8" />
+              <Text style={styles.listItemText}>Acessibilidade</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
+          </TouchableOpacity>
+        </View>
 
-          <View style={styles.accountDivider} />
+        <View style={styles.groupDivider} />
 
-          <TouchableOpacity style={styles.accountItem} onPress={handleLogout}>
-            <View style={styles.accountItemLeft}>
-              <MaterialCommunityIcons name="logout" size={20} color="#FF4444" />
+        <View style={styles.listGroup}>
+          <TouchableOpacity style={styles.listItem}>
+            <View style={styles.listItemLeft}>
+              <MaterialCommunityIcons name="star-outline" size={22} color="#0057A8" />
+              <Text style={styles.listItemText}>Minhas avaliações</Text>
+              {reviews.length > 0 ? (
+                <View style={styles.countBadge}>
+                  <Text style={styles.countBadgeText}>{reviews.length}</Text>
+                </View>
+              ) : null}
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.listItem}>
+            <View style={styles.listItemLeft}>
+              <MaterialCommunityIcons name="heart-outline" size={22} color="#0057A8" />
+              <Text style={styles.listItemText}>Favoritos</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.listItem, styles.noBorder]}>
+            <View style={styles.listItemLeft}>
+              <MaterialCommunityIcons name="history" size={22} color="#0057A8" />
+              <Text style={styles.listItemText}>Histórico de viagens</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.groupDivider} />
+
+        <View style={styles.listGroup}>
+          <TouchableOpacity style={styles.listItem}>
+            <View style={styles.listItemLeft}>
+              <MaterialCommunityIcons name="lock-outline" size={22} color="#0057A8" />
+              <Text style={styles.listItemText}>Alterar senha</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.listItem, styles.noBorder]} onPress={handleLogout}>
+            <View style={styles.listItemLeft}>
+              <MaterialCommunityIcons name="logout" size={22} color="#EF4444" />
               <Text style={styles.logoutItemText}>Sair</Text>
             </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#EF4444" />
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -287,8 +205,9 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: '#FFFFFF',
-    padding: 24,
+    paddingHorizontal: 20,
     paddingTop: 16,
+    paddingBottom: 14,
   },
   headerTopRow: {
     flexDirection: 'row',
@@ -309,193 +228,98 @@ const styles = StyleSheet.create({
     width: 24,
   },
   initialsCircle: {
-    width: 72,
-    height: 72,
+    width: 64,
+    height: 64,
     backgroundColor: '#EBF3FF',
-    borderRadius: 36,
+    borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    alignSelf: 'center',
-    marginTop: 20,
+  },
+  profileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 14,
   },
   initialsText: {
     color: '#0057A8',
-    fontSize: 26,
+    fontSize: 22,
     fontWeight: '700',
+  },
+  headerInfoWrap: {
+    flex: 1,
+    marginLeft: 16,
   },
   userName: {
     color: '#1E1D1D',
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
-    textAlign: 'center',
-    marginTop: 12,
+  },
+  userEmail: {
+    color: '#666666',
+    fontSize: 13,
+    marginTop: 2,
   },
   disabilityType: {
-    color: '#666666',
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: 4,
+    color: '#0057A8',
+    fontSize: 12,
+    marginTop: 2,
   },
   editButton: {
     borderWidth: 1,
     borderColor: '#0057A8',
-    borderRadius: 40,
-    paddingHorizontal: 20,
-    height: 36,
-    marginTop: 16,
-    alignSelf: 'center',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     alignItems: 'center',
     justifyContent: 'center',
   },
   editButtonText: {
     color: '#0057A8',
     fontSize: 13,
-    fontWeight: '600',
   },
-  headerDivider: {
-    height: 1,
-    backgroundColor: '#EEEEEE',
-    marginTop: 24,
-  },
-  section: {
+  listGroup: {
+    marginTop: 8,
     backgroundColor: '#FFFFFF',
-    marginTop: 12,
-    padding: 20,
   },
-  sectionTitle: {
+  listItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  listItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  listItemText: {
     color: '#1E1D1D',
     fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 16,
-  },
-  infoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  infoIcon: {
-    marginRight: 12,
-  },
-  infoLabel: {
-    color: '#999999',
-    fontSize: 12,
-  },
-  infoValue: {
-    color: '#1E1D1D',
-    fontSize: 14,
-    fontWeight: '500',
-    marginLeft: 8,
-    flexShrink: 1,
-  },
-  accessibilityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  accessibilityLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  accessibilityText: {
-    color: '#1E1D1D',
-    fontSize: 14,
-    marginLeft: 12,
-  },
-  fontButtonsWrap: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  fontButton: {
-    backgroundColor: '#F0F0F0',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  fontButtonSelected: {
-    backgroundColor: '#0057A8',
-  },
-  fontButtonText: {
-    color: '#666666',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  fontButtonTextSelected: {
-    color: '#FFFFFF',
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  seeAllText: {
-    color: '#0057A8',
-    fontSize: 13,
-  },
-  emptyReviewWrap: {
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  emptyReviewText: {
-    color: '#999999',
-    fontSize: 13,
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  reviewCard: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 10,
-  },
-  reviewPlace: {
-    color: '#1E1D1D',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  reviewStars: {
-    color: '#F59E0B',
-    fontSize: 16,
-    marginTop: 4,
-  },
-  reviewComment: {
-    color: '#666666',
-    fontSize: 13,
-    marginTop: 4,
-  },
-  reviewDate: {
-    color: '#AAAAAA',
-    fontSize: 11,
-    marginTop: 6,
-  },
-  accountItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-  },
-  accountItemLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  accountItemText: {
-    color: '#1E1D1D',
-    fontSize: 14,
-    marginLeft: 12,
-  },
-  accountDivider: {
-    height: 1,
-    backgroundColor: '#F0F0F0',
   },
   logoutItemText: {
-    color: '#FF4444',
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 12,
+    color: '#EF4444',
+    fontSize: 15,
+  },
+  countBadge: {
+    backgroundColor: '#EBF3FF',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  countBadgeText: {
+    color: '#0057A8',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  groupDivider: {
+    height: 8,
+    backgroundColor: '#F5F5F5',
   },
   noBorder: {
     borderBottomWidth: 0,
