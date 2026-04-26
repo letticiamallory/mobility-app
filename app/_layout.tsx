@@ -22,6 +22,8 @@ export default function RootLayout() {
     <>
       <Stack>
         <Stack.Screen name="profile" />
+        <Stack.Screen name="email-confirmation" />
+        <Stack.Screen name="success" />
       </Stack>
       <Redirect href={'/splash' as any} />
     </>

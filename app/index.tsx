@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Alert,
   Dimensions,
@@ -97,6 +98,7 @@ function computeMenuPlacement(
 
 export default function RegisterScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const groupRef = useRef<View>(null);
   const companiedRef = useRef<View>(null);
 
@@ -158,7 +160,7 @@ export default function RegisterScreen() {
       const loginData = await login(email, password);
       await saveToken(loginData.access_token);
       await saveUserInfo(loginData.user_id, loginData.name);
-      router.replace('/home');
+      router.push('/email-confirmation');
     } catch (error) {
       const message =
         error instanceof Error
@@ -220,13 +222,10 @@ export default function RegisterScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
     >
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
+      <View style={styles.form}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.push('/login')}
@@ -369,7 +368,7 @@ export default function RegisterScreen() {
         >
           <Text style={styles.continueText}>{loading ? 'Carregando...' : 'Continue'}</Text>
         </TouchableOpacity>
-      </ScrollView>
+      </View>
 
       <Modal visible={menu !== null && anchor !== null} transparent animationType="fade">
         <View style={styles.modalRoot}>
@@ -407,7 +406,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  content: {
+  form: {
+    flex: 1,
     paddingHorizontal: 24,
     paddingTop: 16,
     paddingBottom: 40,

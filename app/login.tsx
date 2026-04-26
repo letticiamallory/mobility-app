@@ -49,7 +49,6 @@ export default function LoginScreen() {
       accessible={false}
     >
       <View style={styles.overlay} />
-
       <View style={styles.card}>
         <Text style={styles.title} accessibilityRole="header">
           Bem vindo ao
