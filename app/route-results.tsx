@@ -2,7 +2,18 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
-import { Linking, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  Linking,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Stage = {
@@ -19,6 +30,9 @@ type Stage = {
   departure_minutes?: number | string | Array<number | string>;
   street_view_image?: string;
   points?: { latitude: number; longitude: number }[];
+  accessible?: boolean;
+  warning?: string;
+  slope_warning?: boolean;
 };
 
 type RouteItem = {
@@ -140,6 +154,12 @@ function minutesUntilClock(clock: string): number {
 function isWalkStageMode(mode?: string): boolean {
   const m = `${mode ?? ''}`.toLowerCase();
   return m === 'walk' || m === 'walking';
+}
+
+function stageNeedsAttention(stage: Stage): boolean {
+  if (stage.slope_warning === true) return true;
+  const w = `${stage.warning ?? ''}`.trim();
+  return w.length > 0;
 }
 
 function pickExplicitImageUrl(stage: Record<string, unknown> | null | undefined): string | undefined {
@@ -271,6 +291,55 @@ function nextStagePreviewUris(stages: Stage[]): PreviewPair | null {
   return null;
 }
 
+const JOURNEY_RAIL_W = 14;
+
+/** Um único SVG: ponto + trilho + seta (sem três Views separadas). */
+function JourneyTimelineConnector({ height }: { height: number }) {
+  const mid = JOURNEY_RAIL_W / 2;
+  const dotR = 3.5;
+  const dotCY = dotR + 2;
+  const lineTop = dotCY + dotR + 1.5;
+  const arrowBaseY = height - 7;
+  const arrowTipY = height - 1;
+  if (height < lineTop + 10) {
+    return (
+      <Svg width={JOURNEY_RAIL_W} height={height} viewBox={`0 0 ${JOURNEY_RAIL_W} ${height}`}>
+        <Circle cx={mid} cy={Math.max(dotR + 1, height * 0.22)} r={Math.min(dotR, height * 0.14)} fill="#9CA3AF" />
+      </Svg>
+    );
+  }
+  return (
+    <Svg width={JOURNEY_RAIL_W} height={height} viewBox={`0 0 ${JOURNEY_RAIL_W} ${height}`}>
+      <Circle cx={mid} cy={dotCY} r={dotR} fill="#9CA3AF" />
+      <Line
+        x1={mid}
+        y1={lineTop}
+        x2={mid}
+        y2={arrowBaseY}
+        stroke="#D1D5DB"
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
+      <Path d={`M ${mid - 4} ${arrowBaseY} L ${mid + 4} ${arrowBaseY} L ${mid} ${arrowTipY} Z`} fill="#9CA3AF" />
+    </Svg>
+  );
+}
+
+function JourneyTimelineRail() {
+  const [h, setH] = useState(44);
+  return (
+    <View
+      style={{ width: JOURNEY_RAIL_W, alignSelf: 'stretch' }}
+      onLayout={(e) => {
+        const next = Math.round(e.nativeEvent.layout.height);
+        if (next > 0) setH((prev) => (prev === next ? prev : next));
+      }}
+    >
+      <JourneyTimelineConnector height={h} />
+    </View>
+  );
+}
+
 const ROUTE_THUMB = { width: 96, height: 72, radius: 12, marginTop: 10 } as const;
 
 function RouteStageThumbnail({ primaryUri, fallbackUri }: { primaryUri?: string; fallbackUri?: string }) {
@@ -378,8 +447,14 @@ export default function RouteResultsScreen() {
   const routesParam = useLocalSearchParams().routes;
   console.log('[route-results] routes param:', routesParam?.toString().slice(0, 200));
 
-  const origin = Array.isArray(params.origin) ? params.origin[0] : params.origin ?? '';
-  const destination = Array.isArray(params.destination) ? params.destination[0] : params.destination ?? '';
+  const originFromParams = useMemo(
+    () => (Array.isArray(params.origin) ? params.origin[0] : params.origin) ?? '',
+    [params.origin],
+  );
+  const destinationFromParams = useMemo(
+    () => (Array.isArray(params.destination) ? params.destination[0] : params.destination) ?? '',
+    [params.destination],
+  );
 
   const originCoordParam = useMemo(() => {
     try {
@@ -404,6 +479,37 @@ export default function RouteResultsScreen() {
       return null;
     }
   }, [params.destinationCoordinate]);
+
+  type LatLng = { lat: number; lng: number };
+  const [headerOrigin, setHeaderOrigin] = useState(originFromParams);
+  const [headerDestination, setHeaderDestination] = useState(destinationFromParams);
+  /** Uma parada opcional entre origem e destino (`null` = nenhuma). */
+  const [middleStop, setMiddleStop] = useState<string | null>(null);
+  const [activeOriginCoord, setActiveOriginCoord] = useState<LatLng | null>(null);
+  const [activeDestCoord, setActiveDestCoord] = useState<LatLng | null>(null);
+
+  useEffect(() => {
+    setHeaderOrigin(originFromParams);
+    setHeaderDestination(destinationFromParams);
+    setMiddleStop(null);
+    setActiveOriginCoord(originCoordParam);
+    setActiveDestCoord(destCoordParam);
+  }, [originFromParams, destinationFromParams, originCoordParam, destCoordParam]);
+
+  const handleSwapLocations = () => {
+    setHeaderOrigin(headerDestination);
+    setHeaderDestination(headerOrigin);
+    setActiveOriginCoord(activeDestCoord);
+    setActiveDestCoord(activeOriginCoord);
+  };
+
+  const handleAddWaypoint = () => {
+    if (middleStop === null) setMiddleStop('');
+  };
+
+  const handleRemoveMiddleStop = () => {
+    setMiddleStop(null);
+  };
 
   const routes = useMemo(() => {
     try {
@@ -453,7 +559,6 @@ export default function RouteResultsScreen() {
       const m = `${s.mode ?? ''}`.toLowerCase();
       return isWalkStageMode(s.mode) || m === 'bus' || m === 'subway';
     });
-    const transferStages = orderedStages.filter((s) => s.mode === 'bus' || s.mode === 'subway');
     const firstTransitStage = orderedStages.find((s) => s.mode === 'bus' || s.mode === 'subway');
     const lastTransitStage = [...orderedStages].reverse().find((s) => s.mode === 'bus' || s.mode === 'subway');
     const routeMinutesFromLabel = routeDurationMinutes(route);
@@ -473,24 +578,14 @@ export default function RouteResultsScreen() {
     const arrivalTime = isClock(rawArrivalTime)
       ? rawArrivalTime!.trim()
       : addMinutesToClock(departureTime, totalMinutes > 0 ? totalMinutes : 0);
-    const nonWalkStages = orderedStages.filter((s) => !isWalkStageMode(s.mode));
-    const linesCount = nonWalkStages.length;
-    const transfers = Math.max(0, transferStages.length - 1);
-    const hasBus = nonWalkStages.some((s) => s.mode === 'bus');
-    const hasSubway = nonWalkStages.some((s) => s.mode === 'subway');
-    const vehicleLabel = hasBus && hasSubway
-      ? 'onibus/metro'
-      : hasSubway
-        ? 'metro'
-        : 'onibus';
     const stageCount = orderedStages.length;
-    const hasInaccessibleStage = orderedStages.some((s: any) => s?.accessible === false);
-    const hasWarning = route.slope_warning === true;
-    const accessibilityStatus = hasInaccessibleStage || route.accessible === false
-      ? { label: 'Nao acessivel', bg: '#FEE2E2', fg: '#DC2626' }
-      : hasWarning
-        ? { label: 'Atencao', bg: '#FEF3C7', fg: '#D97706' }
-        : { label: 'Acessivel', bg: '#DCFCE7', fg: '#16A34A' };
+    const hasInaccessibleStage = orderedStages.some((s) => s.accessible === false);
+    const accessibilityStatus =
+      hasInaccessibleStage || route.accessible === false
+        ? { label: 'Não acessível', bg: '#FEE2E2', fg: '#DC2626' }
+        : { label: 'Acessível', bg: '#DCFCE7', fg: '#16A34A' };
+    const hasAttentionSegments =
+      route.slope_warning === true || orderedStages.some((s) => stageNeedsAttention(s));
     const summaryPlaces = orderedStages
       .map((s) => extractPlaceName(s))
       .filter(Boolean)
@@ -503,11 +598,11 @@ export default function RouteResultsScreen() {
       const uberLl = coordsFromUberDeeplink((route as RouteItem).uber_deeplink);
       if (uberLl) nextStepPreview = previewFromCoords(uberLl.lat, uberLl.lng);
     }
-    if (!nextStepPreview && destCoordParam) {
-      nextStepPreview = previewFromCoords(destCoordParam.lat, destCoordParam.lng);
+    if (!nextStepPreview && activeDestCoord) {
+      nextStepPreview = previewFromCoords(activeDestCoord.lat, activeDestCoord.lng);
     }
-    if (!nextStepPreview && originCoordParam) {
-      nextStepPreview = previewFromCoords(originCoordParam.lat, originCoordParam.lng);
+    if (!nextStepPreview && activeOriginCoord) {
+      nextStepPreview = previewFromCoords(activeOriginCoord.lat, activeOriginCoord.lng);
     }
 
     return (
@@ -544,14 +639,23 @@ export default function RouteResultsScreen() {
             <View
               style={{
                 marginTop: 4,
+                width: '100%',
+                minHeight: 46,
                 alignItems: 'center',
-                flexDirection: 'column',
-                gap: 1,
+                justifyContent: 'center',
               }}
             >
-              <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '600' }}>{departureTime}</Text>
-              <MaterialCommunityIcons name="arrow-down" size={11} color="#9CA3AF" />
-              <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '600' }}>{arrivalTime}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 8 }}>
+                <JourneyTimelineRail />
+                <View style={{ justifyContent: 'space-between', paddingVertical: 2 }}>
+                  <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '600', textAlign: 'left' }}>
+                    {departureTime}
+                  </Text>
+                  <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '600', textAlign: 'left' }}>
+                    {arrivalTime}
+                  </Text>
+                </View>
+              </View>
             </View>
             <RouteStageThumbnail
               primaryUri={nextStepPreview?.primary}
@@ -670,12 +774,7 @@ export default function RouteResultsScreen() {
               )}
             </ScrollView>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
-              <Text style={{ color: '#999999', fontSize: 11 }}>
-                {linesCount <= 1
-                  ? `1 ${vehicleLabel} · sem troca`
-                  : `${linesCount} ${vehicleLabel} · ${transfers} ${transfers === 1 ? 'troca' : 'trocas'}`}
-              </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
               <View
                 style={{
                   backgroundColor: accessibilityStatus.bg,
@@ -692,6 +791,24 @@ export default function RouteResultsScreen() {
                   {accessibilityStatus.label}
                 </Text>
               </View>
+              {hasAttentionSegments ? (
+                <View
+                  style={{
+                    backgroundColor: '#FEF9C3',
+                    borderRadius: 10,
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                    borderWidth: 1,
+                    borderColor: '#FACC15',
+                  }}
+                >
+                  <MaterialCommunityIcons name="alert" size={12} color="#A16207" />
+                  <Text style={{ color: '#A16207', fontSize: 11, fontWeight: '700' }}>Atenção</Text>
+                </View>
+              ) : null}
             </View>
 
             <TouchableOpacity
@@ -726,45 +843,75 @@ export default function RouteResultsScreen() {
       <Stack.Screen options={{ headerShown: false }} />
 
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-        <View style={styles.row}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color="#0057A8" />
-          </TouchableOpacity>
-          <View style={[styles.field, { flex: 1 }]}>
-            <Text numberOfLines={1} style={styles.fieldText}>{origin}</Text>
+        <View style={styles.headerOriginDestWrap}>
+          <View style={styles.headerOriginDestBlock}>
+            <View style={styles.headerIconsColumn}>
+              <View style={styles.headerLeadIconRow}>
+                <TouchableOpacity onPress={() => router.back()}>
+                  <MaterialCommunityIcons name="arrow-left" size={22} color="#0057A8" />
+                </TouchableOpacity>
+              </View>
+              {middleStop !== null ? (
+                <View style={styles.headerLeadIconRow}>
+                  <MaterialCommunityIcons name="map-marker-outline" size={16} color="#6B7280" />
+                </View>
+              ) : null}
+              <View style={styles.headerLeadIconRow}>
+                <MaterialCommunityIcons name="map-marker" size={18} color="#FF6B00" />
+              </View>
+            </View>
+            <View style={styles.headerFieldsColumn}>
+              <View style={styles.field}>
+                <Text numberOfLines={1} style={styles.fieldText}>{headerOrigin}</Text>
+              </View>
+              {middleStop !== null ? (
+                <View style={styles.headerStopRow}>
+                  <TextInput
+                    style={[styles.field, styles.headerWaypointInput, { flex: 1, minWidth: 0 }]}
+                    value={middleStop}
+                    onChangeText={setMiddleStop}
+                    placeholder="Adicione uma parada"
+                    placeholderTextColor="#9CA3AF"
+                  />
+                  <TouchableOpacity
+                    onPress={handleRemoveMiddleStop}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remover parada"
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <MaterialCommunityIcons name="close-circle-outline" size={22} color="#9CA3AF" />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+              <View style={styles.field}>
+                <Text numberOfLines={1} style={styles.fieldText}>{headerDestination}</Text>
+              </View>
+            </View>
           </View>
-          <TouchableOpacity style={styles.swap}>
-            <MaterialCommunityIcons name="swap-vertical" size={18} color="#0057A8" />
-          </TouchableOpacity>
-          <TouchableOpacity>
-            <MaterialCommunityIcons name="tune" size={20} color="#0057A8" />
-          </TouchableOpacity>
-        </View>
 
-        <View style={[styles.row, { marginTop: 8 }]}>
-          <MaterialCommunityIcons name="map-marker" size={18} color="#FF6B00" />
-          <View style={[styles.field, { flex: 1 }]}>
-            <Text numberOfLines={1} style={styles.fieldText}>{destination}</Text>
+          <View style={styles.headerSwapOverlay} pointerEvents="box-none">
+            <TouchableOpacity style={styles.swap} onPress={handleSwapLocations}>
+              <MaterialCommunityIcons name="swap-vertical" size={18} color="#0057A8" />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 18,
-              backgroundColor: '#F5F5F5',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <MaterialCommunityIcons name="plus" size={18} color="#0057A8" />
-          </TouchableOpacity>
+          <View style={styles.headerActionsOverlay} pointerEvents="box-none">
+            <TouchableOpacity>
+              <MaterialCommunityIcons name="tune" size={20} color="#0057A8" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.headerPlusBtn, middleStop !== null ? styles.headerPlusBtnDisabled : null]}
+              onPress={handleAddWaypoint}
+              disabled={middleStop !== null}
+            >
+              <MaterialCommunityIcons name="plus" size={18} color="#0057A8" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <View style={styles.pill}><Text style={styles.pillText}>Sair agora ▼</Text></View>
             <View style={styles.pill}><Text style={styles.pillText}>Ordenar ▼</Text></View>
-            <View style={styles.pill}><Text style={styles.pillText}>♿ Acessível</Text></View>
           </View>
         </ScrollView>
       </View>
@@ -805,7 +952,46 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#EEEEEE',
   },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerOriginDestWrap: { position: 'relative' },
+  /** Ícones à esquerda + coluna única de campos: origem e destino com a mesma largura de barra. */
+  headerOriginDestBlock: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  headerIconsColumn: { width: 26, gap: 8 },
+  headerLeadIconRow: { height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerFieldsColumn: { flex: 1, marginRight: 60, gap: 8, minWidth: 0 },
+  headerWaypointInput: {
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+    fontSize: 13,
+    color: '#1E1D1D',
+    textAlignVertical: 'center',
+  },
+  headerStopRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  headerPlusBtnDisabled: { opacity: 0.4 },
+  headerSwapOverlay: {
+    position: 'absolute',
+    right: 44,
+    top: 0,
+    bottom: 0,
+    width: 34,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerActionsOverlay: {
+    position: 'absolute',
+    right: 8,
+    top: 0,
+    bottom: 0,
+    width: 36,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerPlusBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F5F5F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   field: { backgroundColor: '#F5F5F5', borderRadius: 8, paddingHorizontal: 10, height: 40, justifyContent: 'center' },
   fieldText: { color: '#1E1D1D', fontSize: 13 },
   swap: {
@@ -813,6 +999,8 @@ const styles = StyleSheet.create({
     height: 34,
     borderRadius: 17,
     backgroundColor: '#F5F5F5',
+    borderWidth: 1,
+    borderColor: '#0057A8',
     alignItems: 'center',
     justifyContent: 'center',
   },
