@@ -13,21 +13,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const MAP_HEIGHT = SCREEN_HEIGHT * 0.6;
-const PANEL_HEIGHT = SCREEN_HEIGHT * 0.45;
 
 const COLORS = {
   bg: '#FFFFFF',
-  panel: '#1C1C1E',
-  card: '#262626',
   primary: '#0057A8',
-  text: '#FFFFFF',
+  text: '#1E1D1D',
   textMuted: '#999999',
-  destPin: '#FF4444',
   error: '#ef4444',
 };
 
@@ -51,16 +43,15 @@ export type SerializedRouteDetail = {
   stages: RouteStage[];
 };
 
-const FALLBACK_SP = { latitude: -23.55052, longitude: -46.633308 };
+function toMinutes(duration: string): number {
+  const h = duration.match(/(\d+)\s*h/i);
+  const m = duration.match(/(\d+)\s*min/i);
+  return (h ? Number(h[1]) * 60 : 0) + (m ? Number(m[1]) : 0);
+}
 
-const MODE_ICONS: Record<
-  RouteStage['mode'],
-  keyof typeof MaterialCommunityIcons.glyphMap
-> = {
-  walk: 'walk',
-  bus: 'bus',
-  subway: 'subway-variant',
-};
+function formatClock(date: Date): string {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
 
 function parseRouteParam(raw: string | string[] | undefined): SerializedRouteDetail | null {
   if (raw == null) return null;
@@ -121,43 +112,12 @@ function parseRouteParam(raw: string | string[] | undefined): SerializedRouteDet
   }
 }
 
-function buildPolylineCoords(route: SerializedRouteDetail): { latitude: number; longitude: number }[] {
-  const fromStages = route.stages.flatMap((s) => s.points ?? []);
-  if (fromStages.length >= 2) {
-    return fromStages;
-  }
-  return [route.originCoordinate, route.destinationCoordinate];
-}
-
-function mapRegion(route: SerializedRouteDetail) {
-  const pts = [
-    route.originCoordinate,
-    route.destinationCoordinate,
-    ...buildPolylineCoords(route),
-  ];
-  const lats = pts.map((p) => p.latitude);
-  const lngs = pts.map((p) => p.longitude);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
-  const midLat = (minLat + maxLat) / 2;
-  const midLng = (minLng + maxLng) / 2;
-  const latDelta = Math.max((maxLat - minLat) * 1.35, 0.015);
-  const lngDelta = Math.max((maxLng - minLng) * 1.35, 0.015);
-  return {
-    latitude: midLat,
-    longitude: midLng,
-    latitudeDelta: latDelta,
-    longitudeDelta: lngDelta,
-  };
-}
-
 export default function RouteDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ route?: string | string[]; id?: string; name?: string }>();
   const [isReading, setIsReading] = useState(false);
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
+  const [isFavorite, setIsFavorite] = useState(false);
 
   const route = useMemo(() => parseRouteParam(params.route), [params.route]);
 
@@ -182,21 +142,13 @@ export default function RouteDetailScreen() {
     });
   };
 
-  const polylineCoords = useMemo(() => {
-    if (!route) return [];
-    return buildPolylineCoords(route);
-  }, [route]);
-
-  const region = useMemo(() => {
-    if (!route) {
-      return {
-        ...FALLBACK_SP,
-        latitudeDelta: 0.06,
-        longitudeDelta: 0.06,
-      };
-    }
-    return mapRegion(route);
-  }, [route]);
+  const departureDate = useMemo(() => new Date(), [route]);
+  const arrivalDate = useMemo(
+    () => new Date(departureDate.getTime() + toMinutes(route?.totalTime ?? '') * 60000),
+    [departureDate, route?.totalTime],
+  );
+  const departureTime = formatClock(departureDate);
+  const arrivalTime = formatClock(arrivalDate);
 
   useEffect(() => {
     if (!route) return;
@@ -210,6 +162,10 @@ export default function RouteDetailScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
   }, [currentStageIndex]);
+
+  const handleStartNavigation = () => {
+    readRoute();
+  };
 
   if (!route) {
     return (
@@ -233,140 +189,212 @@ export default function RouteDetailScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={styles.mapArea}>
-        <MapView style={StyleSheet.absoluteFill} initialRegion={region}>
-          <Marker coordinate={route.originCoordinate} title="Origem" anchor={{ x: 0.5, y: 0.5 }}>
-            <View style={styles.markerOrigin} />
-          </Marker>
-          <Marker
-            coordinate={route.destinationCoordinate}
-            title="Destino"
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={styles.markerDest} />
-          </Marker>
-          {polylineCoords.length >= 2 && (
-            <Polyline
-              coordinates={polylineCoords}
-              strokeColor={COLORS.primary}
-              strokeWidth={4}
-            />
-          )}
-        </MapView>
-      </View>
-
-      <TouchableOpacity
-        style={styles.backButton}
-        onPress={() => router.back()}
-        accessibilityRole="button"
-        accessibilityLabel="Voltar"
-      >
-        <MaterialCommunityIcons name="arrow-left" size={24} color={COLORS.primary} />
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.voiceButton}
-        onPress={readRoute}
-        accessibilityLabel="Ouvir instruções da rota"
-        accessibilityRole="button"
-      >
-        <MaterialCommunityIcons
-          name={isReading ? 'stop' : 'volume-high'}
-          size={24}
-          color="#0057A8"
-        />
-      </TouchableOpacity>
-
-      <View style={styles.panel}>
-        <View style={styles.headerRow}>
-          <View style={styles.routeTextRow}>
-            <Text numberOfLines={1} style={styles.headerPlace} accessibilityRole="header">
-              {route.origin}
-            </Text>
-            <MaterialCommunityIcons name="arrow-right" size={16} color={COLORS.textMuted} />
-            <Text numberOfLines={1} style={styles.headerPlace} accessibilityRole="header">
-              {route.destination}
-            </Text>
+      <View style={styles.header}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+            <TouchableOpacity onPress={() => router.back()}>
+              <MaterialCommunityIcons name="arrow-left" size={22} color="#0057A8" />
+            </TouchableOpacity>
+            <Text style={{ color: '#1E1D1D', fontSize: 18, fontWeight: '800' }}>{route.totalTime}</Text>
+            <Text style={{ color: '#999999', fontSize: 13 }}>Chegada: {arrivalTime}</Text>
           </View>
-          <Text style={styles.totalTimeValue}>{route.totalTime}</Text>
+          <TouchableOpacity
+            style={{ backgroundColor: '#0057A8', borderRadius: 20, padding: 8 }}
+            onPress={() => setIsFavorite((v) => !v)}
+          >
+            <MaterialCommunityIcons name={isFavorite ? 'star' : 'star-outline'} size={18} color="white" />
+          </TouchableOpacity>
         </View>
 
-        <ScrollView
-          style={styles.stagesScroll}
-          contentContainerStyle={styles.stagesContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {route.stages.map((stage, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.stageCard}
-              activeOpacity={0.95}
-              onPress={() => setCurrentStageIndex(index)}
-              accessibilityRole="button"
-              accessibilityLabel={`Etapa ${index + 1} da rota`}
-            >
-              <View style={styles.stageHeader}>
-                <MaterialCommunityIcons
-                  name={MODE_ICONS[stage.mode]}
-                  size={26}
-                  color={COLORS.primary}
-                />
-                <View style={styles.stageHeaderText}>
-                  <Text style={styles.stageInstruction}>{stage.instruction}</Text>
-                  <Text style={styles.stageMeta}>
-                    {stage.distance}
-                    {stage.distance && stage.duration ? ' · ' : ''}
-                    {stage.duration}
-                  </Text>
-                </View>
-              </View>
-
-              {stage.accessible === false && (
-                <View style={styles.warningBlock}>
-                  <View style={styles.badgeAtencao}>
-                    <Text style={styles.badgeAtencaoText}>Atenção</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            {route.stages.map((stage, i) => (
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                {stage.mode === 'walk' ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                    <MaterialCommunityIcons name="walk" size={16} color="#666666" />
+                    <Text style={{ color: '#666666', fontSize: 12 }}>{stage.distance}</Text>
                   </View>
-                  {stage.warning ? (
-                    <Text style={styles.warningText}>{stage.warning}</Text>
+                ) : (
+                  <View style={{ backgroundColor: '#1E1D1D', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, overflow: 'hidden' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <MaterialCommunityIcons name={stage.mode === 'subway' ? 'subway-variant' : 'bus'} size={12} color="white" />
+                      <Text style={{ color: 'white', fontSize: 12, fontWeight: '700' }}>
+                        {stage.instruction?.split(' ')?.[0] ?? '---'}
+                      </Text>
+                    </View>
+                    <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5, backgroundColor: '#0057A8' }} />
+                  </View>
+                )}
+                {i < route.stages.length - 1 ? (
+                  <MaterialCommunityIcons name="chevron-right" size={14} color="#CCCCCC" />
+                ) : null}
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
+          <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <MaterialCommunityIcons name="chevron-left" size={18} color="#0057A8" />
+            <Text style={{ color: '#0057A8', fontSize: 13 }}>Antes</Text>
+          </TouchableOpacity>
+          <Text style={{ color: '#1E1D1D', fontSize: 13, fontWeight: '600' }}>
+            {departureTime} - {arrivalTime}
+          </Text>
+          <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={{ color: '#0057A8', fontSize: 13 }}>Após</Text>
+            <MaterialCommunityIcons name="chevron-right" size={18} color="#0057A8" />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 90 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
+          <View style={{ width: 40, alignItems: 'center' }}>
+            <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: '#FF6B00', borderWidth: 3, borderColor: '#FF6B00' }} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#1E1D1D', fontSize: 15, fontWeight: '700' }}>{route.origin}</Text>
+            <Text style={{ color: '#999999', fontSize: 12, marginTop: 2 }}>Saia às {departureTime}</Text>
+          </View>
+          <Text style={{ color: '#1E1D1D', fontSize: 14, fontWeight: '600' }}>{departureTime}</Text>
+        </View>
+
+        {route.stages.map((stage, index) => (
+          <View key={index}>
+            <View style={{ flexDirection: 'row' }}>
+              <View style={{ width: 40, alignItems: 'center' }}>
+                <View style={{ width: 2, flex: 1, backgroundColor: stage.mode === 'walk' ? '#CCCCCC' : '#0057A8', minHeight: 20 }} />
+              </View>
+              <View style={{ flex: 1 }} />
+            </View>
+
+            {stage.mode === 'walk' ? (
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginVertical: 4 }}>
+                <View style={{ width: 40, alignItems: 'center' }}>
+                  <MaterialCommunityIcons name="walk" size={20} color="#666666" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <TouchableOpacity onPress={() => setCurrentStageIndex(index)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={{ color: '#666666', fontSize: 14 }}>
+                      Caminhe {stage.distance} | {stage.duration}
+                    </Text>
+                    <MaterialCommunityIcons name="chevron-down" size={16} color="#0057A8" />
+                  </TouchableOpacity>
+                  {stage.street_view_image ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+                      <Image
+                        source={{ uri: stage.street_view_image }}
+                        style={{ width: 120, height: 80, borderRadius: 8, marginRight: 8 }}
+                        resizeMode="cover"
+                      />
+                    </ScrollView>
+                  ) : null}
+                  {!stage.accessible && stage.warning ? (
+                    <View style={{ backgroundColor: '#FEF3C7', borderRadius: 8, padding: 10, marginTop: 8, flexDirection: 'row', gap: 8 }}>
+                      <MaterialCommunityIcons name="alert" size={16} color="#F59E0B" />
+                      <Text style={{ color: '#92400E', fontSize: 13, flex: 1 }}>{stage.warning}</Text>
+                    </View>
                   ) : null}
                 </View>
-              )}
-
-              {stage.street_view_image ? (
-                <Image
-                  source={{ uri: stage.street_view_image }}
-                  style={styles.streetView}
-                  resizeMode="cover"
-                />
-              ) : null}
-            </TouchableOpacity>
-          ))}
-
-          {currentStageIndex === route.stages.length - 1 ? (
-            <View style={styles.reviewCard}>
-              <Text style={styles.reviewTitle}>Como foi sua viagem?</Text>
-              <View style={styles.reviewStarsRow}>
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <TouchableOpacity
-                    key={star}
-                    onPress={() =>
-                      router.push({
-                        pathname: '/write-review',
-                        params: {
-                          type: 'route',
-                          id: params.id ?? 'route',
-                          name: params.name ?? route.destination,
-                        },
-                      })
-                    }
-                  >
-                    <MaterialCommunityIcons name="star" size={28} color="#F59E0B" />
-                  </TouchableOpacity>
-                ))}
               </View>
-            </View>
-          ) : null}
-        </ScrollView>
+            ) : (
+              <View style={{ marginVertical: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <View style={{ width: 40, alignItems: 'center' }}>
+                    <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#0057A8', alignItems: 'center', justifyContent: 'center' }}>
+                      <MaterialCommunityIcons name={stage.mode === 'subway' ? 'subway-variant' : 'bus'} size={16} color="white" />
+                    </View>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: '#1E1D1D', fontSize: 15, fontWeight: '700' }} numberOfLines={2}>
+                          {stage.instruction}
+                        </Text>
+                        {stage.accessible ? (
+                          <MaterialCommunityIcons name="wheelchair-accessibility" size={14} color="#16A34A" style={{ marginTop: 2 }} />
+                        ) : null}
+                      </View>
+                      {stage.street_view_image ? (
+                        <Image
+                          source={{ uri: stage.street_view_image }}
+                          style={{ width: 56, height: 56, borderRadius: 8, marginLeft: 12 }}
+                          resizeMode="cover"
+                        />
+                      ) : null}
+                    </View>
+
+                    <View style={{ marginTop: 10, gap: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <View style={{ backgroundColor: '#1E1D1D', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, overflow: 'hidden' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                              <MaterialCommunityIcons name={stage.mode === 'subway' ? 'subway-variant' : 'bus'} size={12} color="white" />
+                              <Text style={{ color: 'white', fontSize: 12, fontWeight: '700' }}>
+                                {stage.instruction?.split(' ')?.[0] ?? '---'}
+                              </Text>
+                            </View>
+                            <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5, backgroundColor: '#0057A8' }} />
+                          </View>
+                          <Text style={{ color: '#666666', fontSize: 13 }} numberOfLines={1}>
+                            {stage.instruction}
+                          </Text>
+                        </View>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                            <MaterialCommunityIcons name="wifi" size={13} color="#22c55e" />
+                            <Text style={{ color: '#22c55e', fontSize: 16, fontWeight: '800' }}>--</Text>
+                            <Text style={{ color: '#22c55e', fontSize: 11 }}>min</Text>
+                          </View>
+                        </View>
+                      </View>
+                      <Text style={{ color: '#22c55e', fontSize: 12 }}>
+                        A hora de chegada é pontual
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F0F0F0' }}>
+                      <Text style={{ color: '#666666', fontSize: 13 }}>Viaje -- pontos | {stage.duration}</Text>
+                      <MaterialCommunityIcons name="chevron-down" size={16} color="#0057A8" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            )}
+          </View>
+        ))}
+
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: 8 }}>
+          <View style={{ width: 40, alignItems: 'center' }}>
+            <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: '#FF4444', borderWidth: 3, borderColor: '#FF4444' }} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#1E1D1D', fontSize: 15, fontWeight: '700' }}>{route.destination}</Text>
+            <Text style={{ color: '#999999', fontSize: 12, marginTop: 2 }}>Chegada às {arrivalTime}</Text>
+          </View>
+          <Text style={{ color: '#1E1D1D', fontSize: 14, fontWeight: '600' }}>{arrivalTime}</Text>
+        </View>
+      </ScrollView>
+
+      <View style={{ backgroundColor: '#FFFFFF', padding: 16, borderTopWidth: 1, borderTopColor: '#EEEEEE', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <TouchableOpacity
+          onPress={handleStartNavigation}
+          style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: '#22c55e', alignItems: 'center', justifyContent: 'center', shadowColor: '#22c55e', shadowOpacity: 0.4, shadowRadius: 8, elevation: 4 }}
+        >
+          <MaterialCommunityIcons name={isReading ? 'stop' : 'play'} size={26} color="white" />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={{ flex: 1, backgroundColor: '#0057A8', borderRadius: 24, height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <MaterialCommunityIcons name="ticket" size={16} color="white" />
+          <Text style={{ color: 'white', fontSize: 14, fontWeight: '600' }}>Passagens</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={{ flex: 1, backgroundColor: '#0057A8', borderRadius: 24, height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <MaterialCommunityIcons name="bus-clock" size={16} color="white" />
+          <Text style={{ color: 'white', fontSize: 13, fontWeight: '600' }}>Tempo real</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -377,179 +405,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.bg,
   },
-  mapArea: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: MAP_HEIGHT,
-  },
-  backButton: {
-    position: 'absolute',
-    top: 50,
-    left: 16,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  header: {
     backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  voiceButton: {
-    position: 'absolute',
-    top: 50,
-    right: 16,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  panel: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: PANEL_HEIGHT,
-    backgroundColor: COLORS.panel,
-    borderTopLeftRadius: 40,
-    borderTopRightRadius: 40,
-    paddingHorizontal: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+    paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 10,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  routeTextRow: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginRight: 8,
-  },
-  headerPlace: {
-    color: COLORS.textMuted,
-    fontSize: 13,
-    fontWeight: '600',
-    flexShrink: 1,
-    fontFamily: 'Agrandir-Regular',
-  },
-  totalTimeValue: {
-    color: COLORS.primary,
-    fontSize: 20,
-    fontWeight: '800',
-    fontFamily: 'Agrandir-GrandHeavy',
-  },
-  markerOrigin: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: COLORS.primary,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-  markerDest: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: COLORS.destPin,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-  stagesScroll: {
-    flex: 1,
-  },
-  stagesContent: {
-    paddingBottom: 18,
-  },
-  stageCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 8,
-  },
-  stageHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  stageHeaderText: {
-    flex: 1,
-  },
-  stageInstruction: {
-    color: COLORS.text,
-    fontSize: 15,
-    fontWeight: '600',
-    lineHeight: 21,
-    fontFamily: 'Agrandir-TextBold',
-  },
-  stageMeta: {
-    color: COLORS.textMuted,
-    fontSize: 12,
-    marginTop: 6,
-    fontFamily: 'Agrandir-Regular',
-  },
-  warningBlock: {
-    gap: 8,
-    marginTop: 10,
-  },
-  badgeAtencao: {
-    alignSelf: 'flex-start',
-    backgroundColor: COLORS.error,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  badgeAtencaoText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-    fontFamily: 'Agrandir-TextBold',
-  },
-  warningText: {
-    color: COLORS.textMuted,
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: 'Agrandir-Regular',
-  },
-  streetView: {
-    width: '100%',
-    height: 140,
-    borderRadius: 10,
-    backgroundColor: '#3B3B3B',
-    marginTop: 10,
-  },
-  reviewCard: {
-    backgroundColor: '#2F2F2F',
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 12,
-  },
-  reviewTitle: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
-    fontFamily: 'Agrandir-TextBold',
-  },
-  reviewStarsRow: {
-    flexDirection: 'row',
-    marginTop: 10,
-    gap: 6,
+    paddingBottom: 12,
   },
   errorBox: {
     flex: 1,

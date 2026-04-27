@@ -24,6 +24,7 @@ export default function RootLayout() {
         <Stack.Screen name="profile" />
         <Stack.Screen name="stations" />
         <Stack.Screen name="lines" />
+        <Stack.Screen name="route-results" />
         <Stack.Screen name="reviews" />
         <Stack.Screen name="write-review" />
         <Stack.Screen name="email-confirmation" />

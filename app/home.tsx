@@ -177,7 +177,7 @@ export default function HomeScreen() {
               onPress={() => goToDirections(item.destination)}
               activeOpacity={0.85}
             >
-              <MaterialCommunityIcons name={item.icon} size={30} color="#0057A8" />
+              <MaterialCommunityIcons name={item.icon} size={26} color="#0057A8" />
               <PaperText style={styles.favoriteLabel}>{item.label}</PaperText>
               {item.subtitle ? (
                 <PaperText style={styles.favoriteSubLabel}>{item.subtitle}</PaperText>

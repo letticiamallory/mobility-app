@@ -348,12 +348,20 @@ export default function DirectionsScreen() {
         userId,
         DEFAULT_TRANSPORT_TYPE,
       );
-      const normalized = normalizeRoutes(raw);
-      setRoutes(normalized);
-      setIsPanelAnimated(normalized.length > 0);
-      if (normalized.length > 0) {
-        animatePanelHeight(PANEL_RESULTS_HEIGHT);
-      }
+      const resultObj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+      const routesParam = Array.isArray(resultObj.routes) ? resultObj.routes : [];
+      router.push({
+        pathname: '/route-results',
+        params: {
+          origin: origin.trim() || 'Local atual',
+          destination: dest,
+          routes: encodeURIComponent(JSON.stringify(routesParam)),
+          originCoordinate: JSON.stringify(currentGps ?? { latitude: -16.7, longitude: -43.86 }),
+          destinationCoordinate: JSON.stringify(
+            destinationCoord ?? currentGps ?? { latitude: -16.72, longitude: -43.87 },
+          ),
+        },
+      });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error: unknown) {
       const message =
@@ -366,7 +374,7 @@ export default function DirectionsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [destination, origin, router, animatePanelHeight]);
+  }, [destination, origin, router, currentGps, destinationCoord]);
 
   const hasRoutes = !!routes && routes.length > 0;
 
@@ -643,89 +651,61 @@ export default function DirectionsScreen() {
             contentContainerStyle={styles.resultsContent}
             keyboardShouldPersistTaps="handled"
           >
-            {routes.map((route) => (
+            {routes.map((route, index) => (
               <TouchableOpacity
-                key={route.id}
-                style={styles.routeCard}
-                activeOpacity={0.95}
+                key={index}
                 onPress={() => handleSelectRoute(route)}
+                style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginTop: 10, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 }}
               >
-                <View style={styles.routeHeader}>
-                  <Text style={styles.routeTime}>{route.totalDuration}</Text>
-                  <View style={styles.routeIcons}>
-                    {route.legs.map((leg, i) => (
-                      <MaterialCommunityIcons
-                        key={`${route.id}-${leg}-${i}`}
-                        name={LEG_ICONS[leg]}
-                        size={20}
-                        color="#0057A8"
-                      />
-                    ))}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                  <View>
+                    <Text style={{ color: '#0057A8', fontSize: 26, fontWeight: '800' }}>
+                      {(route as any).total_duration ?? route.totalTime}
+                    </Text>
+                    <Text style={{ color: '#999999', fontSize: 12, marginTop: 2 }}>
+                      {(route as any).total_distance ?? ''}
+                    </Text>
                   </View>
-                </View>
-
-                <Text style={styles.routeMeta}>
-                  Distância {route.totalDistance} · Duração {route.totalDuration}
-                </Text>
-
-                <View style={styles.badgesRow}>
-                  <View style={styles.badgeSuccess}>
-                    <Text style={styles.badgeSuccessText}>Acessível</Text>
-                  </View>
-                  {!route.accessible && (
-                    <View style={styles.badgeError}>
-                      <Text style={styles.badgeErrorText}>Atenção</Text>
+                  {route.accessible && (
+                    <View style={{ backgroundColor: '#DCFCE7', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <MaterialCommunityIcons name="wheelchair-accessibility" size={13} color="#16A34A" />
+                      <Text style={{ color: '#16A34A', fontSize: 12, fontWeight: '600' }}>Acessível</Text>
                     </View>
                   )}
                 </View>
 
-                {route.stages.some((s) => !!s.street_view_image) && (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.thumbsScroll}
-                    contentContainerStyle={styles.thumbsRow}
-                  >
-                    {route.stages
-                      .map((stage) => stage.street_view_image)
-                      .filter((img): img is string => !!img)
-                      .map((img, idx, arr) => (
-                        <TouchableOpacity key={`${route.id}-thumb-${idx}`} onPress={() => openGallery(arr, idx)}>
-                          <Image source={{ uri: img }} style={styles.thumbImage} />
-                        </TouchableOpacity>
-                      ))}
-                  </ScrollView>
-                )}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 4, flexWrap: 'wrap' }}>
+                  {route.stages?.map((stage: any, i: number) => (
+                    <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      {stage.mode === 'walk' ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                          <MaterialCommunityIcons name="walk" size={16} color="#666666" />
+                          <Text style={{ color: '#666666', fontSize: 11 }}>{stage.distance}</Text>
+                        </View>
+                      ) : (
+                        <View style={{ backgroundColor: '#1E1D1D', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, overflow: 'hidden' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <MaterialCommunityIcons name={stage.mode === 'subway' ? 'subway-variant' : 'bus'} size={12} color="white" />
+                            <Text style={{ color: 'white', fontSize: 12, fontWeight: '700' }}>
+                              {stage.line_code ?? stage.mode}
+                            </Text>
+                          </View>
+                          <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5, backgroundColor: '#0057A8' }} />
+                        </View>
+                      )}
+                      {i < (route.stages?.length ?? 0) - 1 && (
+                        <MaterialCommunityIcons name="chevron-right" size={14} color="#CCCCCC" />
+                      )}
+                    </View>
+                  ))}
+                </View>
 
                 <TouchableOpacity
-                  style={styles.detailButton}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/route-detail',
-                      params: { route: JSON.stringify(route) },
-                    })
-                  }
+                  onPress={() => handleSelectRoute(route)}
+                  style={{ backgroundColor: '#0057A8', borderRadius: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginTop: 12 }}
                 >
-                  <Text style={styles.detailButtonText}>Ver trajeto</Text>
+                  <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Ver trajeto →</Text>
                 </TouchableOpacity>
-                {selectedRoute?.id === route.id && (
-                  <View style={styles.inlineActions}>
-                    <TouchableOpacity style={styles.startButton} onPress={startGuidance}>
-                      <Text style={styles.startButtonText}>Iniciar percurso</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.detailsSecondaryButton}
-                      onPress={() =>
-                        router.push({
-                          pathname: '/route-detail',
-                          params: { route: JSON.stringify(route) },
-                        })
-                      }
-                    >
-                      <Text style={styles.detailsSecondaryText}>Ver detalhes completos</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
               </TouchableOpacity>
             ))}
           </ScrollView>

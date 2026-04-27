@@ -35,6 +35,12 @@ type Station = {
   lng: number;
 };
 
+type MockLine = {
+  code: string;
+  origin: string;
+  destination: string;
+};
+
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MAP_CENTER = { latitude: -16.7167, longitude: -43.8647 };
 
@@ -115,7 +121,25 @@ const getArrivalStatus = (nextBus: string | null, distanceNum: number) => {
   return { status: 'late', label: 'Pode não chegar a tempo', color: '#F59E0B' };
 };
 
-const getLineName = (lineCode: string): string => `Linha ${lineCode}`;
+const MOCK_LINES: MockLine[] = [
+  { code: '1501', origin: 'Vila Atlantida', destination: 'Vila Analia' },
+  { code: '1701', origin: 'Castelo Branco', destination: 'Sao Geraldo' },
+  { code: '2201', origin: 'UFMG', destination: 'Centro (Prefeitura)' },
+  { code: '2603', origin: 'Jaragua II', destination: 'Santo Amaro' },
+  { code: '3301', origin: 'Jardim Primavera', destination: 'Centro (Prefeitura)' },
+  { code: '4601', origin: 'Independencia', destination: 'Nossa Senhora das Gracas' },
+  { code: '5101', origin: 'Cidade Industrial', destination: 'Centro' },
+  { code: '5601', origin: 'Canelas', destination: 'Centro' },
+  { code: '5801', origin: 'Vila Sion II', destination: 'Vila Mauriceia' },
+  { code: '6201', origin: 'Renascenca', destination: 'Centro' },
+  { code: '6901', origin: 'Maracana', destination: 'Vila Oliveira' },
+  { code: '7101', origin: 'Major Prates', destination: 'Vila Sao Francisco de Assis' },
+];
+
+const getLineName = (code: string): string => {
+  const line = MOCK_LINES.find((l) => l.code === code);
+  return line ? `${line.origin} → ${line.destination}` : code;
+};
 
 const MOCK_STATIONS: Station[] = [
   { id: '1', type: 'bus', name: 'Terminal Central', address: 'Praça Dr. Carlos Versiani, Centro', distance: '200m', distanceNum: 200, accessible: true, lines: ['1501', '1701', '2201', '6201'], nextBus: '09:15', lat: -16.729, lng: -43.8617 },
@@ -550,31 +574,46 @@ export default function StationsScreen() {
                       )}
                     </View>
 
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-                      {station.lines.map((lineCode) => (
-                        <View
-                          key={lineCode}
-                          style={{
-                            backgroundColor: '#FFFFFF',
-                            borderRadius: 6,
-                            paddingHorizontal: 8,
-                            paddingVertical: 4,
-                            overflow: 'hidden',
-                          }}
-                        >
-                          <Text style={{ color: '#1E1D1D', fontSize: 12, fontWeight: '700' }}>{lineCode}</Text>
-                          <View
-                            style={{
-                              position: 'absolute',
-                              bottom: 0,
-                              left: 0,
-                              right: 0,
-                              height: 2.5,
-                              backgroundColor: getLineColor(lineCode),
-                            }}
-                          />
-                        </View>
-                      ))}
+                    <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: '#F0F0F0', paddingTop: 10, gap: 8 }}>
+                      {station.lines.map((lineCode, index) => {
+                        const baseMinutes = station.nextBus ? Math.round(getMinutesUntil(station.nextBus)) : null;
+                        const lineMinutes = baseMinutes !== null ? baseMinutes + (index * 7) : null;
+                        const lineTime = station.nextBus ? (() => {
+                          const [h, m] = station.nextBus.split(':').map(Number);
+                          const d = new Date();
+                          d.setHours(h, m + (index * 7), 0);
+                          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                        })() : null;
+
+                        return (
+                          <View key={`nearest-arrival-${lineCode}`} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <View style={{ backgroundColor: '#FFFFFF', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, overflow: 'hidden', minWidth: 60, alignItems: 'center' }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <MaterialCommunityIcons name="bus" size={11} color="#1E1D1D" />
+                                <Text style={{ color: '#1E1D1D', fontSize: 12, fontWeight: '700' }}>{lineCode}</Text>
+                              </View>
+                              <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5, backgroundColor: getLineColor(lineCode) }} />
+                            </View>
+
+                            <Text style={{ flex: 1, color: '#666666', fontSize: 12, marginHorizontal: 10 }} numberOfLines={1}>
+                              {getLineName(lineCode)}
+                            </Text>
+
+                            {lineMinutes !== null ? (
+                              <View style={{ alignItems: 'flex-end' }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                                  <MaterialCommunityIcons name="wifi" size={12} color="#22c55e" />
+                                  <Text style={{ color: '#22c55e', fontSize: 15, fontWeight: '800' }}>{lineMinutes}</Text>
+                                  <Text style={{ color: '#22c55e', fontSize: 11, marginTop: 1 }}>min</Text>
+                                </View>
+                                <Text style={{ color: '#999999', fontSize: 10 }}>{lineTime}</Text>
+                              </View>
+                            ) : (
+                              <Text style={{ color: '#CCCCCC', fontSize: 12 }}>--</Text>
+                            )}
+                          </View>
+                        );
+                      })}
                     </View>
                   </View>
                 </View>
@@ -720,15 +759,46 @@ export default function StationsScreen() {
                     ) : null}
                   </View>
 
-                  <View style={styles.linesWrap}>
-                    {item.lines.map((line) => (
-                      <View key={`${item.id}-${line}`} style={styles.lineChip}>
-                        <Text style={styles.lineChipText}>{line}</Text>
-                        <View
-                          style={[styles.lineChipBottomBar, { backgroundColor: getLineColor(line) }]}
-                        />
-                      </View>
-                    ))}
+                  <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: '#F0F0F0', paddingTop: 10, gap: 8 }}>
+                    {item.lines.map((lineCode, index) => {
+                      const baseMinutes = item.nextBus ? Math.round(getMinutesUntil(item.nextBus)) : null;
+                      const lineMinutes = baseMinutes !== null ? baseMinutes + (index * 7) : null;
+                      const lineTime = item.nextBus ? (() => {
+                        const [h, m] = item.nextBus.split(':').map(Number);
+                        const d = new Date();
+                        d.setHours(h, m + (index * 7), 0);
+                        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                      })() : null;
+
+                      return (
+                        <View key={`card-arrival-${item.id}-${lineCode}`} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, overflow: 'hidden', minWidth: 60, alignItems: 'center' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                              <MaterialCommunityIcons name="bus" size={11} color="#1E1D1D" />
+                              <Text style={{ color: '#1E1D1D', fontSize: 12, fontWeight: '700' }}>{lineCode}</Text>
+                            </View>
+                            <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5, backgroundColor: getLineColor(lineCode) }} />
+                          </View>
+
+                          <Text style={{ flex: 1, color: '#666666', fontSize: 12, marginHorizontal: 10 }} numberOfLines={1}>
+                            {getLineName(lineCode)}
+                          </Text>
+
+                          {lineMinutes !== null ? (
+                            <View style={{ alignItems: 'flex-end' }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                                <MaterialCommunityIcons name="wifi" size={12} color="#22c55e" />
+                                <Text style={{ color: '#22c55e', fontSize: 15, fontWeight: '800' }}>{lineMinutes}</Text>
+                                <Text style={{ color: '#22c55e', fontSize: 11, marginTop: 1 }}>min</Text>
+                              </View>
+                              <Text style={{ color: '#999999', fontSize: 10 }}>{lineTime}</Text>
+                            </View>
+                          ) : (
+                            <Text style={{ color: '#CCCCCC', fontSize: 12 }}>--</Text>
+                          )}
+                        </View>
+                      );
+                    })}
                   </View>
                 </View>
               </View>
@@ -768,21 +838,6 @@ export default function StationsScreen() {
               <Marker coordinate={{ latitude: selectedStation.lat, longitude: selectedStation.lng }} />
             </MapView>
           ) : null}
-
-          <View style={styles.sheetLinesWrap}>
-            {selectedStation?.lines.map((line) => (
-              <TouchableOpacity
-                key={`sheet-${line}`}
-                style={styles.sheetLineChip}
-                onPress={() => router.push({ pathname: '/lines', params: { search: line } })}
-              >
-                <Text style={styles.sheetLineChipText}>{line}</Text>
-                <View
-                  style={[styles.sheetLineChipBottomBar, { backgroundColor: getLineColor(line) }]}
-                />
-              </TouchableOpacity>
-            ))}
-          </View>
 
           <Text style={styles.arrivalsTitle}>Próximas chegadas</Text>
           {selectedStation?.lines
@@ -965,7 +1020,7 @@ const styles = StyleSheet.create({
   },
   notAccessibleBadgeText: { color: '#EF4444', fontSize: 11, fontWeight: '600' },
   linesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
-  lineChip: { backgroundColor: '#FFFFFF', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden', position: 'relative' },
+  lineChip: { backgroundColor: 'transparent', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden', position: 'relative' },
   lineChipText: { color: '#1E1D1D', fontSize: 11, fontWeight: '600' },
   lineChipBottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5 },
   nextText: { color: '#22c55e', fontSize: 12, marginTop: 6, fontWeight: '600' },
@@ -981,7 +1036,7 @@ const styles = StyleSheet.create({
   sheetAddress: { color: '#666666', fontSize: 14, marginTop: 4 },
   sheetMap: { height: 120, borderRadius: 12, marginTop: 12 },
   sheetLinesWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 12, gap: 8 },
-  sheetLineChip: { backgroundColor: '#FFFFFF', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden', position: 'relative' },
+  sheetLineChip: { backgroundColor: 'transparent', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden', position: 'relative' },
   sheetLineChipText: { color: '#1E1D1D', fontSize: 13, fontWeight: '700' },
   sheetLineChipBottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 3 },
   arrivalsTitle: { color: '#1E1D1D', fontSize: 15, fontWeight: '700', marginTop: 14 },

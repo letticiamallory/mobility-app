@@ -14,9 +14,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 import { API_URL } from '../constants/api';
 import { getToken } from '../services/token.service';
 
@@ -32,19 +33,41 @@ type LineItem = {
   operator: string;
   color: string;
   schedules: string[];
+  alert?: 'green' | 'yellow' | 'red' | null;
+  alertText?: string;
 };
 
+type StationStop = {
+  id: string;
+  name: string;
+  lines: string[];
+  nextBus: string | null;
+  lat: number;
+  lng: number;
+};
+
+const MOCK_STATIONS: StationStop[] = [
+  { id: '1', name: 'Terminal Central', lines: ['1501', '1701', '2201', '6201'], nextBus: '09:15', lat: -16.729, lng: -43.8617 },
+  { id: '2', name: 'Parada Ibituruna', lines: ['5801', '6901'], nextBus: '09:22', lat: -16.7089, lng: -43.8723 },
+  { id: '3', name: 'Parada Montes Claros Shopping', lines: ['2603', '3301'], nextBus: '09:30', lat: -16.7445, lng: -43.8534 },
+  { id: '4', name: 'Parada Unimontes', lines: ['6901', '7101'], nextBus: '09:18', lat: -16.7012, lng: -43.8456 },
+  { id: '5', name: 'Parada Hospital Aroldo Tourinho', lines: ['4601', '5801'], nextBus: '09:45', lat: -16.7234, lng: -43.8789 },
+  { id: '6', name: 'Parada Parque Cândido Portinari', lines: ['2201', '3301'], nextBus: null, lat: -16.7167, lng: -43.8345 },
+  { id: '7', name: 'Parada Rodoviária', lines: ['1601', '5601'], nextBus: '09:50', lat: -16.7389, lng: -43.8678 },
+  { id: '8', name: 'Parada UFMG', lines: ['2201', '5101'], nextBus: '10:00', lat: -16.6978, lng: -43.8512 },
+];
+
 const MOCK_LINES: LineItem[] = [
-  { id: '1', type: 'bus', code: '1501', name: 'Vila Atlantida / Vila Analia', origin: 'Vila Atlantida', destination: 'Vila Analia', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:30', '06:00', '06:30', '07:00', '07:30', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'] },
-  { id: '2', type: 'bus', code: '1701', name: 'Castelo Branco / Sao Geraldo', origin: 'Castelo Branco', destination: 'Sao Geraldo', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:45', '06:15', '07:00', '08:00', '09:00', '10:00', '12:00', '14:00', '17:30', '18:30'] },
-  { id: '3', type: 'bus', code: '2201', name: 'UFMG / Centro', origin: 'UFMG', destination: 'Centro (Prefeitura)', via: 'JK e Planalto', accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '06:30', '07:00', '07:30', '08:00', '09:00', '10:00', '12:00', '13:00', '17:00', '18:00', '19:00'] },
-  { id: '4', type: 'bus', code: '2603', name: 'Jaragua II / Santo Amaro', origin: 'Jaragua II', destination: 'Santo Amaro', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00'] },
-  { id: '5', type: 'bus', code: '3301', name: 'Jardim Primavera / Centro', origin: 'Jardim Primavera', destination: 'Centro (Prefeitura)', via: 'Aeroporto', accessible: false, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '09:00', '12:00', '15:00', '17:00', '18:00'] },
-  { id: '6', type: 'bus', code: '4601', name: 'Independencia / N. S. das Gracas', origin: 'Independencia', destination: 'Nossa Senhora das Gracas', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:30', '06:30', '07:30', '09:00', '12:00', '15:00', '17:00', '18:30'] },
-  { id: '7', type: 'bus', code: '5801', name: 'Vila Sion II / Vila Mauriceia', origin: 'Vila Sion II', destination: 'Vila Mauriceia', via: 'Santa Rita e Ibituruna', accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00', '19:00'] },
-  { id: '8', type: 'bus', code: '6201', name: 'Renascenca / Centro', origin: 'Renascenca', destination: 'Centro', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['05:45', '06:15', '07:15', '09:00', '12:00', '15:00', '17:15', '18:15'] },
-  { id: '9', type: 'bus', code: '6901', name: 'Maracana / Vila Oliveira', origin: 'Maracana', destination: 'Vila Oliveira', via: 'Unimontes', accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00'] },
-  { id: '10', type: 'bus', code: '7101', name: 'Major Prates / Vila Sao Francisco', origin: 'Major Prates', destination: 'Vila Sao Francisco de Assis', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', schedules: ['06:00', '07:00', '09:00', '12:00', '15:00', '17:00', '18:00'] },
+  { id: '1', type: 'bus', code: '1501', name: 'Vila Atlantida / Vila Analia', origin: 'Vila Atlantida', destination: 'Vila Analia', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', alert: null, schedules: ['05:30', '06:00', '06:30', '07:00', '07:30', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'] },
+  { id: '2', type: 'bus', code: '1701', name: 'Castelo Branco / Sao Geraldo', origin: 'Castelo Branco', destination: 'Sao Geraldo', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', alert: 'green', schedules: ['05:45', '06:15', '07:00', '08:00', '09:00', '10:00', '12:00', '14:00', '17:30', '18:30'] },
+  { id: '3', type: 'bus', code: '2201', name: 'UFMG / Centro', origin: 'UFMG', destination: 'Centro (Prefeitura)', via: 'JK e Planalto', accessible: true, operator: 'MOC BUS', color: '#0057A8', alert: null, schedules: ['06:00', '06:30', '07:00', '07:30', '08:00', '09:00', '10:00', '12:00', '13:00', '17:00', '18:00', '19:00'] },
+  { id: '4', type: 'bus', code: '2603', name: 'Jaragua II / Santo Amaro', origin: 'Jaragua II', destination: 'Santo Amaro', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', alert: null, schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00'] },
+  { id: '5', type: 'bus', code: '3301', name: 'Jardim Primavera / Centro', origin: 'Jardim Primavera', destination: 'Centro (Prefeitura)', via: 'Aeroporto', accessible: false, operator: 'MOC BUS', color: '#0057A8', alert: 'yellow', alertText: 'Desvio temporário na Av. Osmane Barbosa', schedules: ['06:00', '07:00', '09:00', '12:00', '15:00', '17:00', '18:00'] },
+  { id: '6', type: 'bus', code: '4601', name: 'Independencia / N. S. das Gracas', origin: 'Independencia', destination: 'Nossa Senhora das Gracas', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', alert: null, schedules: ['05:30', '06:30', '07:30', '09:00', '12:00', '15:00', '17:00', '18:30'] },
+  { id: '7', type: 'bus', code: '5801', name: 'Vila Sion II / Vila Mauriceia', origin: 'Vila Sion II', destination: 'Vila Mauriceia', via: 'Santa Rita e Ibituruna', accessible: true, operator: 'MOC BUS', color: '#0057A8', alert: 'red', alertText: 'Sem serviço no momento', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00', '19:00'] },
+  { id: '8', type: 'bus', code: '6201', name: 'Renascenca / Centro', origin: 'Renascenca', destination: 'Centro', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', alert: null, schedules: ['05:45', '06:15', '07:15', '09:00', '12:00', '15:00', '17:15', '18:15'] },
+  { id: '9', type: 'bus', code: '6901', name: 'Maracana / Vila Oliveira', origin: 'Maracana', destination: 'Vila Oliveira', via: 'Unimontes', accessible: true, operator: 'MOC BUS', color: '#0057A8', alert: 'green', schedules: ['06:00', '07:00', '08:00', '10:00', '12:00', '14:00', '17:00', '18:00'] },
+  { id: '10', type: 'bus', code: '7101', name: 'Major Prates / Vila Sao Francisco', origin: 'Major Prates', destination: 'Vila Sao Francisco de Assis', via: null, accessible: true, operator: 'MOC BUS', color: '#0057A8', alert: null, schedules: ['06:00', '07:00', '09:00', '12:00', '15:00', '17:00', '18:00'] },
 ];
 
 const TABS = ['todos', 'favoritos', 'recentes', 'acessiveis'] as const;
@@ -91,6 +114,45 @@ function lineCoordinates(code: string) {
   };
 }
 
+const calculateDistanceNum = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): string => {
+  const distance = calculateDistanceNum(lat1, lng1, lat2, lng2);
+  return distance < 1000 ? `${Math.round(distance)}m` : `${(distance / 1000).toFixed(1)}km`;
+};
+
+const getWalkTime = (distanceNum: number): string => {
+  const minutes = Math.round(distanceNum / 80);
+  return minutes < 1 ? '1 min a pé' : `${minutes} min a pé`;
+};
+
+const getMinutesUntil = (time: string): number => {
+  const now = new Date();
+  const [h, m] = time.split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return 0;
+  const target = new Date();
+  target.setHours(h, m, 0, 0);
+  if (target.getTime() < now.getTime()) target.setDate(target.getDate() + 1);
+  return Math.max(0, (target.getTime() - now.getTime()) / 60000);
+};
+
+const getLineRoute = (line: LineItem | null) => {
+  if (!line) return [];
+  return MOCK_STATIONS
+    .filter((s) => s.lines.includes(line.code))
+    .map((s) => ({ latitude: s.lat, longitude: s.lng }));
+};
+
 function normalizeLine(raw: Record<string, unknown>, index: number): LineItem {
   return {
     id: String(raw.id ?? `line-${index}`),
@@ -123,6 +185,7 @@ export default function LinesScreen() {
   const [isDemo, setIsDemo] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [reviewStats, setReviewStats] = useState<Record<string, { average: number; total: number }>>({});
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
 
   useEffect(() => {
     Promise.all([AsyncStorage.getItem('recent_lines'), AsyncStorage.getItem('favorite_lines')]).then(
@@ -131,6 +194,19 @@ export default function LinesScreen() {
         if (favs) setFavorites(JSON.parse(favs) as string[]);
       },
     );
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status !== 'granted') return;
+        const current = await Location.getCurrentPositionAsync({});
+        setUserLocation({ latitude: current.coords.latitude, longitude: current.coords.longitude });
+      } catch {
+        setUserLocation(null);
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -261,6 +337,21 @@ export default function LinesScreen() {
   const selectedIsFavorite = selectedLine ? favorites.includes(selectedLine.id) : false;
   const selectedNext = selectedLine ? nextSchedule(selectedLine.schedules) : null;
   const selectedCoords = selectedLine ? lineCoordinates(selectedLine.code) : null;
+  const selectedRoute = useMemo(() => getLineRoute(selectedLine), [selectedLine]);
+  const selectedStops = useMemo(
+    () => (selectedLine ? MOCK_STATIONS.filter((s) => s.lines.includes(selectedLine.code)) : []),
+    [selectedLine],
+  );
+  const nearestStop = useMemo(() => {
+    if (!userLocation || !selectedLine) return null;
+    return [...MOCK_STATIONS]
+      .filter((s) => s.lines.includes(selectedLine.code))
+      .sort(
+        (a, b) =>
+          calculateDistanceNum(userLocation.latitude, userLocation.longitude, a.lat, a.lng) -
+          calculateDistanceNum(userLocation.latitude, userLocation.longitude, b.lat, b.lng),
+      )[0] ?? null;
+  }, [selectedLine, userLocation]);
 
   const sheetTranslateY = sheetAnim.interpolate({
     inputRange: [0, 1],
@@ -388,6 +479,18 @@ export default function LinesScreen() {
                   <Text style={styles.lineName} numberOfLines={1}>
                     {item.name}
                   </Text>
+                  {item.alert ? (
+                    <View
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        backgroundColor:
+                          item.alert === 'red' ? '#EF4444' : item.alert === 'yellow' ? '#F59E0B' : '#22c55e',
+                        marginLeft: 6,
+                      }}
+                    />
+                  ) : null}
                   {item.accessible ? (
                     <MaterialCommunityIcons
                       name="wheelchair-accessibility"
@@ -471,22 +574,95 @@ export default function LinesScreen() {
                 <Text style={styles.badgeNextText}>Próximo: {selectedNext}</Text>
               </View>
             ) : null}
+            {selectedLine?.alert ? (
+              <View style={styles.badgeOperator}>
+                <Text style={styles.badgeOperatorText}>
+                  {selectedLine.alertText ?? (selectedLine.alert === 'red'
+                    ? 'Sem serviço'
+                    : selectedLine.alert === 'yellow'
+                      ? 'Mudança moderada'
+                      : 'Serviço normal')}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
-          {selectedCoords ? (
+          {selectedLine ? (
             <MapView
-              style={styles.miniMap}
+              style={{ height: 160, borderRadius: 12, marginBottom: 16, marginTop: 12 }}
               initialRegion={{
-                latitude: (selectedCoords.origin.latitude + selectedCoords.destination.latitude) / 2,
-                longitude: (selectedCoords.origin.longitude + selectedCoords.destination.longitude) / 2,
-                latitudeDelta: 0.04,
-                longitudeDelta: 0.04,
+                latitude: -16.7167,
+                longitude: -43.8647,
+                latitudeDelta: 0.08,
+                longitudeDelta: 0.08,
               }}
+              scrollEnabled={false}
             >
-              <Marker coordinate={selectedCoords.origin} title="Origem" />
-              <Marker coordinate={selectedCoords.destination} title="Destino" />
+              {selectedRoute.map((coord, i) => (
+                <Marker key={i} coordinate={coord}>
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: getLineColor(selectedLine.code), borderWidth: 2, borderColor: 'white' }} />
+                </Marker>
+              ))}
+              {selectedRoute.length >= 2 ? (
+                <Polyline
+                  coordinates={selectedRoute}
+                  strokeColor={getLineColor(selectedLine.code)}
+                  strokeWidth={3}
+                />
+              ) : null}
             </MapView>
           ) : null}
+
+          {nearestStop && userLocation ? (
+            <View style={{ backgroundColor: '#F5F5F5', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+              <Text style={{ color: '#999999', fontSize: 12, fontWeight: '600' }}>PARADA MAIS PRÓXIMA</Text>
+              <Text style={{ color: '#1E1D1D', fontSize: 14, fontWeight: '700', marginTop: 4 }}>{nearestStop.name}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                <MaterialCommunityIcons name="walk" size={13} color="#0057A8" />
+                <Text style={{ color: '#0057A8', fontSize: 12, fontWeight: '600' }}>
+                  {calculateDistance(userLocation.latitude, userLocation.longitude, nearestStop.lat, nearestStop.lng)}
+                  {' • '}
+                  {getWalkTime(calculateDistanceNum(userLocation.latitude, userLocation.longitude, nearestStop.lat, nearestStop.lng))}
+                </Text>
+                {nearestStop.nextBus ? (
+                  <>
+                    <Text style={{ color: '#CCCCCC' }}>•</Text>
+                    <MaterialCommunityIcons name="wifi" size={12} color="#22c55e" />
+                    <Text style={{ color: '#22c55e', fontSize: 12, fontWeight: '700' }}>
+                      {Math.round(getMinutesUntil(nearestStop.nextBus))} min
+                    </Text>
+                  </>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
+          <Text style={{ color: '#1E1D1D', fontSize: 15, fontWeight: '700', marginBottom: 12 }}>
+            Todas as paradas ({selectedRoute.length})
+          </Text>
+          {selectedStops.map((stop, index) => (
+            <View key={stop.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}>
+              <View style={{ width: 20, alignItems: 'center', marginRight: 12 }}>
+                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: getLineColor(selectedLine?.code || '0'), borderWidth: 2, borderColor: 'white', zIndex: 1 }} />
+                {index < selectedStops.length - 1 ? (
+                  <View style={{ width: 2, height: 30, backgroundColor: getLineColor(selectedLine?.code || '0'), opacity: 0.3, position: 'absolute', top: 10 }} />
+                ) : null}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#1E1D1D', fontSize: 13, fontWeight: stop.id === nearestStop?.id ? '700' : '400' }}>
+                  {stop.name}
+                </Text>
+                {stop.id === nearestStop?.id ? (
+                  <Text style={{ color: '#0057A8', fontSize: 11, marginTop: 2 }}>Sua parada mais próxima</Text>
+                ) : null}
+              </View>
+              {stop.nextBus ? (
+                <Text style={{ color: '#22c55e', fontSize: 13, fontWeight: '700' }}>
+                  {Math.round(getMinutesUntil(stop.nextBus))} min
+                </Text>
+              ) : null}
+            </View>
+          ))}
 
           <View style={styles.reviewsRow}>
             <Text style={styles.reviewsText}>
