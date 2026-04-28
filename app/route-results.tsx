@@ -50,6 +50,39 @@ type RouteItem = {
 
 const uberDeepLink = 'uber://?action=setPickup';
 
+function collectStageDetailImages(stage: Stage): string[] {
+  const raw = stage as unknown as Record<string, unknown>;
+  const urls: string[] = [];
+  const pushIfUrl = (value: unknown) => {
+    if (typeof value !== 'string') return;
+    const v = value.trim();
+    if (/^https?:\/\//i.test(v)) urls.push(v);
+  };
+
+  pushIfUrl(stage.street_view_image);
+  pushIfUrl(raw.image_url);
+  pushIfUrl(raw.imageUrl);
+  pushIfUrl(raw.photo_url);
+  pushIfUrl(raw.photoUrl);
+  pushIfUrl(raw.preview_image);
+
+  const listKeys = [
+    'street_view_images',
+    'slope_images',
+    'slope_photos',
+    'warning_images',
+    'images',
+    'photos',
+  ] as const;
+  for (const key of listKeys) {
+    const arr = raw[key];
+    if (!Array.isArray(arr)) continue;
+    for (const item of arr) pushIfUrl(item);
+  }
+
+  return urls.filter((u, i, a) => a.indexOf(u) === i);
+}
+
 const getLineColor = (code: string): string => {
   const colors = [
     '#E53935', '#FB8C00', '#43A047', '#1E88E5',
@@ -61,23 +94,85 @@ const getLineColor = (code: string): string => {
   return colors[hash % colors.length];
 };
 
-function serializeRoute(route: RouteItem): string {
-  return JSON.stringify({
-    origin: '',
-    destination: '',
-    totalTime: route.total_duration ?? '--',
-    originCoordinate: { latitude: -16.7, longitude: -43.86 },
-    destinationCoordinate: { latitude: -16.72, longitude: -43.87 },
-    stages: (route.stages ?? []).map((s) => ({
-      mode: s.mode ?? 'walk',
-      instruction: s.line_code ?? s.mode ?? 'Etapa',
-      distance: s.distance ?? '',
-      duration: '',
-      accessible: true,
-      points: [],
+type DetailLatLng = { latitude: number; longitude: number };
+
+function normalizeStageModeForDetail(mode?: string): 'walk' | 'bus' | 'subway' {
+  const m = `${mode ?? ''}`.toLowerCase();
+  if (m === 'walk' || m === 'walking' || m === 'foot') return 'walk';
+  if (m.includes('metro') || m.includes('subway') || m === 'rail') return 'subway';
+  return 'bus';
+}
+
+function serializeRouteDetail(
+  route: RouteItem,
+  ctx: {
+    origin: string;
+    destination: string;
+    originCoordinate: DetailLatLng;
+    destinationCoordinate: DetailLatLng;
+  },
+): string {
+  const stages = (route.stages ?? []).map((s) => {
+    const pts = Array.isArray(s.points)
+      ? (s.points as { latitude?: number; longitude?: number }[])
+          .filter(
+            (p) =>
+              typeof p?.latitude === 'number' &&
+              typeof p?.longitude === 'number' &&
+              Number.isFinite(p.latitude) &&
+              Number.isFinite(p.longitude),
+          )
+          .map((p) => ({ latitude: p.latitude as number, longitude: p.longitude as number }))
+      : [];
+    return {
+      mode: normalizeStageModeForDetail(s.mode),
+      instruction: String(s.instruction ?? ''),
+      distance: String(s.distance ?? ''),
+      duration: String(s.duration ?? ''),
+      departure_minutes: s.departure_minutes,
+      accessible: s.accessible !== false,
+      warning: s.warning != null && String(s.warning).trim() ? String(s.warning) : undefined,
       street_view_image: s.street_view_image,
-    })),
+      slope_warning: s.slope_warning === true,
+      segment_images: collectStageDetailImages(s),
+      line_code: s.line_code != null && String(s.line_code).trim() ? String(s.line_code) : undefined,
+      points: pts.length > 0 ? pts : undefined,
+    };
   });
+
+  return JSON.stringify({
+    origin: ctx.origin,
+    destination: ctx.destination,
+    totalTime: String(route.total_duration ?? route.totalDuration ?? route.totalTime ?? ''),
+    originCoordinate: ctx.originCoordinate,
+    destinationCoordinate: ctx.destinationCoordinate,
+    stages,
+  });
+}
+
+/** Coordenadas de extremidade a partir dos pontos da rota (quando GPS/param não estiverem no estado). */
+function detailCoordinateFallbacks(route: RouteItem): {
+  origin: DetailLatLng;
+  destination: DetailLatLng;
+} {
+  const stages = route.stages ?? [];
+  const first = stages.find((s) => Array.isArray(s.points) && s.points.length > 0)?.points?.[0];
+  const lastStage = [...stages].reverse().find((s) => Array.isArray(s.points) && s.points.length > 0);
+  const last = lastStage?.points?.[(lastStage.points?.length ?? 1) - 1];
+  return {
+    origin:
+      first &&
+      typeof first.latitude === 'number' &&
+      typeof first.longitude === 'number'
+        ? { latitude: first.latitude, longitude: first.longitude }
+        : { latitude: -16.7, longitude: -43.86 },
+    destination:
+      last &&
+      typeof last.latitude === 'number' &&
+      typeof last.longitude === 'number'
+        ? { latitude: last.latitude, longitude: last.longitude }
+        : { latitude: -16.72, longitude: -43.87 },
+  };
 }
 
 function routeDurationMinutes(route: RouteItem): number {
@@ -812,7 +907,28 @@ export default function RouteResultsScreen() {
             </View>
 
             <TouchableOpacity
-              onPress={() => router.push({ pathname: '/route-detail', params: { route: serializeRoute(route) } })}
+              onPress={() => {
+                const fb = detailCoordinateFallbacks(route);
+                const originCoordinate =
+                  activeOriginCoord != null
+                    ? { latitude: activeOriginCoord.lat, longitude: activeOriginCoord.lng }
+                    : fb.origin;
+                const destinationCoordinate =
+                  activeDestCoord != null
+                    ? { latitude: activeDestCoord.lat, longitude: activeDestCoord.lng }
+                    : fb.destination;
+                router.push({
+                  pathname: '/route-detail',
+                  params: {
+                    route: serializeRouteDetail(route, {
+                      origin: headerOrigin,
+                      destination: headerDestination,
+                      originCoordinate,
+                      destinationCoordinate,
+                    }),
+                  },
+                });
+              }}
               style={{
                 marginTop: 8,
                 backgroundColor: '#EEF2FF',
@@ -860,7 +976,12 @@ export default function RouteResultsScreen() {
                 <MaterialCommunityIcons name="map-marker" size={18} color="#FF6B00" />
               </View>
             </View>
-            <View style={styles.headerFieldsColumn}>
+            <View
+              style={[
+                styles.headerFieldsColumn,
+                middleStop !== null ? styles.headerFieldsColumnWithStop : null,
+              ]}
+            >
               <View style={styles.field}>
                 <Text numberOfLines={1} style={styles.fieldText}>{headerOrigin}</Text>
               </View>
@@ -958,13 +1079,15 @@ const styles = StyleSheet.create({
   headerIconsColumn: { width: 26, gap: 8 },
   headerLeadIconRow: { height: 40, alignItems: 'center', justifyContent: 'center' },
   headerFieldsColumn: { flex: 1, marginRight: 60, gap: 8, minWidth: 0 },
+  /** Com parada, afasta coluna do overlay de troca (swap ~78px da borda). */
+  headerFieldsColumnWithStop: { marginRight: 82 },
   headerWaypointInput: {
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
     fontSize: 13,
     color: '#1E1D1D',
     textAlignVertical: 'center',
   },
-  headerStopRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  headerStopRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 6 },
   headerPlusBtnDisabled: { opacity: 0.4 },
   headerSwapOverlay: {
     position: 'absolute',
