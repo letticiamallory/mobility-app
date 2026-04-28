@@ -120,6 +120,16 @@ function extractBoardingPlace(instruction: string): string {
   return place || 'Embarque';
 }
 
+function extractDropoffPlace(instruction: string): string {
+  const raw = instruction.trim();
+  if (!raw) return 'estação';
+  const afterCode = raw.split(/\s+/).slice(1).join(' ').trim();
+  const source = afterCode || raw;
+  const base = source.split(/->|→/)[0]?.trim() || source;
+  const place = base.split('/')[0]?.trim() ?? base;
+  return place || 'estação';
+}
+
 /** Mesma paleta/hash que `getLineColor` em route-results (faixa sob o código da linha). */
 function getRouteCardLineStripeColor(code: string): string {
   const colors = [
@@ -135,6 +145,20 @@ function getRouteCardLineStripeColor(code: string): string {
 function isWalkStageMode(mode?: string): boolean {
   const m = `${mode ?? ''}`.toLowerCase();
   return m === 'walk' || m === 'walking';
+}
+
+function hasRepeatedTransitSequence(stages: RouteStage[]): boolean {
+  for (let i = 1; i < stages.length; i += 1) {
+    const prev = stages[i - 1];
+    const curr = stages[i];
+    const prevMode = `${prev.mode ?? ''}`.toLowerCase();
+    const currMode = `${curr.mode ?? ''}`.toLowerCase();
+    const bothTransit =
+      (prevMode === 'bus' || prevMode === 'subway') &&
+      (currMode === 'bus' || currMode === 'subway');
+    if (bothTransit && prevMode === currMode) return true;
+  }
+  return false;
 }
 
 function stopCountLabel(stage: RouteStage): string {
@@ -536,6 +560,7 @@ export default function RouteDetailScreen() {
 
   const stageCount = orderedStages.length;
   const railStages = orderedStages.length > 0 ? orderedStages : [FALLBACK_WALK_STAGE];
+  const showRailUnderline = hasRepeatedTransitSequence(railStages);
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
@@ -659,7 +684,7 @@ export default function RouteDetailScreen() {
                   <Text style={styles.routeCardStageCount}>{stageCount}</Text>
                   <MaterialCommunityIcons name="chevron-right" size={13} color="#CCCCCC" />
                   <View style={styles.routeCardRailWrap}>
-                    <View style={styles.routeCardRailUnderline} />
+                    {showRailUnderline ? <View style={styles.routeCardRailUnderline} /> : null}
                     {railStages.map((stage, i, arr) => {
                       const lineLabel = extractLineCode(stage);
                       return (
@@ -813,6 +838,12 @@ export default function RouteDetailScreen() {
                   : nextTransitAccent ?? (nextIsWalk ? COLORS.lineGrey : COLORS.primary);
 
               if (isWalk) {
+                const prevTransit = route.stages[index - 1];
+                const showDropoffHint =
+                  !!prevTransit && (prevTransit.mode === 'bus' || prevTransit.mode === 'subway');
+                const dropoffPlace = showDropoffHint
+                  ? extractDropoffPlace(prevTransit.instruction)
+                  : '';
                 const walkImages = (
                   stage.segment_images?.length
                     ? stage.segment_images
@@ -842,6 +873,11 @@ export default function RouteDetailScreen() {
                       </View>
                       <View style={[styles.blockMain, styles.walkBlockMain]}>
                         <View style={styles.stageDivider} />
+                        {showDropoffHint ? (
+                          <Text style={styles.dropoffHintText}>
+                            Desça na estação {dropoffPlace}
+                          </Text>
+                        ) : null}
                         <TouchableOpacity
                           style={styles.expandHead}
                           onPress={() => toggleWalk(index)}
@@ -958,14 +994,15 @@ export default function RouteDetailScreen() {
                               </View>
                               <Text style={styles.transitAddressText} numberOfLines={2}>
                                 {boardingPlace}
+                                {stage.accessible ? ' ' : ''}
+                                {stage.accessible ? (
+                                  <MaterialCommunityIcons
+                                    name="wheelchair-accessibility"
+                                    size={16}
+                                    color={COLORS.greenOnTime}
+                                  />
+                                ) : null}
                               </Text>
-                              {stage.accessible ? (
-                                <MaterialCommunityIcons
-                                  name="wheelchair-accessibility"
-                                  size={18}
-                                  color={COLORS.greenOnTime}
-                                />
-                              ) : null}
                             </View>
                             {transitLegCount > 1 ? (
                               <Text style={[styles.punctual, { color: punctualColor }]}>
@@ -995,6 +1032,22 @@ export default function RouteDetailScreen() {
                         </View>
 
                         <View style={styles.badgeRow}>
+                          <TouchableOpacity style={styles.transitActionBtn} activeOpacity={0.85}>
+                            <MaterialCommunityIcons
+                              name="bus-clock"
+                              size={16}
+                              color="#FFFFFF"
+                            />
+                            <Text style={styles.transitActionText}>Localização em tempo real</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.transitActionBtn} activeOpacity={0.85}>
+                            <MaterialCommunityIcons
+                              name="bell-ring-outline"
+                              size={16}
+                              color="#FFFFFF"
+                            />
+                            <Text style={styles.transitActionText}>Ative as notificações</Text>
+                          </TouchableOpacity>
                         </View>
 
                       </View>
@@ -1047,10 +1100,6 @@ export default function RouteDetailScreen() {
             accessibilityLabel={isReading ? 'Parar' : 'Ouvir rota'}
           >
             <MaterialCommunityIcons name={isReading ? 'stop' : 'play'} size={26} color="#FFFFFF" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.btnPill} activeOpacity={0.88}>
-            <MaterialCommunityIcons name="ticket" size={18} color="#FFFFFF" />
-            <Text style={styles.btnPillText}>Passagens</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.btnPill} activeOpacity={0.88}>
             <MaterialCommunityIcons name="bus-clock" size={18} color="#FFFFFF" />
@@ -1441,6 +1490,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#4B5563',
   },
+  dropoffHintText: {
+    marginBottom: 6,
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textMuted,
+  },
   walkBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1526,11 +1581,25 @@ const styles = StyleSheet.create({
   },
   thumbPlaceholder: {},
   badgeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
+    flexDirection: 'column',
+    alignItems: 'stretch',
     gap: 8,
-    marginTop: 4,
+    marginTop: 10,
+  },
+  transitActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: COLORS.primary,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  transitActionText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   lineBadge: {
     flexDirection: 'row',

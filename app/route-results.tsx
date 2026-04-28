@@ -42,6 +42,10 @@ type RouteItem = {
   total_distance?: string;
   accessible?: boolean;
   slope_warning?: boolean;
+  accompanied?: string;
+  companion_mode?: string;
+  recommended_for?: string;
+  profile?: string;
   uber_deeplink?: string;
   departTime?: string;
   arriveTime?: string;
@@ -249,6 +253,59 @@ function minutesUntilClock(clock: string): number {
 function isWalkStageMode(mode?: string): boolean {
   const m = `${mode ?? ''}`.toLowerCase();
   return m === 'walk' || m === 'walking';
+}
+
+function hasRepeatedTransitSequence(stages: Stage[]): boolean {
+  for (let i = 1; i < stages.length; i += 1) {
+    const prevMode = `${stages[i - 1]?.mode ?? ''}`.toLowerCase();
+    const currMode = `${stages[i]?.mode ?? ''}`.toLowerCase();
+    const bothTransit =
+      (prevMode === 'bus' || prevMode === 'subway') &&
+      (currMode === 'bus' || currMode === 'subway');
+    if (bothTransit && prevMode === currMode) return true;
+  }
+  return false;
+}
+
+type CompanionTab = 'alone' | 'companied';
+
+function routeCompanionAudience(route: RouteItem): 'alone' | 'companied' | 'both' | null {
+  const rawValues = [
+    route.accompanied,
+    route.companion_mode,
+    route.recommended_for,
+    route.profile,
+  ]
+    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    .map((v) => v.trim().toLowerCase());
+
+  if (rawValues.length === 0) return null;
+  const joined = rawValues.join(' ');
+  const mentionsBoth =
+    joined.includes('both') ||
+    joined.includes('ambos') ||
+    joined.includes('sozinho e acompanhado');
+  const mentionsAlone =
+    joined.includes('alone') ||
+    joined.includes('solo') ||
+    joined.includes('sozinho') ||
+    joined.includes('individual');
+  const mentionsCompanied =
+    joined.includes('companied') ||
+    joined.includes('acompanhado') ||
+    joined.includes('with companion') ||
+    joined.includes('com acompanhante');
+  if (mentionsBoth || (mentionsAlone && mentionsCompanied)) return 'both';
+  if (mentionsCompanied) return 'companied';
+  if (mentionsAlone) return 'alone';
+  return null;
+}
+
+function isCalmRoute(route: RouteItem): boolean {
+  if (route.accessible === false) return false;
+  if (route.slope_warning === true) return false;
+  const stages = route.stages ?? [];
+  return !stages.some((s) => stageNeedsAttention(s) || s.accessible === false);
 }
 
 function stageNeedsAttention(stage: Stage): boolean {
@@ -582,6 +639,7 @@ export default function RouteResultsScreen() {
   const [middleStop, setMiddleStop] = useState<string | null>(null);
   const [activeOriginCoord, setActiveOriginCoord] = useState<LatLng | null>(null);
   const [activeDestCoord, setActiveDestCoord] = useState<LatLng | null>(null);
+  const [activeCompanionTab, setActiveCompanionTab] = useState<CompanionTab>('alone');
 
   useEffect(() => {
     setHeaderOrigin(originFromParams);
@@ -617,8 +675,17 @@ export default function RouteResultsScreen() {
 
   console.log('[route-results] routes parsed:', routes?.length);
 
+  const filteredRoutes = useMemo(() => {
+    return (routes as RouteItem[]).filter((route) => {
+      if (!isCalmRoute(route)) return false;
+      const audience = routeCompanionAudience(route);
+      if (!audience || audience === 'both') return true;
+      return audience === activeCompanionTab;
+    });
+  }, [routes, activeCompanionTab]);
+
   const mostAccessibleRoute = useMemo(() => {
-    const accessibleRoutes = (routes as RouteItem[]).filter((route) => {
+    const accessibleRoutes = filteredRoutes.filter((route) => {
       const allStagesAccessible = (route.stages ?? []).every((stage: any) => stage?.accessible !== false);
       return route.accessible === true && allStagesAccessible;
     });
@@ -626,7 +693,7 @@ export default function RouteResultsScreen() {
     return [...accessibleRoutes].sort(
       (a, b) => routeDurationMinutes(a) - routeDurationMinutes(b),
     )[0];
-  }, [routes]);
+  }, [filteredRoutes]);
 
   const formatDurationLabel = (route: RouteItem) => {
     const mins = routeDurationMinutes(route);
@@ -674,6 +741,9 @@ export default function RouteResultsScreen() {
       ? rawArrivalTime!.trim()
       : addMinutesToClock(departureTime, totalMinutes > 0 ? totalMinutes : 0);
     const stageCount = orderedStages.length;
+    const showRailUnderline = hasRepeatedTransitSequence(
+      orderedStages.length > 0 ? orderedStages : [{ mode: 'walk' }],
+    );
     const hasInaccessibleStage = orderedStages.some((s) => s.accessible === false);
     const accessibilityStatus =
       hasInaccessibleStage || route.accessible === false
@@ -772,17 +842,19 @@ export default function RouteResultsScreen() {
               <Text style={{ color: '#374151', fontSize: 18, fontWeight: '700' }}>{stageCount}</Text>
               <MaterialCommunityIcons name="chevron-right" size={13} color="#CCCCCC" />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, position: 'relative', paddingBottom: 6 }}>
-                <View
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    height: 2,
-                    backgroundColor: '#1E88E5',
-                    borderRadius: 2,
-                  }}
-                />
+                {showRailUnderline ? (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: 2,
+                      backgroundColor: '#1E88E5',
+                      borderRadius: 2,
+                    }}
+                  />
+                ) : null}
                 {(orderedStages.length > 0 ? orderedStages : [{ mode: 'walk' }]).map((stage, i, arr) => (
                   <View key={`${key}-stage-${i}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     {isWalkStageMode(stage.mode) ? (
@@ -1056,10 +1128,49 @@ export default function RouteResultsScreen() {
           </TouchableOpacity>
         </View>
 
+        <View style={styles.companionTabsWrap}>
+          <TouchableOpacity
+            style={[
+              styles.companionTabBtn,
+              activeCompanionTab === 'alone' ? styles.companionTabBtnActive : null,
+            ]}
+            onPress={() => setActiveCompanionTab('alone')}
+            activeOpacity={0.85}
+          >
+            <Text
+              style={[
+                styles.companionTabText,
+                activeCompanionTab === 'alone' ? styles.companionTabTextActive : null,
+              ]}
+            >
+              Sozinho
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.companionTabBtn,
+              activeCompanionTab === 'companied' ? styles.companionTabBtnActive : null,
+            ]}
+            onPress={() => setActiveCompanionTab('companied')}
+            activeOpacity={0.85}
+          >
+            <Text
+              style={[
+                styles.companionTabText,
+                activeCompanionTab === 'companied' ? styles.companionTabTextActive : null,
+              ]}
+            >
+              Acompanhado
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {mostAccessibleRoute ? renderRouteCard(mostAccessibleRoute, 'most-accessible', true) : null}
 
-        {routes.length === 0 ? <Text>Nenhuma rota recebida</Text> : null}
-        {routes.map((route, index) => renderRouteCard(route, `route-${index}`))}
+        {filteredRoutes.length === 0 ? (
+          <Text style={styles.emptyRoutesText}>Nenhum trajeto tranquilo para este perfil.</Text>
+        ) : null}
+        {filteredRoutes.map((route, index) => renderRouteCard(route, `route-${index}`))}
       </ScrollView>
     </SafeAreaView>
   );
@@ -1163,6 +1274,40 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  companionTabsWrap: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    backgroundColor: '#EEF2F7',
+    borderRadius: 12,
+    padding: 4,
+    flexDirection: 'row',
+    gap: 6,
+  },
+  companionTabBtn: {
+    flex: 1,
+    borderRadius: 9,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  companionTabBtnActive: {
+    backgroundColor: '#0057A8',
+  },
+  companionTabText: {
+    color: '#4B5563',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  companionTabTextActive: {
+    color: '#FFFFFF',
+  },
+  emptyRoutesText: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    color: '#6B7280',
+    fontSize: 13,
+    fontWeight: '600',
   },
   routeCard: {
     backgroundColor: '#FFFFFF',
