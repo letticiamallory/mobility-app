@@ -16,6 +16,7 @@ import { Text as PaperText } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
 import { getToken, getUserInfo } from '../services/token.service';
+import { HOME_FAVORITE_SHORTCUTS } from '../mocks/home';
 
 type RecentRoute = {
   id: string;
@@ -23,13 +24,6 @@ type RecentRoute = {
   destination: string;
   accessible: boolean;
 };
-
-const FAVORITES = [
-  { id: 'home', label: 'Casa', subtitle: 'toque para editar', icon: 'home' as const, destination: 'Casa' },
-  { id: 'work', label: 'Trabalho', subtitle: 'toque para editar', icon: 'briefcase' as const, destination: 'Trabalho' },
-  { id: 'hospital', label: 'Hospital', icon: 'hospital-box' as const, destination: 'Hospital' },
-  { id: 'school', label: 'Escola', icon: 'school' as const, destination: 'Escola' },
-];
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -98,7 +92,7 @@ export default function HomeScreen() {
 
   const goToDirections = (dest: string, origin?: string) => {
     router.push({
-      pathname: '/directions',
+      pathname: '/route-results',
       params: {
         destination: dest,
         ...(origin ? { origin } : {}),
@@ -137,7 +131,7 @@ export default function HomeScreen() {
 
             <TouchableOpacity
               style={styles.searchWrap}
-              onPress={() => router.push('/directions')}
+              onPress={() => router.push('/search-destination')}
               activeOpacity={0.9}
             >
               <TextInput
@@ -170,7 +164,7 @@ export default function HomeScreen() {
           style={styles.favoritesScroll}
           contentContainerStyle={styles.favoritesContent}
         >
-          {FAVORITES.map((item) => (
+          {HOME_FAVORITE_SHORTCUTS.map((item) => (
             <TouchableOpacity
               key={item.id}
               style={styles.favoriteCard}
@@ -237,7 +231,7 @@ export default function HomeScreen() {
       </ScrollView>
 
       <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/directions')}>
+        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/route-results')}>
           <MaterialCommunityIcons name="map-marker-path" size={23} color="#0057A8" />
           <PaperText style={styles.navActive}>Direções</PaperText>
         </TouchableOpacity>

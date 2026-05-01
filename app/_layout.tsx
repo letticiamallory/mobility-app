@@ -25,8 +25,11 @@ export default function RootLayout() {
         <Stack.Screen name="stations" />
         <Stack.Screen name="lines" />
         <Stack.Screen name="route-results" />
+        <Stack.Screen name="search-destination" options={{ headerShown: false }} />
+        <Stack.Screen name="route-plan" options={{ headerShown: false }} />
         <Stack.Screen name="reviews" />
         <Stack.Screen name="write-review" />
+        <Stack.Screen name="forgot-password" />
         <Stack.Screen name="email-confirmation" />
         <Stack.Screen name="success" />
       </Stack>

@@ -1,8 +1,15 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
+import { HeaderRoutesProgressStrip } from '../components/HeaderRoutesProgressStrip';
+import { PulsingRouteSearchButton } from '../components/PulsingRouteSearchButton';
+import { ACTIVE_MOCK_WEATHER } from '../mocks';
+import { searchRoutes } from '../services/routes.service';
+import { getUserInfo } from '../services/token.service';
+import * as Location from 'expo-location';
 import {
+  Keyboard,
   Linking,
   Platform,
   SafeAreaView,
@@ -15,6 +22,8 @@ import {
 } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const DEFAULT_TRANSPORT_TYPE = 'bus';
 
 type Stage = {
   mode?: string;
@@ -42,6 +51,8 @@ type RouteItem = {
   total_distance?: string;
   accessible?: boolean;
   slope_warning?: boolean;
+  warning?: string;
+  accompanied_warning?: string;
   accompanied?: string;
   companion_mode?: string;
   recommended_for?: string;
@@ -49,6 +60,9 @@ type RouteItem = {
   uber_deeplink?: string;
   departTime?: string;
   arriveTime?: string;
+  weather?: {
+    rain?: number;
+  } | null;
   stages?: Stage[];
 };
 
@@ -85,6 +99,60 @@ function collectStageDetailImages(stage: Stage): string[] {
   }
 
   return urls.filter((u, i, a) => a.indexOf(u) === i);
+}
+
+/** Demo: chuva no mock quando o destino menciona Ibituruna (ex.: Shopping Ibituruna, Av. José Corrêa…). */
+function normalizeDestMatch(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function shouldPreviewRainForDestination(destination: string): boolean {
+  return normalizeDestMatch(destination).includes('ibituruna');
+}
+
+function withPreviewWeatherIfNeeded(
+  routesList: RouteItem[],
+  destination: string,
+): RouteItem[] {
+  if (!shouldPreviewRainForDestination(destination)) return routesList;
+  const rain = ACTIVE_MOCK_WEATHER.rain;
+  return routesList.map((r) => ({
+    ...r,
+    weather: { rain },
+  }));
+}
+
+function routeCardRainChip(route: RouteItem): {
+  icon: 'weather-rainy' | 'weather-pouring';
+  bg: string;
+  fg: string;
+  borderColor: string;
+  label: string;
+} | null {
+  const w = route.weather;
+  if (!w || typeof w !== 'object') return null;
+  const rain = Number((w as { rain?: unknown }).rain ?? 0);
+  if (!Number.isFinite(rain) || rain <= 0) return null;
+  if (rain > 5) {
+    return {
+      icon: 'weather-pouring',
+      bg: '#FEE2E2',
+      fg: '#B91C1C',
+      borderColor: '#FECACA',
+      label: 'Chuva forte',
+    };
+  }
+  return {
+    icon: 'weather-rainy',
+    bg: '#FEF3C7',
+    fg: '#B45309',
+    borderColor: '#FDE68A',
+    label: 'Chuva',
+  };
 }
 
 const getLineColor = (code: string): string => {
@@ -150,6 +218,12 @@ function serializeRouteDetail(
     totalTime: String(route.total_duration ?? route.totalDuration ?? route.totalTime ?? ''),
     originCoordinate: ctx.originCoordinate,
     destinationCoordinate: ctx.destinationCoordinate,
+    weather:
+      route.weather && typeof route.weather === 'object'
+        ? {
+            rain: Number((route.weather as { rain?: unknown }).rain ?? 0),
+          }
+        : undefined,
     stages,
   });
 }
@@ -255,6 +329,45 @@ function isWalkStageMode(mode?: string): boolean {
   return m === 'walk' || m === 'walking';
 }
 
+function normalizeStageMode(mode?: string): 'walk' | 'bus' | 'subway' | 'other' {
+  const m = `${mode ?? ''}`.toLowerCase();
+  if (m === 'walk' || m === 'walking' || m === 'foot') return 'walk';
+  if (m.includes('metro') || m.includes('subway') || m === 'rail') return 'subway';
+  if (m.includes('bus') || m.includes('onibus')) return 'bus';
+  return 'other';
+}
+
+function routeSignature(route: RouteItem): string {
+  const modes = (route.stages ?? [])
+    .map((s) => {
+      const mode = normalizeStageMode(s.mode);
+      const line = `${s.line_code ?? ''}`.trim().toLowerCase();
+      const stop = `${s.stop_name ?? ''}`.trim().toLowerCase();
+      return `${mode}:${line}:${stop}`;
+    })
+    .join('|');
+  const duration = `${route.total_duration ?? route.totalDuration ?? route.totalTime ?? ''}`.trim().toLowerCase();
+  const distance = `${route.total_distance ?? ''}`.trim().toLowerCase();
+  return `${duration}::${distance}::${modes}`;
+}
+
+function routeTransportFamily(route: RouteItem): 'walk-only' | 'bus-only' | 'subway-only' | 'combined' | 'other' {
+  const set = new Set(
+    (route.stages ?? [])
+      .map((s) => normalizeStageMode(s.mode))
+      .filter((m) => m === 'walk' || m === 'bus' || m === 'subway'),
+  );
+  const hasWalk = set.has('walk');
+  const hasBus = set.has('bus');
+  const hasSubway = set.has('subway');
+  if (hasWalk && !hasBus && !hasSubway) return 'walk-only';
+  if (hasBus && !hasWalk && !hasSubway) return 'bus-only';
+  if (hasSubway && !hasWalk && !hasBus) return 'subway-only';
+  if ((hasBus || hasSubway) && hasWalk) return 'combined';
+  if (hasBus && hasSubway) return 'combined';
+  return 'other';
+}
+
 function hasRepeatedTransitSequence(stages: Stage[]): boolean {
   for (let i = 1; i < stages.length; i += 1) {
     const prevMode = `${stages[i - 1]?.mode ?? ''}`.toLowerCase();
@@ -268,6 +381,8 @@ function hasRepeatedTransitSequence(stages: Stage[]): boolean {
 }
 
 type CompanionTab = 'alone' | 'companied';
+type SearchField = 'origin' | 'destination' | 'waypoint';
+type PlaceSuggestion = { description: string; placeId: string };
 
 function routeCompanionAudience(route: RouteItem): 'alone' | 'companied' | 'both' | null {
   const rawValues = [
@@ -306,6 +421,26 @@ function isCalmRoute(route: RouteItem): boolean {
   if (route.slope_warning === true) return false;
   const stages = route.stages ?? [];
   return !stages.some((s) => stageNeedsAttention(s) || s.accessible === false);
+}
+
+function routeIncidentCount(route: RouteItem): number {
+  const stages = route.stages ?? [];
+  let incidents = route.slope_warning === true ? 1 : 0;
+  for (const stage of stages) {
+    if (stage.slope_warning === true) incidents += 1;
+    if (stageNeedsAttention(stage)) incidents += 1;
+  }
+  return incidents;
+}
+
+function routeMatchesCompanionTab(route: RouteItem, tab: CompanionTab): boolean {
+  if (route.accessible === false) return false;
+  const incidents = routeIncidentCount(route);
+  if (tab === 'alone') {
+    return incidents === 0 && isCalmRoute(route);
+  }
+  // Acompanhado: aceita pequenas ocorrencias de atencao, mas bloqueia rotas críticas.
+  return incidents <= 2;
 }
 
 function stageNeedsAttention(stage: Stage): boolean {
@@ -451,8 +586,8 @@ function JourneyTimelineConnector({ height }: { height: number }) {
   const dotR = 3.5;
   const dotCY = dotR + 2;
   const lineTop = dotCY + dotR + 1.5;
-  const arrowBaseY = height - 7;
-  const arrowTipY = height - 1;
+  const arrowBaseY = height - 6;
+  const arrowTipY = height - 2;
   if (height < lineTop + 10) {
     return (
       <Svg width={JOURNEY_RAIL_W} height={height} viewBox={`0 0 ${JOURNEY_RAIL_W} ${height}`}>
@@ -472,13 +607,13 @@ function JourneyTimelineConnector({ height }: { height: number }) {
         strokeWidth={2}
         strokeLinecap="round"
       />
-      <Path d={`M ${mid - 4} ${arrowBaseY} L ${mid + 4} ${arrowBaseY} L ${mid} ${arrowTipY} Z`} fill="#9CA3AF" />
+      <Path d={`M ${mid - 3} ${arrowBaseY} L ${mid + 3} ${arrowBaseY} L ${mid} ${arrowTipY} Z`} fill="#9CA3AF" />
     </Svg>
   );
 }
 
 function JourneyTimelineRail() {
-  const [h, setH] = useState(44);
+  const [h, setH] = useState(30);
   return (
     <View
       style={{ width: JOURNEY_RAIL_W, alignSelf: 'stretch' }}
@@ -552,6 +687,41 @@ function formatWaitTime(totalMinutes: number): string {
   return `${hours}h ${minutes.toString().padStart(2, '0')}min`;
 }
 
+/** Horários exibidos no cartão Uber / resumo (mesma lógica do cartão de rota). */
+function computeRouteTimeLabels(route: RouteItem): {
+  durationMain: string;
+  departure: string;
+  arrival: string;
+} {
+  const orderedStages = (route.stages ?? []).filter((s) => {
+    const m = `${s.mode ?? ''}`.toLowerCase();
+    return isWalkStageMode(s.mode) || m === 'bus' || m === 'subway';
+  });
+  const firstTransitStage = orderedStages.find((s) => s.mode === 'bus' || s.mode === 'subway');
+  const lastTransitStage = [...orderedStages].reverse().find((s) => s.mode === 'bus' || s.mode === 'subway');
+  const routeMinutesFromLabel = routeDurationMinutes(route);
+  const stageMinutesSum = orderedStages.reduce((acc, s) => acc + stageDurationMinutes(s), 0);
+  const totalMinutes = routeMinutesFromLabel > 0 ? routeMinutesFromLabel : stageMinutesSum;
+  const firstTransitDepartureMinutes = normalizeDepartureMinutes(firstTransitStage?.departure_minutes);
+  const rawDepartureTime =
+    firstTransitStage?.departure_time ??
+    firstTransitStage?.departureTime ??
+    route.departTime;
+  const departureTime = isClock(rawDepartureTime)
+    ? rawDepartureTime!.trim()
+    : typeof firstTransitDepartureMinutes === 'number'
+      ? formatClockFromNow(firstTransitDepartureMinutes)
+      : formatClockNow();
+  const rawArrivalTime = lastTransitStage?.arrival_time ?? lastTransitStage?.arrivalTime ?? route.arriveTime;
+  const arrivalTime = isClock(rawArrivalTime)
+    ? rawArrivalTime!.trim()
+    : addMinutesToClock(departureTime, totalMinutes > 0 ? totalMinutes : 0);
+  const minsForDisplay = totalMinutes > 0 ? totalMinutes : routeDurationMinutes(route);
+  const durationMain =
+    minsForDisplay > 59 ? formatWaitTime(minsForDisplay) : minsForDisplay > 0 ? `${minsForDisplay} min` : '-- min';
+  return { durationMain, departure: departureTime, arrival: arrivalTime };
+}
+
 function extractPlaceName(stage: Stage): string {
   const normalizePlace = (value: string) =>
     value
@@ -596,9 +766,6 @@ export default function RouteResultsScreen() {
     originCoordinate?: string | string[];
     destinationCoordinate?: string | string[];
   }>();
-  const routesParam = useLocalSearchParams().routes;
-  console.log('[route-results] routes param:', routesParam?.toString().slice(0, 200));
-
   const originFromParams = useMemo(
     () => (Array.isArray(params.origin) ? params.origin[0] : params.origin) ?? '',
     [params.origin],
@@ -640,6 +807,76 @@ export default function RouteResultsScreen() {
   const [activeOriginCoord, setActiveOriginCoord] = useState<LatLng | null>(null);
   const [activeDestCoord, setActiveDestCoord] = useState<LatLng | null>(null);
   const [activeCompanionTab, setActiveCompanionTab] = useState<CompanionTab>('alone');
+  const [fetchedRoutes, setFetchedRoutes] = useState<RouteItem[] | null>(null);
+  const [headerRoutesLoading, setHeaderRoutesLoading] = useState(() => {
+    const packaged = Array.isArray(params.routes) ? params.routes[0] : params.routes;
+    if (packaged && String(packaged).trim()) return false;
+    const d = (Array.isArray(params.destination) ? params.destination[0] : params.destination) ?? '';
+    return String(d).trim().length > 0;
+  });
+  const [activeSearchField, setActiveSearchField] = useState<SearchField | null>(null);
+  const [placeSuggestions, setPlaceSuggestions] = useState<PlaceSuggestion[]>([]);
+
+  const fetchDiverseRoutes = useCallback(
+    async (
+      originQuery: string,
+      destinationQuery: string,
+      userId: number,
+      accompanied: string,
+    ) => {
+      const mergeSettled = (results: PromiseSettledResult<unknown>[]) => {
+        const merged: RouteItem[] = [];
+        for (const result of results) {
+          if (result.status !== 'fulfilled') continue;
+          const parsed =
+            result.value && typeof result.value === 'object'
+              ? (result.value as Record<string, unknown>)
+              : {};
+          const list = Array.isArray(parsed.routes)
+            ? (parsed.routes as RouteItem[])
+            : [];
+          merged.push(...list);
+        }
+        return merged;
+      };
+
+      /** Ônibus/metro/combinado em paralelo; a pé depois (evita bloquear tudo no walk lento). */
+      const fastTypes = ['bus', 'subway', 'combined'] as const;
+      const fastResults = await Promise.allSettled(
+        fastTypes.map((transportType) =>
+          searchRoutes(originQuery, destinationQuery, userId, transportType, accompanied),
+        ),
+      );
+      let merged = mergeSettled(fastResults);
+
+      const walkResults = await Promise.allSettled([
+        searchRoutes(originQuery, destinationQuery, userId, 'walk', accompanied),
+      ]);
+      merged = merged.concat(mergeSettled(walkResults));
+
+      if (merged.length === 0) {
+        const fallbackRaw = await searchRoutes(
+          originQuery,
+          destinationQuery,
+          userId,
+          DEFAULT_TRANSPORT_TYPE,
+          accompanied,
+        );
+        const parsed =
+          fallbackRaw && typeof fallbackRaw === 'object'
+            ? (fallbackRaw as Record<string, unknown>)
+            : {};
+        return Array.isArray(parsed.routes) ? (parsed.routes as RouteItem[]) : [];
+      }
+      const bySignature = new Map<string, RouteItem>();
+      for (const route of merged) {
+        const key = routeSignature(route);
+        if (!bySignature.has(key)) bySignature.set(key, route);
+      }
+      return Array.from(bySignature.values());
+    },
+    [],
+  );
 
   useEffect(() => {
     setHeaderOrigin(originFromParams);
@@ -647,7 +884,131 @@ export default function RouteResultsScreen() {
     setMiddleStop(null);
     setActiveOriginCoord(originCoordParam);
     setActiveDestCoord(destCoordParam);
+    setFetchedRoutes(null);
   }, [originFromParams, destinationFromParams, originCoordParam, destCoordParam]);
+
+  /** Entrada só com destino (ex.: home) não envia `routes` na URL — busca na API ao abrir o ecrã. */
+  useEffect(() => {
+    const rawParam = Array.isArray(params.routes) ? params.routes[0] : params.routes;
+    if (rawParam && String(rawParam).trim()) return;
+
+    const dest = destinationFromParams.trim();
+    if (!dest) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { userId } = await getUserInfo();
+        if (typeof userId !== 'number' || Number.isNaN(userId) || cancelled) {
+          if (!cancelled) setFetchedRoutes([]);
+          return;
+        }
+        setHeaderRoutesLoading(true);
+        const originQuery = originFromParams.trim() || 'Local atual';
+        const list = await fetchDiverseRoutes(
+          originQuery,
+          dest,
+          userId,
+          activeCompanionTab === 'alone' ? 'alone' : 'companied',
+        );
+        if (!cancelled) {
+          setFetchedRoutes(list);
+          setMiddleStop(null);
+        }
+      } catch {
+        if (!cancelled) setFetchedRoutes([]);
+      } finally {
+        if (!cancelled) setHeaderRoutesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    destinationFromParams,
+    originFromParams,
+    params.routes,
+    activeCompanionTab,
+    fetchDiverseRoutes,
+  ]);
+
+  useEffect(() => {
+    if (originFromParams.trim()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        const pos = await Location.getCurrentPositionAsync({});
+        if (cancelled) return;
+        setActiveOriginCoord({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        const rev = await Location.reverseGeocodeAsync({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        });
+        if (cancelled) return;
+        const first = rev[0];
+        const label = first
+          ? [first.street, first.district, first.city].filter(Boolean).join(', ')
+          : '';
+        if (label.trim()) setHeaderOrigin(label.trim());
+      } catch {
+        // mantém vazio se geolocalização falhar
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [originFromParams]);
+
+  useEffect(() => {
+    if (!activeSearchField) {
+      setPlaceSuggestions([]);
+      return;
+    }
+    const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
+    const query = (
+      activeSearchField === 'origin'
+        ? headerOrigin
+        : activeSearchField === 'waypoint'
+          ? middleStop ?? ''
+          : headerDestination
+    ).trim();
+    if (!key || query.length < 3) {
+      setPlaceSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timeoutId = setTimeout(async () => {
+      try {
+        const url =
+          'https://maps.googleapis.com/maps/api/place/autocomplete/json' +
+          `?input=${encodeURIComponent(query)}` +
+          '&language=pt-BR' +
+          '&types=geocode' +
+          `&key=${encodeURIComponent(key)}`;
+        const res = await fetch(url);
+        const json = (await res.json()) as {
+          predictions?: { description?: string; place_id?: string }[];
+        };
+        if (cancelled) return;
+        const next = (json.predictions ?? [])
+          .map((p) => ({
+            description: String(p.description ?? '').trim(),
+            placeId: String(p.place_id ?? '').trim(),
+          }))
+          .filter((p) => p.description && p.placeId)
+          .slice(0, 3);
+        setPlaceSuggestions(next);
+      } catch {
+        if (!cancelled) setPlaceSuggestions([]);
+      }
+    }, 280);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [activeSearchField, headerOrigin, middleStop, headerDestination]);
 
   const handleSwapLocations = () => {
     setHeaderOrigin(headerDestination);
@@ -664,25 +1025,59 @@ export default function RouteResultsScreen() {
     setMiddleStop(null);
   };
 
-  const routes = useMemo(() => {
+  const fetchRoutesForHeader = async () => {
+    const destinationQuery = headerDestination.trim();
+    if (!destinationQuery) return;
+    setHeaderRoutesLoading(true);
     try {
-      return JSON.parse(decodeURIComponent(routesParam as string)) ?? [];
+      const { userId } = await getUserInfo();
+      if (typeof userId !== 'number' || Number.isNaN(userId)) return;
+      const originQuery = headerOrigin.trim() || 'Local atual';
+      const list = await fetchDiverseRoutes(
+        originQuery,
+        destinationQuery,
+        userId,
+        activeCompanionTab === 'alone' ? 'alone' : 'companied',
+      );
+      setFetchedRoutes(list);
+      setMiddleStop(null);
     } catch {
-      console.log('[route-results] erro ao parsear routes');
-      return [];
+      setFetchedRoutes([]);
+    } finally {
+      setHeaderRoutesLoading(false);
     }
-  }, [routesParam]);
+  };
 
-  console.log('[route-results] routes parsed:', routes?.length);
+  const routes = useMemo(() => {
+    const rawParam = Array.isArray(params.routes) ? params.routes[0] : params.routes;
+    if (rawParam && rawParam.trim()) {
+      try {
+        return JSON.parse(decodeURIComponent(rawParam)) ?? [];
+      } catch {
+        // ignora JSON inválido em routes
+      }
+    }
+    return fetchedRoutes ?? [];
+  }, [params.routes, fetchedRoutes]);
 
   const filteredRoutes = useMemo(() => {
-    return (routes as RouteItem[]).filter((route) => {
-      if (!isCalmRoute(route)) return false;
+    const calmRoutes = (routes as RouteItem[]).filter((route) => {
+      if (!routeMatchesCompanionTab(route, activeCompanionTab)) return false;
       const audience = routeCompanionAudience(route);
       if (!audience || audience === 'both') return true;
       return audience === activeCompanionTab;
     });
-  }, [routes, activeCompanionTab]);
+    const bySignature = new Map<string, RouteItem>();
+    for (const route of calmRoutes) {
+      const key = routeSignature(route);
+      if (!bySignature.has(key)) bySignature.set(key, route);
+    }
+    const sorted = Array.from(bySignature.values()).sort(
+      (a, b) => routeDurationMinutes(a) - routeDurationMinutes(b),
+    );
+    return withPreviewWeatherIfNeeded(sorted, headerDestination);
+  }, [routes, activeCompanionTab, headerDestination]);
+  const hasTypedAddress = headerDestination.trim().length > 0;
 
   const mostAccessibleRoute = useMemo(() => {
     const accessibleRoutes = filteredRoutes.filter((route) => {
@@ -694,6 +1089,80 @@ export default function RouteResultsScreen() {
       (a, b) => routeDurationMinutes(a) - routeDurationMinutes(b),
     )[0];
   }, [filteredRoutes]);
+  const displayedRoutes = useMemo(() => {
+    const familyOrder: Array<ReturnType<typeof routeTransportFamily>> = [
+      'walk-only',
+      'bus-only',
+      'subway-only',
+      'combined',
+      'other',
+    ];
+    const familyGroups = new Map<ReturnType<typeof routeTransportFamily>, RouteItem[]>();
+    for (const route of filteredRoutes) {
+      const family = routeTransportFamily(route);
+      const group = familyGroups.get(family) ?? [];
+      group.push(route);
+      familyGroups.set(family, group);
+    }
+    const picked: RouteItem[] = [];
+    const seen = new Set<string>();
+    if (mostAccessibleRoute) {
+      seen.add(routeSignature(mostAccessibleRoute));
+    }
+    for (const family of familyOrder) {
+      const first = familyGroups.get(family)?.[0];
+      if (!first) continue;
+      const sig = routeSignature(first);
+      if (seen.has(sig)) continue;
+      picked.push(first);
+      seen.add(sig);
+    }
+    if (picked.length < 4) {
+      for (const route of filteredRoutes) {
+        const sig = routeSignature(route);
+        if (seen.has(sig)) continue;
+        picked.push(route);
+        seen.add(sig);
+        if (picked.length >= 4) break;
+      }
+    }
+    return picked;
+  }, [filteredRoutes, mostAccessibleRoute]);
+
+  const uberRoutePreview = useMemo(
+    () => displayedRoutes[0] ?? mostAccessibleRoute,
+    [displayedRoutes, mostAccessibleRoute],
+  );
+  const uberTimeSummary = useMemo(
+    () => (uberRoutePreview ? computeRouteTimeLabels(uberRoutePreview) : null),
+    [uberRoutePreview],
+  );
+
+  const openRouteDetail = useCallback(
+    (route: RouteItem) => {
+      const fb = detailCoordinateFallbacks(route);
+      const originCoordinate =
+        activeOriginCoord != null
+          ? { latitude: activeOriginCoord.lat, longitude: activeOriginCoord.lng }
+          : fb.origin;
+      const destinationCoordinate =
+        activeDestCoord != null
+          ? { latitude: activeDestCoord.lat, longitude: activeDestCoord.lng }
+          : fb.destination;
+      router.push({
+        pathname: '/route-detail',
+        params: {
+          route: serializeRouteDetail(route, {
+            origin: headerOrigin,
+            destination: headerDestination,
+            originCoordinate,
+            destinationCoordinate,
+          }),
+        },
+      });
+    },
+    [router, headerOrigin, headerDestination, activeOriginCoord, activeDestCoord],
+  );
 
   const formatDurationLabel = (route: RouteItem) => {
     const mins = routeDurationMinutes(route);
@@ -745,12 +1214,20 @@ export default function RouteResultsScreen() {
       orderedStages.length > 0 ? orderedStages : [{ mode: 'walk' }],
     );
     const hasInaccessibleStage = orderedStages.some((s) => s.accessible === false);
-    const accessibilityStatus =
+    const hasAttentionSegments =
+      route.slope_warning === true ||
+      !!route.warning ||
+      !!route.accompanied_warning ||
+      orderedStages.some((s) => stageNeedsAttention(s));
+    const accessibilityStatus:
+      | { label: string; bg: string; fg: string }
+      | null =
       hasInaccessibleStage || route.accessible === false
         ? { label: 'Não acessível', bg: '#FEE2E2', fg: '#DC2626' }
-        : { label: 'Acessível', bg: '#DCFCE7', fg: '#16A34A' };
-    const hasAttentionSegments =
-      route.slope_warning === true || orderedStages.some((s) => stageNeedsAttention(s));
+        : hasAttentionSegments
+          ? null
+          : { label: 'Acessível', bg: '#DCFCE7', fg: '#16A34A' };
+    const rainChip = routeCardRainChip(route);
     const summaryPlaces = orderedStages
       .map((s) => extractPlaceName(s))
       .filter(Boolean)
@@ -803,20 +1280,20 @@ export default function RouteResultsScreen() {
             </Text>
             <View
               style={{
-                marginTop: 4,
+                marginTop: 10,
                 width: '100%',
-                minHeight: 46,
+                minHeight: 32,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 4 }}>
                 <JourneyTimelineRail />
-                <View style={{ justifyContent: 'space-between', paddingVertical: 2 }}>
-                  <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '600', textAlign: 'left' }}>
+                <View style={{ justifyContent: 'flex-start', gap: 2, paddingVertical: 0, marginLeft: -1 }}>
+                  <Text style={{ color: '#6B7280', fontSize: 12, lineHeight: 12, fontWeight: '600', textAlign: 'left' }}>
                     {departureTime}
                   </Text>
-                  <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '600', textAlign: 'left' }}>
+                  <Text style={{ color: '#6B7280', fontSize: 12, lineHeight: 12, fontWeight: '600', textAlign: 'left' }}>
                     {arrivalTime}
                   </Text>
                 </View>
@@ -829,67 +1306,69 @@ export default function RouteResultsScreen() {
           </View>
 
           <View style={{ flex: 1, marginLeft: 12 }}>
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              directionalLockEnabled
-              scrollEnabled
-              keyboardShouldPersistTaps="always"
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-            >
-              <MaterialCommunityIcons name="walk" size={17} color="#6B7280" />
-              <Text style={{ color: '#374151', fontSize: 18, fontWeight: '700' }}>{stageCount}</Text>
-              <MaterialCommunityIcons name="chevron-right" size={13} color="#CCCCCC" />
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, position: 'relative', paddingBottom: 6 }}>
-                {showRailUnderline ? (
-                  <View
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      height: 2,
-                      backgroundColor: '#1E88E5',
-                      borderRadius: 2,
-                    }}
-                  />
-                ) : null}
-                {(orderedStages.length > 0 ? orderedStages : [{ mode: 'walk' }]).map((stage, i, arr) => (
-                  <View key={`${key}-stage-${i}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    {isWalkStageMode(stage.mode) ? (
-                      <MaterialCommunityIcons name="walk" size={17} color="#6B7280" />
-                    ) : (
-                      <View style={{ backgroundColor: '#FFFFFF', borderRadius: 5, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden', borderWidth: 1, borderColor: '#E5E7EB' }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                          <MaterialCommunityIcons
-                            name={stage.mode === 'subway' ? 'subway-variant' : 'bus'}
-                            size={11}
-                            color="#1E1D1D"
+            <View style={styles.routeStagesFrame}>
+              <ScrollView
+                horizontal
+                nestedScrollEnabled
+                directionalLockEnabled
+                scrollEnabled
+                keyboardShouldPersistTaps="always"
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.routeCardStagesScrollContent}
+              >
+                <MaterialCommunityIcons name="walk" size={17} color="#6B7280" />
+                <Text style={{ color: '#374151', fontSize: 18, fontWeight: '700' }}>{stageCount}</Text>
+                <MaterialCommunityIcons name="chevron-right" size={13} color="#CCCCCC" />
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, position: 'relative', paddingBottom: 6 }}>
+                  {showRailUnderline ? (
+                    <View
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        height: 2,
+                        backgroundColor: '#1E88E5',
+                        borderRadius: 2,
+                      }}
+                    />
+                  ) : null}
+                  {(orderedStages.length > 0 ? orderedStages : [{ mode: 'walk' }]).map((stage, i, arr) => (
+                    <View key={`${key}-stage-${i}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      {isWalkStageMode(stage.mode) ? (
+                        <MaterialCommunityIcons name="walk" size={17} color="#6B7280" />
+                      ) : (
+                        <View style={{ backgroundColor: '#FFFFFF', borderRadius: 5, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden', borderWidth: 1, borderColor: '#E5E7EB' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                            <MaterialCommunityIcons
+                              name={stage.mode === 'subway' ? 'subway-variant' : 'bus'}
+                              size={11}
+                              color="#1E1D1D"
+                            />
+                            <Text style={{ color: '#1E1D1D', fontSize: 10.5, fontWeight: '700' }}>
+                              {stage.line_code ?? stage.mode}
+                            </Text>
+                          </View>
+                          <View
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              height: 2.5,
+                              backgroundColor: getLineColor(stage.line_code ?? stage.mode ?? 'line'),
+                            }}
                           />
-                          <Text style={{ color: '#1E1D1D', fontSize: 10.5, fontWeight: '700' }}>
-                            {stage.line_code ?? stage.mode}
-                          </Text>
                         </View>
-                        <View
-                          style={{
-                            position: 'absolute',
-                            left: 0,
-                            right: 0,
-                            bottom: 0,
-                            height: 2.5,
-                            backgroundColor: getLineColor(stage.line_code ?? stage.mode ?? 'line'),
-                          }}
-                        />
-                      </View>
-                    )}
-                    {i < arr.length - 1 ? (
-                      <MaterialCommunityIcons name="chevron-right" size={13} color="#CCCCCC" />
-                    ) : null}
-                  </View>
-                ))}
-              </View>
-            </ScrollView>
+                      )}
+                      {i < arr.length - 1 ? (
+                        <MaterialCommunityIcons name="chevron-right" size={13} color="#CCCCCC" />
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+            </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 }}>
               <MaterialCommunityIcons
@@ -942,22 +1421,24 @@ export default function RouteResultsScreen() {
             </ScrollView>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-              <View
-                style={{
-                  backgroundColor: accessibilityStatus.bg,
-                  borderRadius: 10,
-                  paddingHorizontal: 8,
-                  paddingVertical: 3,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 4,
-                }}
-              >
-                <MaterialCommunityIcons name="wheelchair-accessibility" size={11} color={accessibilityStatus.fg} />
-                <Text style={{ color: accessibilityStatus.fg, fontSize: 11, fontWeight: '600' }}>
-                  {accessibilityStatus.label}
-                </Text>
-              </View>
+              {accessibilityStatus ? (
+                <View
+                  style={{
+                    backgroundColor: accessibilityStatus.bg,
+                    borderRadius: 10,
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <MaterialCommunityIcons name="wheelchair-accessibility" size={11} color={accessibilityStatus.fg} />
+                  <Text style={{ color: accessibilityStatus.fg, fontSize: 11, fontWeight: '600' }}>
+                    {accessibilityStatus.label}
+                  </Text>
+                </View>
+              ) : null}
               {hasAttentionSegments ? (
                 <View
                   style={{
@@ -976,31 +1457,28 @@ export default function RouteResultsScreen() {
                   <Text style={{ color: '#A16207', fontSize: 11, fontWeight: '700' }}>Atenção</Text>
                 </View>
               ) : null}
+              {rainChip ? (
+                <View
+                  style={{
+                    backgroundColor: rainChip.bg,
+                    borderRadius: 10,
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                    borderWidth: 1,
+                    borderColor: rainChip.borderColor,
+                  }}
+                >
+                  <MaterialCommunityIcons name={rainChip.icon} size={12} color={rainChip.fg} />
+                  <Text style={{ color: rainChip.fg, fontSize: 11, fontWeight: '700' }}>{rainChip.label}</Text>
+                </View>
+              ) : null}
             </View>
 
             <TouchableOpacity
-              onPress={() => {
-                const fb = detailCoordinateFallbacks(route);
-                const originCoordinate =
-                  activeOriginCoord != null
-                    ? { latitude: activeOriginCoord.lat, longitude: activeOriginCoord.lng }
-                    : fb.origin;
-                const destinationCoordinate =
-                  activeDestCoord != null
-                    ? { latitude: activeDestCoord.lat, longitude: activeDestCoord.lng }
-                    : fb.destination;
-                router.push({
-                  pathname: '/route-detail',
-                  params: {
-                    route: serializeRouteDetail(route, {
-                      origin: headerOrigin,
-                      destination: headerDestination,
-                      originCoordinate,
-                      destinationCoordinate,
-                    }),
-                  },
-                });
-              }}
+              onPress={() => openRouteDetail(route)}
               style={{
                 marginTop: 8,
                 backgroundColor: '#EEF2FF',
@@ -1055,14 +1533,59 @@ export default function RouteResultsScreen() {
               ]}
             >
               <View style={styles.field}>
-                <Text numberOfLines={1} style={styles.fieldText}>{headerOrigin}</Text>
+                <TextInput
+                  value={headerOrigin}
+                  onChangeText={(text) => {
+                    setHeaderOrigin(text);
+                    if (activeSearchField !== 'origin') setActiveSearchField('origin');
+                  }}
+                  onFocus={() => setActiveSearchField('origin')}
+                  placeholder="Origem (GPS automático)"
+                  placeholderTextColor="#9CA3AF"
+                  style={styles.fieldInput}
+                  returnKeyType="next"
+                />
               </View>
+              {activeSearchField === 'origin' && placeSuggestions.length > 0 ? (
+                <View style={styles.suggestionsInlineWrap}>
+                  <View style={styles.suggestionsBox}>
+                    <ScrollView
+                      nestedScrollEnabled
+                      style={styles.suggestionsScroll}
+                      contentContainerStyle={styles.suggestionsContent}
+                      keyboardShouldPersistTaps="handled"
+                    >
+                      {placeSuggestions.map((item, idx) => (
+                        <TouchableOpacity
+                          key={`${activeSearchField}-s-${idx}`}
+                          style={[
+                            styles.suggestionItem,
+                            idx < placeSuggestions.length - 1 ? styles.suggestionItemDivider : null,
+                          ]}
+                          onPress={() => {
+                            Keyboard.dismiss();
+                            setHeaderOrigin(item.description);
+                            setActiveSearchField(null);
+                            setPlaceSuggestions([]);
+                          }}
+                        >
+                          <Text style={styles.suggestionText} numberOfLines={2}>{item.description}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                </View>
+              ) : null}
               {middleStop !== null ? (
                 <View style={styles.headerStopRow}>
                   <TextInput
                     style={[styles.field, styles.headerWaypointInput, { flex: 1, minWidth: 0 }]}
                     value={middleStop}
-                    onChangeText={setMiddleStop}
+                    onChangeText={(text) => {
+                      setMiddleStop(text);
+                      if (activeSearchField !== 'waypoint') setActiveSearchField('waypoint');
+                    }}
+                    onFocus={() => setActiveSearchField('waypoint')}
                     placeholder="Adicione uma parada"
                     placeholderTextColor="#9CA3AF"
                   />
@@ -1076,19 +1599,106 @@ export default function RouteResultsScreen() {
                   </TouchableOpacity>
                 </View>
               ) : null}
+              {activeSearchField === 'waypoint' && placeSuggestions.length > 0 ? (
+                <View style={styles.suggestionsInlineWrap}>
+                  <View style={styles.suggestionsBox}>
+                    <ScrollView
+                      nestedScrollEnabled
+                      style={styles.suggestionsScroll}
+                      contentContainerStyle={styles.suggestionsContent}
+                      keyboardShouldPersistTaps="handled"
+                    >
+                      {placeSuggestions.map((item, idx) => (
+                        <TouchableOpacity
+                          key={`${activeSearchField}-s-${idx}`}
+                          style={[
+                            styles.suggestionItem,
+                            idx < placeSuggestions.length - 1 ? styles.suggestionItemDivider : null,
+                          ]}
+                          onPress={() => {
+                            Keyboard.dismiss();
+                            setMiddleStop(item.description);
+                            setActiveSearchField(null);
+                            setPlaceSuggestions([]);
+                          }}
+                        >
+                          <Text style={styles.suggestionText} numberOfLines={2}>{item.description}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                </View>
+              ) : null}
               <View style={styles.field}>
-                <Text numberOfLines={1} style={styles.fieldText}>{headerDestination}</Text>
+                <TextInput
+                  value={headerDestination}
+                  onChangeText={(text) => {
+                    setHeaderDestination(text);
+                    if (activeSearchField !== 'destination') setActiveSearchField('destination');
+                  }}
+                  onFocus={() => setActiveSearchField('destination')}
+                  placeholder="Digite o destino"
+                  placeholderTextColor="#9CA3AF"
+                  style={styles.fieldInput}
+                  returnKeyType="search"
+                  onSubmitEditing={() => Keyboard.dismiss()}
+                />
               </View>
+              {activeSearchField === 'destination' && placeSuggestions.length > 0 ? (
+                <View style={styles.suggestionsInlineWrap}>
+                  <View style={styles.suggestionsBox}>
+                    <ScrollView
+                      nestedScrollEnabled
+                      style={styles.suggestionsScroll}
+                      contentContainerStyle={styles.suggestionsContent}
+                      keyboardShouldPersistTaps="handled"
+                    >
+                      {placeSuggestions.map((item, idx) => (
+                        <TouchableOpacity
+                          key={`${activeSearchField}-s-${idx}`}
+                          style={[
+                            styles.suggestionItem,
+                            idx < placeSuggestions.length - 1 ? styles.suggestionItemDivider : null,
+                          ]}
+                          onPress={() => {
+                            Keyboard.dismiss();
+                            setHeaderDestination(item.description);
+                            setActiveSearchField(null);
+                            setPlaceSuggestions([]);
+                          }}
+                        >
+                          <Text style={styles.suggestionText} numberOfLines={2}>{item.description}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                </View>
+              ) : null}
+              <PulsingRouteSearchButton
+                loading={headerRoutesLoading}
+                loadingMode="idle-muted"
+                onPress={() => {
+                  setActiveSearchField(null);
+                  setPlaceSuggestions([]);
+                  fetchRoutesForHeader();
+                }}
+                disabled={!headerDestination.trim() || headerRoutesLoading}
+                style={[
+                  styles.headerSearchButton,
+                  !headerDestination.trim() || headerRoutesLoading ? styles.headerSearchButtonDisabled : null,
+                ]}
+                textStyle={styles.headerSearchButtonText}
+                activeOpacity={0.9}
+              />
             </View>
           </View>
-
           <View style={styles.headerSwapOverlay} pointerEvents="box-none">
             <TouchableOpacity style={styles.swap} onPress={handleSwapLocations}>
               <MaterialCommunityIcons name="swap-vertical" size={18} color="#0057A8" />
             </TouchableOpacity>
           </View>
           <View style={styles.headerActionsOverlay} pointerEvents="box-none">
-            <TouchableOpacity>
+            <TouchableOpacity onPress={() => Keyboard.dismiss()}>
               <MaterialCommunityIcons name="tune" size={20} color="#0057A8" />
             </TouchableOpacity>
             <TouchableOpacity
@@ -1100,31 +1710,89 @@ export default function RouteResultsScreen() {
             </TouchableOpacity>
           </View>
         </View>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <View style={styles.pill}><Text style={styles.pillText}>Sair agora ▼</Text></View>
-            <View style={styles.pill}><Text style={styles.pillText}>Ordenar ▼</Text></View>
-          </View>
-        </ScrollView>
+        {headerRoutesLoading ? <HeaderRoutesProgressStrip /> : null}
       </View>
 
-      <ScrollView style={{ flex: 1 }}>
-        <Text style={styles.sectionTitleMuted}>Táxi e transporte privado</Text>
-        <TouchableOpacity onPress={() => Linking.openURL(uberDeepLink)} style={styles.uberCard}>
-          <View style={styles.uberBadge}><Text style={styles.uberBadgeText}>Uber</Text></View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: '#1E1D1D', fontSize: 14, fontWeight: '600' }}>Partida em ~4 min</Text>
-            <Text style={{ color: '#22c55e', fontSize: 12, marginTop: 2 }}>🌱 CO2e estimado: 2,4 kg</Text>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 28 }}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterChipsScroll}
+          contentContainerStyle={styles.filterChipsContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <TouchableOpacity style={styles.filterChip} activeOpacity={0.85} onPress={() => Keyboard.dismiss()}>
+            <Text style={styles.filterChipText}>Sair agora</Text>
+            <MaterialCommunityIcons name="chevron-down" size={16} color="#4B5563" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.filterChip} activeOpacity={0.85} onPress={() => Keyboard.dismiss()}>
+            <MaterialCommunityIcons name="sort-variant" size={16} color="#4B5563" />
+            <Text style={styles.filterChipText}>Ordenar</Text>
+            <MaterialCommunityIcons name="chevron-down" size={16} color="#4B5563" />
+          </TouchableOpacity>
+          <View style={styles.filterChip}>
+            <MaterialCommunityIcons name="walk" size={16} color="#4B5563" />
+            <Text style={styles.filterChipText}>Partida</Text>
           </View>
-          <View style={styles.uberButton}><Text style={{ color: 'white', fontSize: 13, fontWeight: '600' }}>Pedir</Text></View>
+          <TouchableOpacity style={styles.filterChip} activeOpacity={0.85} onPress={() => Keyboard.dismiss()}>
+            <MaterialCommunityIcons name="swap-horizontal" size={16} color="#4B5563" />
+            <Text style={styles.filterChipText}>Troca rápida</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        <Text style={styles.sectionTitleMuted}>Táxi e transporte privado</Text>
+        <TouchableOpacity onPress={() => Linking.openURL(uberDeepLink)} style={styles.uberCard} activeOpacity={0.92}>
+          <View style={styles.uberRowMoovit}>
+            <View style={styles.uberTimeColumn}>
+              {uberTimeSummary ? (
+                <>
+                  <Text style={styles.uberBigMinutes}>{uberTimeSummary.durationMain}</Text>
+                  <View style={styles.uberClockColumn}>
+                    <Text style={styles.uberClockText}>{uberTimeSummary.departure}</Text>
+                    <MaterialCommunityIcons name="arrow-down" size={12} color="#9CA3AF" style={{ marginVertical: 2 }} />
+                    <Text style={styles.uberClockText}>{uberTimeSummary.arrival}</Text>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.uberBigMinutes}>—</Text>
+                  <Text style={styles.uberNoRoutesHint}>Aguarde as rotas ou abra o Uber</Text>
+                </>
+              )}
+            </View>
+            <View style={styles.uberMid}>
+              <View style={styles.uberLogo}>
+                <Text style={styles.uberLogoText}>U</Text>
+              </View>
+              <View style={styles.uberMidText}>
+                <Text style={styles.uberTitle}>Uber</Text>
+                <Text style={styles.uberSub} numberOfLines={2}>
+                  {uberRoutePreview
+                    ? 'Estimativa alinhada à sua primeira rota sugerida abaixo'
+                    : 'Toque para pedir no aplicativo Uber'}
+                </Text>
+                <View style={styles.uberCo2Row}>
+                  <MaterialCommunityIcons name="leaf" size={14} color="#16A34A" />
+                  <Text style={styles.uberCo2Text}>Menos CO₂e que ir sozinho de carro</Text>
+                </View>
+              </View>
+            </View>
+            <View style={styles.uberButton}>
+              <Text style={styles.uberButtonText}>Pedir</Text>
+            </View>
+          </View>
         </TouchableOpacity>
 
         <View style={styles.sectionHeader}>
-          <Text style={{ color: '#1E1D1D', fontSize: 15, fontWeight: '700' }}>Rotas sugeridas</Text>
-          <TouchableOpacity style={styles.mapButton}>
-            <MaterialCommunityIcons name="map" size={14} color="white" />
-            <Text style={{ color: 'white', fontSize: 13, fontWeight: '600' }}>Ver</Text>
+          <Text style={styles.sectionTitleStrong}>Rotas sugeridas</Text>
+          <TouchableOpacity
+            style={[styles.verRotaBtn, !displayedRoutes[0] ? styles.verRotaBtnDisabled : null]}
+            onPress={() => displayedRoutes[0] && openRouteDetail(displayedRoutes[0])}
+            disabled={!displayedRoutes[0]}
+            activeOpacity={0.85}
+          >
+            <MaterialCommunityIcons name="map-outline" size={16} color="#0057A8" />
+            <Text style={styles.verRotaBtnText}>Ver</Text>
           </TouchableOpacity>
         </View>
 
@@ -1145,6 +1813,7 @@ export default function RouteResultsScreen() {
             >
               Sozinho
             </Text>
+            {activeCompanionTab === 'alone' ? <View style={styles.companionTabIndicator} /> : null}
           </TouchableOpacity>
           <TouchableOpacity
             style={[
@@ -1162,15 +1831,26 @@ export default function RouteResultsScreen() {
             >
               Acompanhado
             </Text>
+            {activeCompanionTab === 'companied' ? <View style={styles.companionTabIndicator} /> : null}
           </TouchableOpacity>
         </View>
 
         {mostAccessibleRoute ? renderRouteCard(mostAccessibleRoute, 'most-accessible', true) : null}
 
         {filteredRoutes.length === 0 ? (
-          <Text style={styles.emptyRoutesText}>Nenhum trajeto tranquilo para este perfil.</Text>
+          hasTypedAddress ? (
+            <Text style={styles.emptyRoutesText}>
+              Nao encontramos uma rota tranquila para esse perfil agora. Tente ajustar o horario ou
+              alternar entre Sozinho e Acompanhado.
+            </Text>
+          ) : (
+            <View style={styles.emptyRoutesWrap}>
+              <MaterialCommunityIcons name="map-search-outline" size={40} color="#CCCCCC" />
+              <Text style={styles.emptyRoutesHintText}>Digite um endereco para ver sugestoes de trajetos.</Text>
+            </View>
+          )
         ) : null}
-        {filteredRoutes.map((route, index) => renderRouteCard(route, `route-${index}`))}
+        {displayedRoutes.map((route, index) => renderRouteCard(route, `route-${index}`))}
       </ScrollView>
     </SafeAreaView>
   );
@@ -1179,6 +1859,7 @@ export default function RouteResultsScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#F5F5F5' },
   header: {
+    position: 'relative',
     backgroundColor: '#FFFFFF',
     padding: 12,
     borderBottomWidth: 1,
@@ -1198,13 +1879,69 @@ const styles = StyleSheet.create({
     color: '#1E1D1D',
     textAlignVertical: 'center',
   },
+  fieldInput: {
+    color: '#1E1D1D',
+    fontSize: 13,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+  },
+  headerSearchButton: {
+    marginTop: 8,
+    backgroundColor: '#0057A8',
+    borderRadius: 20,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerSearchButtonDisabled: {
+    opacity: 0.5,
+  },
+  headerSearchButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  suggestionsBox: {
+    marginTop: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    maxHeight: 150,
+    overflow: 'hidden',
+  },
+  suggestionsInlineWrap: {
+    marginBottom: 4,
+  },
+  suggestionsScroll: {
+    flexGrow: 0,
+  },
+  suggestionsContent: {
+    paddingVertical: 4,
+  },
+  suggestionsEmpty: {
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  suggestionItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  suggestionItemDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+  },
+  suggestionText: {
+    color: '#1E1D1D',
+    fontSize: 14,
+    lineHeight: 20,
+  },
   headerStopRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 6 },
   headerPlusBtnDisabled: { opacity: 0.4 },
   headerSwapOverlay: {
     position: 'absolute',
     right: 44,
-    top: 0,
-    bottom: 0,
+    top: 4,
+    height: 88,
     width: 34,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1212,8 +1949,8 @@ const styles = StyleSheet.create({
   headerActionsOverlay: {
     position: 'absolute',
     right: 8,
-    top: 0,
-    bottom: 0,
+    top: 2,
+    height: 92,
     width: 36,
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -1238,69 +1975,212 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pill: { backgroundColor: '#F5F5F5', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
-  pillText: { color: '#666666', fontSize: 12 },
   sectionTitleMuted: { color: '#999999', fontSize: 13, marginHorizontal: 16, marginTop: 16 },
   uberCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     marginHorizontal: 16,
     marginTop: 8,
-    shadowColor: '#000',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
-    shadowRadius: 8,
+    shadowRadius: 5,
     elevation: 2,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'space-between',
   },
-  uberBadge: { backgroundColor: '#000', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
-  uberBadgeText: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  uberButton: { backgroundColor: '#000', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8 },
+  uberLogo: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#1E1D1D',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uberLogoText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    fontFamily: 'Agrandir-TextBold',
+  },
+  uberTitle: {
+    color: '#1E1D1D',
+    fontSize: 14,
+    fontWeight: '700',
+    fontFamily: 'Agrandir-TextBold',
+  },
+  uberSub: {
+    color: '#999999',
+    fontSize: 12,
+    fontFamily: 'Agrandir-Regular',
+  },
+  uberButton: {
+    backgroundColor: '#1E1D1D',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uberButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    fontFamily: 'Agrandir-Regular',
+  },
   sectionHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginHorizontal: 16,
     marginTop: 20,
     marginBottom: 8,
   },
-  mapButton: {
-    backgroundColor: '#0057A8',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+  sectionTitleStrong: {
+    color: '#1E1D1D',
+    fontSize: 15,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  verRotaBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    backgroundColor: '#EBF3FF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  verRotaBtnDisabled: { opacity: 0.35 },
+  verRotaBtnText: {
+    color: '#0057A8',
+    fontSize: 13,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  filterChipsScroll: {
+    maxHeight: 48,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  filterChipsContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+    alignItems: 'center',
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  filterChipText: {
+    color: '#374151',
+    fontSize: 13,
+    fontFamily: 'Agrandir-Regular',
+  },
+  uberRowMoovit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  uberTimeColumn: {
+    width: 76,
+    alignItems: 'center',
+  },
+  uberBigMinutes: {
+    color: '#1E1D1D',
+    fontSize: 20,
+    fontFamily: 'Agrandir-GrandHeavy',
+  },
+  uberClockColumn: { alignItems: 'center', marginTop: 8 },
+  uberClockText: {
+    color: '#6B7280',
+    fontSize: 12,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  uberNoRoutesHint: {
+    marginTop: 6,
+    fontSize: 11,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    fontFamily: 'Agrandir-Regular',
+  },
+  uberMid: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
+  },
+  uberMidText: { flex: 1, minWidth: 0 },
+  uberCo2Row: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  uberCo2Text: { color: '#6B7280', fontSize: 11, flex: 1, fontFamily: 'Agrandir-Regular' },
+  routeStagesFrame: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    backgroundColor: '#FAFAFA',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 8,
+  },
+  routeCardStagesScrollContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   companionTabsWrap: {
     marginHorizontal: 16,
     marginBottom: 10,
-    backgroundColor: '#EEF2F7',
-    borderRadius: 12,
-    padding: 4,
     flexDirection: 'row',
-    gap: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
   },
   companionTabBtn: {
     flex: 1,
-    borderRadius: 9,
-    paddingVertical: 8,
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
   companionTabBtnActive: {
-    backgroundColor: '#0057A8',
+    backgroundColor: 'transparent',
   },
   companionTabText: {
-    color: '#4B5563',
+    color: '#6B7280',
     fontSize: 13,
     fontWeight: '700',
   },
   companionTabTextActive: {
-    color: '#FFFFFF',
+    color: '#0057A8',
+  },
+  companionTabIndicator: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    bottom: -1,
+    height: 2.5,
+    borderRadius: 2,
+    backgroundColor: '#0057A8',
+  },
+  emptyRoutesWrap: {
+    alignItems: 'center',
+    paddingVertical: 18,
+    marginHorizontal: 16,
+  },
+  emptyRoutesHintText: {
+    color: '#999999',
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: 'center',
   },
   emptyRoutesText: {
     marginHorizontal: 16,

@@ -26,19 +26,12 @@ const ROW_H = 52;
 const PRIMARY = '#0057A8';
 
 type DisabilityType = 'visual' | 'wheelchair' | 'reduced_mobility' | '';
-type AccompaniedType = 'alone' | 'accompanied' | 'both' | '';
-type MenuKind = 'group' | 'companied';
+type MenuKind = 'group';
 
 const DISABILITY_OPTIONS = [
   { label: 'Deficiencia Visual', value: 'visual' as const, icon: 'eye-off' as const },
   { label: 'Cadeirante', value: 'wheelchair' as const, icon: 'wheelchair-accessibility' as const },
   { label: 'Mobilidade Reduzida', value: 'reduced_mobility' as const, icon: 'walk' as const },
-];
-
-const ACCOMPANIED_OPTIONS = [
-  { label: 'Sozinho', value: 'alone' as const, icon: 'account' as const },
-  { label: 'Acompanhado', value: 'accompanied' as const, icon: 'account-multiple' as const },
-  { label: 'Ambos', value: 'both' as const, icon: 'account-switch' as const },
 ];
 
 type MenuAnchor = {
@@ -99,15 +92,16 @@ function computeMenuPlacement(
 export default function RegisterScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const formScrollRef = useRef<ScrollView>(null);
   const groupRef = useRef<View>(null);
-  const companiedRef = useRef<View>(null);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [disabilityType, setDisabilityType] = useState<DisabilityType>('');
-  const [accompanied, setAccompanied] = useState<AccompaniedType>('');
   const [loading, setLoading] = useState(false);
 
   const [menu, setMenu] = useState<MenuKind | null>(null);
@@ -125,8 +119,8 @@ export default function RegisterScreen() {
         return;
       }
       ref.current?.measureInWindow((x, y, width, height) => {
-        const count = kind === 'group' ? DISABILITY_OPTIONS.length : ACCOMPANIED_OPTIONS.length;
-        const preferUp = kind === 'companied';
+        const count = DISABILITY_OPTIONS.length;
+        const preferUp = false;
         const { top, listHeight, scroll } = computeMenuPlacement(y, height, count, preferUp);
         setAnchor({
           x,
@@ -145,18 +139,23 @@ export default function RegisterScreen() {
 
   const disabilityLabel =
     DISABILITY_OPTIONS.find((o) => o.value === disabilityType)?.label ?? null;
-  const accompaniedLabel =
-    ACCOMPANIED_OPTIONS.find((o) => o.value === accompanied)?.label ?? null;
+  const passwordsMatch = confirmPassword.length > 0 && confirmPassword === password;
+
+  const ensurePasswordVisible = useCallback(() => {
+    setTimeout(() => {
+      formScrollRef.current?.scrollTo({ y: 300, animated: true });
+    }, 120);
+  }, []);
 
   const handleSubmit = async () => {
-    if (!name || !email || !password || !disabilityType || !accompanied) {
-      Alert.alert('Atencao', 'Preencha nome, email, senha, grupo e como costuma sair.');
+    if (!name || !email || !password || !disabilityType || !passwordsMatch) {
+      Alert.alert('Atencao', 'Preencha nome, email, senha, confirme a senha e grupo.');
       return;
     }
 
     try {
       setLoading(true);
-      await register(name, email, password, disabilityType, accompanied);
+      await register(name, email, password, disabilityType);
       const loginData = await login(email, password);
       await saveToken(loginData.access_token);
       await saveUserInfo(loginData.user_id, loginData.name, email);
@@ -173,9 +172,9 @@ export default function RegisterScreen() {
   };
 
   const renderMenuRows = (
-    options: typeof DISABILITY_OPTIONS | typeof ACCOMPANIED_OPTIONS,
+    options: typeof DISABILITY_OPTIONS,
     selected: string,
-    onPick: (value: DisabilityType | AccompaniedType) => void,
+    onPick: (value: DisabilityType) => void,
   ) => {
     const body = options.map((option, index) => {
       const isSelected = selected === option.value;
@@ -222,10 +221,16 @@ export default function RegisterScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
     >
-      <View style={styles.form}>
+      <ScrollView
+        ref={formScrollRef}
+        style={styles.formScroll}
+        contentContainerStyle={styles.form}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.push('/login')}
@@ -273,6 +278,7 @@ export default function RegisterScreen() {
             secureTextEntry={!showPassword}
             value={password}
             onChangeText={setPassword}
+            onFocus={ensurePasswordVisible}
           />
           <TouchableOpacity onPress={() => setShowPassword((prev) => !prev)}>
             <MaterialCommunityIcons
@@ -282,6 +288,37 @@ export default function RegisterScreen() {
             />
           </TouchableOpacity>
         </View>
+
+        <Text style={styles.label}>Confirmar senha</Text>
+        <View style={styles.inputWithIcon}>
+          <TextInput
+            style={styles.inputPassword}
+            placeholder="Confirme sua senha"
+            placeholderTextColor="#AAAAAA"
+            secureTextEntry={!showConfirmPassword}
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            onFocus={ensurePasswordVisible}
+          />
+          {passwordsMatch ? (
+            <MaterialCommunityIcons
+              name="check-circle"
+              size={20}
+              color="#22c55e"
+              style={styles.passwordCheckIcon}
+            />
+          ) : null}
+          <TouchableOpacity onPress={() => setShowConfirmPassword((prev) => !prev)}>
+            <MaterialCommunityIcons
+              name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
+              size={20}
+              color="#AAAAAA"
+            />
+          </TouchableOpacity>
+        </View>
+        {!passwordsMatch && confirmPassword.length > 0 ? (
+          <Text style={styles.passwordMismatchText}>As senhas não coincidem</Text>
+        ) : null}
 
         <Text style={styles.label}>A que grupo voce pertence?</Text>
         <View ref={groupRef} collapsable={false}>
@@ -322,53 +359,17 @@ export default function RegisterScreen() {
         </View>
         <View style={styles.fieldSpacer} />
 
-        <Text style={styles.label}>Como voce costuma sair?</Text>
-        <View ref={companiedRef} collapsable={false}>
-          <TouchableOpacity
-            style={[
-              styles.selectBox,
-              !!accompanied && styles.selectBoxHasValue,
-              menu === 'companied' && styles.selectBoxFocused,
-            ]}
-            onPress={() => openMenu('companied', companiedRef)}
-            activeOpacity={0.8}
-          >
-            <View style={styles.selectBoxLeft}>
-              {accompanied ? (
-                <>
-                  <MaterialCommunityIcons
-                    name={
-                      ACCOMPANIED_OPTIONS.find((o) => o.value === accompanied)?.icon ??
-                      'help-circle-outline'
-                    }
-                    size={20}
-                    color="#0057A8"
-                  />
-                  <Text style={[styles.selectBoxValue, styles.selectBoxValueBlue]}>
-                    {accompaniedLabel}
-                  </Text>
-                </>
-              ) : (
-                <Text style={styles.selectPlaceholder}>Selecione</Text>
-              )}
-            </View>
-            <MaterialCommunityIcons
-              name={menu === 'companied' ? 'chevron-up' : 'chevron-down'}
-              size={22}
-              color="#AAAAAA"
-            />
-          </TouchableOpacity>
-        </View>
-        <View style={styles.fieldSpacer} />
-
         <TouchableOpacity
-          style={[styles.continueButton, loading && styles.continueButtonDisabled]}
+          style={[
+            styles.continueButton,
+            (!passwordsMatch || loading) && styles.continueButtonDisabled,
+          ]}
           onPress={handleSubmit}
-          disabled={loading}
+          disabled={loading || !passwordsMatch}
         >
           <Text style={styles.continueText}>{loading ? 'Carregando...' : 'Continue'}</Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
 
       <Modal visible={menu !== null && anchor !== null} transparent animationType="fade">
         <View style={styles.modalRoot}>
@@ -390,9 +391,7 @@ export default function RegisterScreen() {
                 ? renderMenuRows(DISABILITY_OPTIONS, disabilityType, (v) =>
                     setDisabilityType(v as DisabilityType),
                   )
-                : renderMenuRows(ACCOMPANIED_OPTIONS, accompanied, (v) =>
-                    setAccompanied(v as AccompaniedType),
-                  )}
+                : null}
             </View>
           ) : null}
         </View>
@@ -406,11 +405,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  form: {
+  formScroll: {
     flex: 1,
+  },
+  form: {
     paddingHorizontal: 24,
     paddingTop: 16,
     paddingBottom: 40,
+    flexGrow: 1,
   },
   backButton: {
     alignSelf: 'flex-start',
@@ -527,7 +529,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   continueButtonDisabled: {
-    opacity: 0.6,
+    opacity: 0.5,
+  },
+  passwordCheckIcon: {
+    marginRight: 8,
+  },
+  passwordMismatchText: {
+    color: '#EF4444',
+    fontSize: 12,
+    marginTop: -10,
+    marginBottom: 12,
   },
   continueText: {
     color: '#FFFFFF',

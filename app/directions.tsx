@@ -2,9 +2,8 @@
 import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Animated,
   Alert,
   Dimensions,
@@ -25,6 +24,8 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Speech from 'expo-speech';
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { USE_MOCK_DATA, MOCK_ADDRESSES } from '../mocks';
+import { PulsingRouteSearchButton } from '../components/PulsingRouteSearchButton';
 import { searchRoutes } from '../services/routes.service';
 import { getToken, getUserInfo } from '../services/token.service';
 
@@ -171,7 +172,29 @@ export default function DirectionsScreen() {
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [iosKeyboardOffset, setIosKeyboardOffset] = useState(0);
 
+  const mockOriginSuggestions = useMemo(() => {
+    if (!USE_MOCK_DATA) return [];
+    const q = origin.trim().toLowerCase();
+    if (!q) return MOCK_ADDRESSES.slice(0, 12);
+    return MOCK_ADDRESSES.filter((a) => a.description.toLowerCase().includes(q)).slice(0, 12);
+  }, [origin]);
+
+  const mockDestinationSuggestions = useMemo(() => {
+    if (!USE_MOCK_DATA) return [];
+    const q = destination.trim().toLowerCase();
+    if (!q) return [];
+    return MOCK_ADDRESSES.filter((a) => a.description.toLowerCase().includes(q)).slice(0, 12);
+  }, [destination]);
+
   useEffect(() => {
+    if (USE_MOCK_DATA) {
+      const first = MOCK_ADDRESSES[0];
+      setOrigin(first.description);
+      setCurrentGps({ latitude: first.lat, longitude: first.lng });
+      setOriginLocationLoading(false);
+      return;
+    }
+
     const loadCurrentLocation = async () => {
       setOriginLocationLoading(true);
       try {
@@ -205,6 +228,8 @@ export default function DirectionsScreen() {
   }, []);
 
   useEffect(() => {
+    if (USE_MOCK_DATA) return;
+
     const geocodeDestination = async () => {
       const dest = destination.trim();
       if (!dest) {
@@ -518,126 +543,196 @@ export default function DirectionsScreen() {
 
           <View style={styles.inputsColumn}>
             <View style={styles.inputRow}>
-              <GooglePlacesAutocomplete
-                placeholder={originLocationLoading ? 'Obtendo localização...' : 'Minha localização'}
-                onPress={(data) => setOrigin(data.description)}
-                query={{ key: process.env.EXPO_PUBLIC_GOOGLE_API_KEY ?? '', language: 'pt-BR' }}
-                keyboardShouldPersistTaps="handled"
-                listViewDisplayed="auto"
-                numberOfLines={3}
-                listViewProps={{ nestedScrollEnabled: true }}
-                styles={{
-                  container: { flex: 1 },
-                  textInput: {
-                    flex: 1,
-                    fontSize: 14,
-                    color: '#1E1D1D',
-                    paddingVertical: 12,
-                    fontFamily: 'Agrandir-Regular',
-                    backgroundColor: 'transparent',
-                    margin: 0,
-                    paddingHorizontal: 0,
-                  },
-                  listView: {
-                    maxHeight: 140,
-                    overflow: 'hidden',
-                    backgroundColor: '#FFFFFF',
-                    borderRadius: 12,
-                    marginTop: 4,
-                    marginBottom: 8,
-                    borderWidth: 1,
-                    borderColor: '#EEEEEE',
-                  },
-                  row: {
-                    paddingHorizontal: 16,
-                    paddingVertical: 12,
-                  },
-                  description: {
-                    fontSize: 14,
-                    color: '#1E1D1D',
-                  },
-                  separator: {
-                    height: 1,
-                    backgroundColor: '#EEEEEE',
-                  },
-                }}
-                fetchDetails
-                enablePoweredByContainer={false}
-                textInputProps={{
-                  value: origin,
-                  onChangeText: setOrigin,
-                  placeholderTextColor: '#AAAAAA',
-                }}
-              />
+              {USE_MOCK_DATA ? (
+                <View style={styles.mockPlacesWrap}>
+                  <TextInput
+                    placeholder={originLocationLoading ? 'Obtendo localização...' : 'Minha localização'}
+                    placeholderTextColor="#AAAAAA"
+                    value={origin}
+                    onChangeText={setOrigin}
+                    style={styles.mockPlacesTextInput}
+                  />
+                  {mockOriginSuggestions.length > 0 ? (
+                    <FlatList
+                      data={mockOriginSuggestions}
+                      keyExtractor={(item) => item.id}
+                      keyboardShouldPersistTaps="handled"
+                      nestedScrollEnabled
+                      style={styles.mockPlacesList}
+                      renderItem={({ item }) => (
+                        <TouchableOpacity
+                          style={styles.mockPlacesRow}
+                          onPress={() => {
+                            Keyboard.dismiss();
+                            setOrigin(item.description);
+                            setCurrentGps({ latitude: item.lat, longitude: item.lng });
+                          }}
+                        >
+                          <Text style={styles.mockPlacesRowText} numberOfLines={2}>
+                            {item.description}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                      ItemSeparatorComponent={() => <View style={styles.mockPlacesSeparator} />}
+                    />
+                  ) : null}
+                </View>
+              ) : (
+                <GooglePlacesAutocomplete
+                  placeholder={originLocationLoading ? 'Obtendo localização...' : 'Minha localização'}
+                  onPress={(data) => setOrigin(data.description)}
+                  query={{ key: process.env.EXPO_PUBLIC_GOOGLE_API_KEY ?? '', language: 'pt-BR' }}
+                  keyboardShouldPersistTaps="handled"
+                  listViewDisplayed="auto"
+                  numberOfLines={3}
+                  listViewProps={{ nestedScrollEnabled: true }}
+                  styles={{
+                    container: { flex: 1 },
+                    textInput: {
+                      flex: 1,
+                      fontSize: 14,
+                      color: '#1E1D1D',
+                      paddingVertical: 12,
+                      fontFamily: 'Agrandir-Regular',
+                      backgroundColor: 'transparent',
+                      margin: 0,
+                      paddingHorizontal: 0,
+                    },
+                    listView: {
+                      maxHeight: 140,
+                      overflow: 'hidden',
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 12,
+                      marginTop: 4,
+                      marginBottom: 8,
+                      borderWidth: 1,
+                      borderColor: '#EEEEEE',
+                    },
+                    row: {
+                      paddingHorizontal: 16,
+                      paddingVertical: 12,
+                    },
+                    description: {
+                      fontSize: 14,
+                      color: '#1E1D1D',
+                    },
+                    separator: {
+                      height: 1,
+                      backgroundColor: '#EEEEEE',
+                    },
+                  }}
+                  fetchDetails
+                  enablePoweredByContainer={false}
+                  textInputProps={{
+                    value: origin,
+                    onChangeText: setOrigin,
+                    placeholderTextColor: '#AAAAAA',
+                  }}
+                />
+              )}
             </View>
 
             <View style={styles.divider} />
 
             <View style={styles.inputRow}>
-              <GooglePlacesAutocomplete
-                placeholder="Para onde?"
-                onPress={(data) => setDestination(data.description)}
-                query={{ key: process.env.EXPO_PUBLIC_GOOGLE_API_KEY ?? '', language: 'pt-BR' }}
-                keyboardShouldPersistTaps="handled"
-                listViewDisplayed="auto"
-                numberOfLines={3}
-                listViewProps={{ nestedScrollEnabled: true }}
-                styles={{
-                  container: { flex: 1 },
-                  textInput: {
-                    flex: 1,
-                    fontSize: 14,
-                    color: '#1E1D1D',
-                    paddingVertical: 12,
-                    fontFamily: 'Agrandir-Regular',
-                    backgroundColor: 'transparent',
-                    margin: 0,
-                    paddingHorizontal: 0,
-                  },
-                  listView: {
-                    maxHeight: 140,
-                    overflow: 'hidden',
-                    backgroundColor: '#FFFFFF',
-                    borderRadius: 12,
-                    marginTop: 4,
-                    marginBottom: 8,
-                    borderWidth: 1,
-                    borderColor: '#EEEEEE',
-                  },
-                  row: {
-                    paddingHorizontal: 16,
-                    paddingVertical: 12,
-                  },
-                  description: {
-                    fontSize: 14,
-                    color: '#1E1D1D',
-                  },
-                  separator: {
-                    height: 1,
-                    backgroundColor: '#EEEEEE',
-                  },
-                }}
-                fetchDetails
-                enablePoweredByContainer={false}
-                textInputProps={{
-                  value: destination,
-                  onChangeText: setDestination,
-                  placeholderTextColor: '#AAAAAA',
-                }}
-              />
+              {USE_MOCK_DATA ? (
+                <View style={styles.mockPlacesWrap}>
+                  <TextInput
+                    placeholder="Para onde?"
+                    placeholderTextColor="#AAAAAA"
+                    value={destination}
+                    onChangeText={setDestination}
+                    style={styles.mockPlacesTextInput}
+                  />
+                  {mockDestinationSuggestions.length > 0 ? (
+                    <FlatList
+                      data={mockDestinationSuggestions}
+                      keyExtractor={(item) => item.id}
+                      keyboardShouldPersistTaps="handled"
+                      nestedScrollEnabled
+                      style={styles.mockPlacesList}
+                      renderItem={({ item }) => (
+                        <TouchableOpacity
+                          style={styles.mockPlacesRow}
+                          onPress={() => {
+                            Keyboard.dismiss();
+                            setDestination(item.description);
+                            setDestinationCoord({ latitude: item.lat, longitude: item.lng });
+                          }}
+                        >
+                          <Text style={styles.mockPlacesRowText} numberOfLines={2}>
+                            {item.description}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                      ItemSeparatorComponent={() => <View style={styles.mockPlacesSeparator} />}
+                    />
+                  ) : null}
+                </View>
+              ) : (
+                <GooglePlacesAutocomplete
+                  placeholder="Para onde?"
+                  onPress={(data) => setDestination(data.description)}
+                  query={{ key: process.env.EXPO_PUBLIC_GOOGLE_API_KEY ?? '', language: 'pt-BR' }}
+                  keyboardShouldPersistTaps="handled"
+                  listViewDisplayed="auto"
+                  numberOfLines={3}
+                  listViewProps={{ nestedScrollEnabled: true }}
+                  styles={{
+                    container: { flex: 1 },
+                    textInput: {
+                      flex: 1,
+                      fontSize: 14,
+                      color: '#1E1D1D',
+                      paddingVertical: 12,
+                      fontFamily: 'Agrandir-Regular',
+                      backgroundColor: 'transparent',
+                      margin: 0,
+                      paddingHorizontal: 0,
+                    },
+                    listView: {
+                      maxHeight: 140,
+                      overflow: 'hidden',
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 12,
+                      marginTop: 4,
+                      marginBottom: 8,
+                      borderWidth: 1,
+                      borderColor: '#EEEEEE',
+                    },
+                    row: {
+                      paddingHorizontal: 16,
+                      paddingVertical: 12,
+                    },
+                    description: {
+                      fontSize: 14,
+                      color: '#1E1D1D',
+                    },
+                    separator: {
+                      height: 1,
+                      backgroundColor: '#EEEEEE',
+                    },
+                  }}
+                  fetchDetails
+                  enablePoweredByContainer={false}
+                  textInputProps={{
+                    value: destination,
+                    onChangeText: setDestination,
+                    placeholderTextColor: '#AAAAAA',
+                  }}
+                />
+              )}
             </View>
           </View>
         </View>
 
-        <TouchableOpacity style={styles.searchButton} onPress={fetchRoutes}>
-          <Text style={styles.searchButtonText}>Buscar rotas</Text>
-        </TouchableOpacity>
-
-        {loading && (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator size="large" color="#0057A8" />
-          </View>
-        )}
+        <PulsingRouteSearchButton
+          loading={loading}
+          onPress={fetchRoutes}
+          disabled={loading}
+          style={[styles.searchButton, loading && styles.searchButtonDisabled]}
+          textStyle={styles.searchButtonText}
+        />
 
         {!loading && !!errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
 
@@ -846,6 +941,42 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  mockPlacesWrap: {
+    flex: 1,
+  },
+  mockPlacesTextInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1E1D1D',
+    paddingVertical: 12,
+    fontFamily: 'Agrandir-Regular',
+    backgroundColor: 'transparent',
+    margin: 0,
+    paddingHorizontal: 0,
+  },
+  mockPlacesList: {
+    maxHeight: 140,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    marginTop: 4,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+  },
+  mockPlacesRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  mockPlacesRowText: {
+    fontSize: 14,
+    color: '#1E1D1D',
+    fontFamily: 'Agrandir-Regular',
+  },
+  mockPlacesSeparator: {
+    height: 1,
+    backgroundColor: '#EEEEEE',
+  },
   inputText: {
     flex: 1,
     fontSize: 14,
@@ -865,15 +996,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  searchButtonDisabled: {
+    opacity: 0.85,
+  },
   searchButtonText: {
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 15,
     fontFamily: 'Agrandir-TextBold',
-  },
-  loadingWrap: {
-    paddingVertical: 20,
-    alignItems: 'center',
   },
   errorText: {
     color: '#ef4444',

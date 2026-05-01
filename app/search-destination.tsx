@@ -1,0 +1,756 @@
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Stack, useRouter } from 'expo-router';
+import type { ComponentProps } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Location from 'expo-location';
+import { API_URL } from '../constants/api';
+import { HOME_FAVORITE_SHORTCUTS } from '../mocks/home';
+import type { Station } from '../mocks/stations';
+import { MOCK_STATIONS } from '../mocks/stations';
+import { getToken } from '../services/token.service';
+
+const PRIMARY = '#0057A8';
+const BG = '#F5F5F5';
+const MUTED = '#6B7280';
+const BORDER = '#E5E7EB';
+const TITLE = '#111827';
+
+const MAP_FALLBACK = { latitude: -16.7167, longitude: -43.8647 };
+
+const AUTOCOMPLETE_MIN = 2;
+
+type RecentRoute = {
+  id: string;
+  origin: string;
+  destination: string;
+};
+
+type PlaceSuggestionRow = {
+  placeId: string;
+  title: string;
+  subtitle: string;
+  distanceLabel: string;
+  fullDescription: string;
+  destLat?: number;
+  destLng?: number;
+};
+
+function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): string {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  if (dist < 1000) return `${Math.round(dist)} m`;
+  if (dist < 100000) return `${(dist / 1000).toFixed(1)} km`;
+  return `${Math.round(dist / 1000)} km`;
+}
+
+function calculateDistanceNum(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function parseStations(data: unknown): Station[] {
+  if (!Array.isArray(data)) return [];
+  return data.map((raw, index) => {
+    const row = raw as Record<string, unknown>;
+    return {
+      id: String(row.id ?? `s-${index}`),
+      type: row.type === 'subway' ? 'subway' : 'bus',
+      name: String(row.name ?? 'Estação'),
+      address: String(row.address ?? '-'),
+      distance: String(row.distance ?? '-'),
+      distanceNum: Number(row.distanceNum ?? row.distance ?? 0) || 0,
+      accessible: Boolean(row.accessible),
+      lines: Array.isArray(row.lines) ? row.lines.map((line) => String(line)) : [],
+      nextBus: row.nextBus ? String(row.nextBus) : null,
+      lat:
+        typeof row.lat === 'number'
+          ? row.lat
+          : typeof row.latitude === 'number'
+            ? row.latitude
+            : MAP_FALLBACK.latitude,
+      lng:
+        typeof row.lng === 'number'
+          ? row.lng
+          : typeof row.longitude === 'number'
+            ? row.longitude
+            : MAP_FALLBACK.longitude,
+    };
+  });
+}
+
+function normalizeSearch(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+async function fetchPlaceGeometry(
+  placeId: string,
+  key: string,
+): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const url =
+      'https://maps.googleapis.com/maps/api/place/details/json' +
+      `?place_id=${encodeURIComponent(placeId)}` +
+      '&fields=geometry' +
+      `&key=${encodeURIComponent(key)}`;
+    const res = await fetch(url);
+    const json = (await res.json()) as {
+      result?: { geometry?: { location?: { lat?: number; lng?: number } } };
+    };
+    const loc = json.result?.geometry?.location;
+    const lat = loc?.lat;
+    const lng = loc?.lng;
+    if (typeof lat !== 'number' || typeof lng !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return null;
+    }
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
+function TitleWithHighlight({ text, query }: { text: string; query: string }) {
+  const q = query.trim();
+  if (!q) {
+    return <Text style={styles.rowTitle}>{text}</Text>;
+  }
+  const lower = text.toLowerCase();
+  const idx = lower.indexOf(q.toLowerCase());
+  if (idx < 0) {
+    return <Text style={styles.rowTitle}>{text}</Text>;
+  }
+  const before = text.slice(0, idx);
+  const match = text.slice(idx, idx + q.length);
+  const after = text.slice(idx + q.length);
+  return (
+    <Text style={styles.rowTitle}>
+      {before}
+      <Text style={styles.rowTitleMatch}>{match}</Text>
+      {after}
+    </Text>
+  );
+}
+
+function placeRowIcon(description: string): ComponentProps<typeof MaterialCommunityIcons>['name'] {
+  const d = description.toLowerCase();
+  if (d.includes('shop') || d.includes('mall') || d.includes('shopping')) return 'shopping-outline';
+  if (d.includes('parque') || d.includes('park')) return 'pine-tree';
+  if (d.includes('cine') || d.includes('cinema')) return 'filmstrip';
+  return 'map-marker-outline';
+}
+
+const FAVORITES_HOME_WORK = HOME_FAVORITE_SHORTCUTS.filter((x) => x.id === 'home' || x.id === 'work');
+
+export default function SearchDestinationScreen() {
+  const router = useRouter();
+  const [query, setQuery] = useState('');
+  const [recentRoutes, setRecentRoutes] = useState<RecentRoute[]>([]);
+  const [loadingRecents, setLoadingRecents] = useState(true);
+  const [userCoords, setUserCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [allStations, setAllStations] = useState<Station[]>([]);
+  const [loadingStations, setLoadingStations] = useState(true);
+  const [placeRows, setPlaceRows] = useState<PlaceSuggestionRow[]>([]);
+  const [loadingPlaces, setLoadingPlaces] = useState(false);
+
+  const hasQuery = query.trim().length > 0;
+  const qNorm = normalizeSearch(query);
+
+  const goToResults = useCallback(
+    (destination: string, origin?: string) => {
+      router.push({
+        pathname: '/route-results',
+        params: {
+          destination: destination.trim(),
+          ...(origin ? { origin: origin.trim() } : {}),
+        },
+      });
+    },
+    [router],
+  );
+
+  const goToRoutePlan = useCallback(
+    (p: { destination: string; destLat?: number; destLng?: number }) => {
+      const navParams: Record<string, string> = { destination: p.destination.trim() };
+      if (p.destLat != null && p.destLng != null && Number.isFinite(p.destLat) && Number.isFinite(p.destLng)) {
+        navParams.destLat = String(p.destLat);
+        navParams.destLng = String(p.destLng);
+      }
+      router.push({ pathname: '/route-plan', params: navParams });
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    const loadLocationAndStations = async () => {
+      try {
+        setLoadingStations(true);
+        const permission = await Location.requestForegroundPermissionsAsync();
+        let lat = MAP_FALLBACK.latitude;
+        let lng = MAP_FALLBACK.longitude;
+        if (permission.status === 'granted') {
+          const pos = await Location.getCurrentPositionAsync({});
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+          setUserCoords({ latitude: lat, longitude: lng });
+        } else {
+          setUserCoords(null);
+        }
+        const response = await fetch(`${API_URL}/stations/nearby?lat=${lat}&lng=${lng}`);
+        const data = response.ok ? ((await response.json()) as unknown) : [];
+        const parsed = parseStations(data);
+        setAllStations(parsed.length > 0 ? parsed : MOCK_STATIONS);
+      } catch {
+        setAllStations(MOCK_STATIONS);
+      } finally {
+        setLoadingStations(false);
+      }
+    };
+    loadLocationAndStations();
+  }, []);
+
+  useEffect(() => {
+    const fetchRecentRoutes = async () => {
+      try {
+        setLoadingRecents(true);
+        const token = await getToken();
+        if (!token) {
+          setRecentRoutes([]);
+          return;
+        }
+        const response = await fetch(`${API_URL}/routes/recent`, {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (!response.ok) {
+          setRecentRoutes([]);
+          return;
+        }
+        const data = await response.json();
+        const list = Array.isArray(data) ? data : Array.isArray(data?.routes) ? data.routes : [];
+        const mapped = list.slice(0, 8).map((item: any, index: number) => ({
+          id: String(item?.id ?? index),
+          origin: item?.origin ?? item?.route?.origin ?? '',
+          destination: item?.destination ?? item?.route?.destination ?? 'Destino',
+        }));
+        setRecentRoutes(mapped);
+      } catch {
+        setRecentRoutes([]);
+      } finally {
+        setLoadingRecents(false);
+      }
+    };
+    fetchRecentRoutes();
+  }, []);
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < AUTOCOMPLETE_MIN) {
+      setPlaceRows([]);
+      setLoadingPlaces(false);
+      return;
+    }
+    const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
+    if (!key) {
+      setPlaceRows([]);
+      setLoadingPlaces(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingPlaces(true);
+    const timeoutId = setTimeout(async () => {
+      try {
+        const url =
+          'https://maps.googleapis.com/maps/api/place/autocomplete/json' +
+          `?input=${encodeURIComponent(trimmed)}` +
+          '&language=pt-BR' +
+          '&types=geocode' +
+          `&key=${encodeURIComponent(key)}`;
+        const res = await fetch(url);
+        const json = (await res.json()) as {
+          predictions?: {
+            description?: string;
+            place_id?: string;
+            structured_formatting?: { main_text?: string; secondary_text?: string };
+          }[];
+        };
+        if (cancelled) return;
+        const preds = (json.predictions ?? [])
+          .map((p) => ({
+            description: String(p.description ?? '').trim(),
+            placeId: String(p.place_id ?? '').trim(),
+            main: String(p.structured_formatting?.main_text ?? p.description ?? '').trim(),
+            secondary: String(p.structured_formatting?.secondary_text ?? '').trim(),
+          }))
+          .filter((p) => p.description && p.placeId)
+          .slice(0, 6);
+
+        const lat0 = userCoords?.latitude ?? MAP_FALLBACK.latitude;
+        const lng0 = userCoords?.longitude ?? MAP_FALLBACK.longitude;
+
+        const rows: PlaceSuggestionRow[] = [];
+        for (const p of preds) {
+          if (cancelled) return;
+          const geom = await fetchPlaceGeometry(p.placeId, key);
+          const distanceLabel = geom
+            ? calculateDistance(lat0, lng0, geom.lat, geom.lng)
+            : '—';
+          rows.push({
+            placeId: p.placeId,
+            title: p.main || p.description,
+            subtitle: p.secondary,
+            distanceLabel,
+            fullDescription: p.description,
+            ...(geom ? { destLat: geom.lat, destLng: geom.lng } : {}),
+          });
+        }
+        if (!cancelled) setPlaceRows(rows);
+      } catch {
+        if (!cancelled) setPlaceRows([]);
+      } finally {
+        if (!cancelled) setLoadingPlaces(false);
+      }
+    }, 280);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [query, userCoords?.latitude, userCoords?.longitude]);
+
+  const stationSuggestions = useMemo(() => {
+    if (!hasQuery || !qNorm || query.trim().length < AUTOCOMPLETE_MIN) return [];
+    const lat0 = userCoords?.latitude ?? MAP_FALLBACK.latitude;
+    const lng0 = userCoords?.longitude ?? MAP_FALLBACK.longitude;
+    return [...allStations]
+      .filter((s) => {
+        const n = normalizeSearch(s.name);
+        const a = normalizeSearch(s.address);
+        return n.includes(qNorm) || a.includes(qNorm) || normalizeSearch(`${s.name} ${s.address}`).includes(qNorm);
+      })
+      .map((s) => ({
+        station: s,
+        distNum: calculateDistanceNum(lat0, lng0, s.lat, s.lng),
+      }))
+      .sort((x, y) => x.distNum - y.distNum)
+      .slice(0, 8)
+      .map(({ station, distNum }) => ({
+        station,
+        distanceLabel:
+          userCoords != null
+            ? calculateDistance(userCoords.latitude, userCoords.longitude, station.lat, station.lng)
+            : distNum < 1000
+              ? `${Math.round(distNum)} m`
+              : `${(distNum / 1000).toFixed(1)} km`,
+      }));
+  }, [allStations, hasQuery, qNorm, query, userCoords]);
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <StatusBar barStyle="dark-content" />
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+      >
+        <View style={styles.headerRow}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={styles.headerIconBtn}
+          >
+            <MaterialCommunityIcons name="arrow-left" size={24} color={TITLE} />
+          </TouchableOpacity>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Para onde você quer ir?"
+            placeholderTextColor="#9CA3AF"
+            value={query}
+            onChangeText={setQuery}
+            returnKeyType="search"
+            onSubmitEditing={() => {
+              const t = query.trim();
+              if (t) goToResults(t);
+            }}
+            autoCorrect={false}
+            autoCapitalize="sentences"
+          />
+          {hasQuery ? (
+            <TouchableOpacity onPress={() => setQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <MaterialCommunityIcons name="close-circle" size={22} color="#9CA3AF" />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {!hasQuery ? (
+            <>
+              <TouchableOpacity
+                style={styles.lineSearchRow}
+                onPress={() => router.push('/lines')}
+                activeOpacity={0.75}
+              >
+                <MaterialCommunityIcons name="transit-connection-variant" size={22} color={PRIMARY} />
+                <Text style={styles.linkBlue}>Procure uma linha</Text>
+              </TouchableOpacity>
+
+              <View style={styles.sectionHead}>
+                <Text style={styles.sectionTitleMuted}>Favoritos</Text>
+                <TouchableOpacity activeOpacity={0.75}>
+                  <Text style={styles.linkBlue}>+ Adicionar</Text>
+                </TouchableOpacity>
+              </View>
+              {FAVORITES_HOME_WORK.map((item, index) => (
+                <View key={item.id}>
+                  <TouchableOpacity
+                    style={styles.rowPad}
+                    onPress={() => goToResults(item.destination)}
+                    activeOpacity={0.75}
+                  >
+                    <MaterialCommunityIcons name={item.icon} size={24} color="#4B5563" />
+                    <View style={styles.rowBody}>
+                      <Text style={styles.rowTitle}>{item.label}</Text>
+                      <Text style={styles.tapEdit}>Toque para editar</Text>
+                    </View>
+                    <MaterialCommunityIcons name="chevron-right" size={22} color="#9CA3AF" />
+                  </TouchableOpacity>
+                  {index < FAVORITES_HOME_WORK.length - 1 ? <View style={styles.divider} /> : null}
+                </View>
+              ))}
+
+              <View style={styles.sectionHead}>
+                <Text style={styles.sectionTitleMuted}>Recentes</Text>
+                <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <MaterialCommunityIcons name="dots-vertical" size={22} color="#9CA3AF" />
+                </TouchableOpacity>
+              </View>
+              {loadingRecents ? (
+                <Text style={styles.loadingRecents}>Carregando…</Text>
+              ) : recentRoutes.length === 0 ? (
+                <Text style={styles.emptyRecents}>Nenhuma viagem recente</Text>
+              ) : (
+                recentRoutes.map((route, index) => (
+                  <View key={route.id}>
+                    <TouchableOpacity
+                      style={styles.rowPad}
+                      onPress={() => goToResults(route.destination, route.origin)}
+                      activeOpacity={0.75}
+                    >
+                      <MaterialCommunityIcons name="shopping-outline" size={22} color="#9CA3AF" />
+                      <View style={styles.rowBody}>
+                        <Text style={styles.rowTitle}>{route.destination}</Text>
+                        {route.origin ? <Text style={styles.rowSub}>{route.origin}</Text> : null}
+                      </View>
+                      <MaterialCommunityIcons name="star-outline" size={22} color="#9CA3AF" />
+                    </TouchableOpacity>
+                    {index < recentRoutes.length - 1 ? <View style={styles.divider} /> : null}
+                  </View>
+                ))
+              )}
+            </>
+          ) : (
+            <>
+              <View style={styles.sectionHead}>
+                <Text style={styles.sectionTitleMuted}>Locais</Text>
+                <TouchableOpacity
+                  style={styles.sectionLinkRow}
+                  onPress={() => router.push('/stations')}
+                  activeOpacity={0.75}
+                >
+                  <MaterialCommunityIcons name="map-marker-radius" size={18} color={PRIMARY} />
+                  <Text style={styles.linkBlue}>Mostrar no mapa</Text>
+                </TouchableOpacity>
+              </View>
+
+              {query.trim().length < AUTOCOMPLETE_MIN ? (
+                <Text style={styles.hintMuted}>
+                  Digite pelo menos {AUTOCOMPLETE_MIN} caracteres para ver sugestões de locais e estações.
+                </Text>
+              ) : !process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim() ? (
+                <Text style={styles.hintMuted}>
+                  Sugestões de locais precisam da variável EXPO_PUBLIC_GOOGLE_API_KEY.
+                </Text>
+              ) : loadingPlaces ? (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator color={PRIMARY} />
+                  <Text style={styles.loadingPlacesText}>Buscando locais…</Text>
+                </View>
+              ) : placeRows.length === 0 ? (
+                <Text style={styles.hintMuted}>Nenhum local encontrado.</Text>
+              ) : (
+                placeRows.map((item, index) => (
+                  <View key={item.placeId}>
+                    <TouchableOpacity
+                      style={styles.rowPad}
+                      onPress={() =>
+                        goToRoutePlan({
+                          destination: item.fullDescription,
+                          destLat: item.destLat,
+                          destLng: item.destLng,
+                        })
+                      }
+                      activeOpacity={0.75}
+                    >
+                      <View style={styles.rowLeftCol}>
+                        <MaterialCommunityIcons
+                          name={placeRowIcon(item.fullDescription)}
+                          size={22}
+                          color="#9CA3AF"
+                        />
+                        <Text style={styles.distanceBlue}>{item.distanceLabel}</Text>
+                      </View>
+                      <View style={styles.rowBody}>
+                        <TitleWithHighlight text={item.title} query={query} />
+                        {item.subtitle ? <Text style={styles.rowSub}>{item.subtitle}</Text> : null}
+                      </View>
+                      <MaterialCommunityIcons name="open-in-new" size={20} color="#9CA3AF" />
+                    </TouchableOpacity>
+                    {index < placeRows.length - 1 ? <View style={styles.divider} /> : null}
+                  </View>
+                ))
+              )}
+
+              {query.trim().length >= AUTOCOMPLETE_MIN ? (
+                <Text style={[styles.sectionTitleMuted, styles.sectionSpacer]}>Estações</Text>
+              ) : null}
+              {query.trim().length < AUTOCOMPLETE_MIN ? null : loadingStations ? (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator color={PRIMARY} />
+                  <Text style={styles.loadingPlacesText}>Carregando estações…</Text>
+                </View>
+              ) : stationSuggestions.length === 0 ? (
+                <Text style={styles.hintMuted}>Nenhuma estação corresponde à sua busca.</Text>
+              ) : (
+                stationSuggestions.map(({ station, distanceLabel }, index) => (
+                  <View key={station.id}>
+                    <TouchableOpacity
+                      style={styles.rowPad}
+                      onPress={() =>
+                        goToRoutePlan({
+                          destination: `${station.name} — ${station.address}`,
+                          destLat: station.lat,
+                          destLng: station.lng,
+                        })
+                      }
+                      activeOpacity={0.75}
+                    >
+                      <View style={styles.rowLeftCol}>
+                        <View style={styles.busTile}>
+                          <MaterialCommunityIcons name="bus" size={18} color="#FFFFFF" />
+                        </View>
+                        <Text style={styles.distanceBlue}>{distanceLabel}</Text>
+                      </View>
+                      <View style={styles.rowBody}>
+                        <TitleWithHighlight text={station.name} query={query} />
+                        <Text style={styles.rowSub}>{station.address}</Text>
+                      </View>
+                      <MaterialCommunityIcons name="clipboard-text-clock-outline" size={22} color="#9CA3AF" />
+                    </TouchableOpacity>
+                    {index < stationSuggestions.length - 1 ? <View style={styles.divider} /> : null}
+                  </View>
+                ))
+              )}
+            </>
+          )}
+
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: BG,
+  },
+  flex: {
+    flex: 1,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+    backgroundColor: BG,
+  },
+  headerIconBtn: {
+    padding: 4,
+  },
+  searchInput: {
+    flex: 1,
+    height: 44,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BORDER,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    color: TITLE,
+    fontFamily: 'Agrandir-Regular',
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 32,
+    paddingHorizontal: 16,
+  },
+  sectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  sectionTitleMuted: {
+    fontSize: 14,
+    color: MUTED,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  sectionSpacer: {
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  sectionLinkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  linkBlue: {
+    color: PRIMARY,
+    fontSize: 14,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  rowPad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    gap: 12,
+  },
+  rowLeftCol: {
+    alignItems: 'center',
+    width: 48,
+  },
+  busTile: {
+    width: 36,
+    height: 36,
+    borderRadius: 6,
+    backgroundColor: PRIMARY,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  distanceBlue: {
+    marginTop: 4,
+    fontSize: 11,
+    color: PRIMARY,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  rowBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  rowTitle: {
+    fontSize: 15,
+    color: TITLE,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  rowTitleMatch: {
+    fontSize: 15,
+    color: PRIMARY,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  rowSub: {
+    marginTop: 2,
+    fontSize: 13,
+    color: MUTED,
+    fontFamily: 'Agrandir-Regular',
+  },
+  tapEdit: {
+    marginTop: 2,
+    fontSize: 13,
+    color: PRIMARY,
+    fontFamily: 'Agrandir-Regular',
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: BORDER,
+    marginLeft: 60,
+  },
+  lineSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 8,
+    paddingVertical: 6,
+  },
+  loadingRecents: {
+    color: MUTED,
+    fontSize: 14,
+    fontFamily: 'Agrandir-Regular',
+    paddingVertical: 8,
+  },
+  emptyRecents: {
+    color: MUTED,
+    fontSize: 14,
+    fontFamily: 'Agrandir-Regular',
+    paddingVertical: 8,
+  },
+  hintMuted: {
+    color: MUTED,
+    fontSize: 14,
+    fontFamily: 'Agrandir-Regular',
+    paddingVertical: 6,
+    marginBottom: 4,
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+  },
+  loadingPlacesText: {
+    color: MUTED,
+    fontSize: 14,
+    fontFamily: 'Agrandir-Regular',
+  },
+});

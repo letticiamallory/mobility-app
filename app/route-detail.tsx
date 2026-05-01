@@ -42,6 +42,9 @@ export type SerializedRouteDetail = {
   stages: RouteStage[];
   /** Tarifa estimada, ex.: "9,30" ou "R$ 9,30" — opcional. */
   price?: string;
+  weather?: {
+    rain?: number;
+  };
 };
 
 export type MapRegion = {
@@ -142,9 +145,50 @@ function getRouteCardLineStripeColor(code: string): string {
   return colors[hash % colors.length];
 }
 
+function getTransitInstructionColor(stage?: RouteStage): string {
+  if (!stage || (stage.mode !== 'bus' && stage.mode !== 'subway')) return COLORS.lineGrey;
+  return getRouteCardLineStripeColor(extractLineCode(stage));
+}
+
 function isWalkStageMode(mode?: string): boolean {
   const m = `${mode ?? ''}`.toLowerCase();
   return m === 'walk' || m === 'walking';
+}
+
+type RouteRainHint =
+  | { show: false }
+  | {
+      show: true;
+      heavy: boolean;
+      icon: 'weather-rainy' | 'weather-pouring';
+      label: string;
+      iconColor: string;
+      textColor: string;
+    };
+
+function routeRainHint(route: SerializedRouteDetail | null): RouteRainHint {
+  if (!route?.weather || typeof route.weather !== 'object') return { show: false };
+  const rain = Number((route.weather as { rain?: unknown }).rain ?? 0);
+  if (!Number.isFinite(rain) || rain <= 0) return { show: false };
+  const heavy = rain > 5;
+  if (heavy) {
+    return {
+      show: true,
+      heavy: true,
+      icon: 'weather-pouring',
+      label: 'Chuva forte no trajeto, cuidado no percurso',
+      iconColor: '#EF4444',
+      textColor: '#B91C1C',
+    };
+  }
+  return {
+    show: true,
+    heavy: false,
+    icon: 'weather-rainy',
+    label: 'Chuva no trajeto — piso pode escorregar',
+    iconColor: '#D97706',
+    textColor: '#B45309',
+  };
 }
 
 function hasRepeatedTransitSequence(stages: RouteStage[]): boolean {
@@ -355,6 +399,12 @@ function parseRouteParam(raw: string | string[] | undefined): SerializedRouteDet
       destinationCoordinate: destCoord,
       stages,
       price: priceRaw != null ? String(priceRaw) : undefined,
+      weather:
+        o.weather && typeof o.weather === 'object'
+          ? {
+              rain: Number((o.weather as { rain?: unknown }).rain ?? 0),
+            }
+          : undefined,
     };
   } catch {
     return null;
@@ -378,6 +428,7 @@ export default function RouteDetailScreen() {
   const mapRef = useRef<MapView>(null);
 
   const route = useMemo(() => parseRouteParam(params.route), [params.route]);
+  const rainHint = useMemo(() => routeRainHint(route), [route]);
 
   const polylineCoords = useMemo(() => (route ? buildPolylineCoords(route) : []), [route]);
   const transitPoly = useMemo(() => (route ? buildTransitPolyline(route) : []), [route]);
@@ -766,18 +817,44 @@ export default function RouteDetailScreen() {
                       backgroundColor:
                         route.stages[0]?.mode === 'walk'
                           ? COLORS.lineGrey
-                          : getLineAccentColor(extractLineCode(route.stages[0])),
+                          : getTransitInstructionColor(route.stages[0]),
                     },
                   ]}
                 />
               </View>
-              <View style={styles.rowMain}>
-                <Text style={styles.titleBold} numberOfLines={2}>
-                  {route.origin || 'Origem'}
-                </Text>
-                <View style={styles.timeColRight}>
-                  <Text style={styles.timeRight}>{departureTime}</Text>
+              <View style={styles.originStack}>
+                <View style={styles.originHeadRow}>
+                  <View style={styles.originTitleRow}>
+                    <Text style={styles.titleBold} numberOfLines={2}>
+                      {route.origin || 'Origem'}
+                    </Text>
+                  </View>
+                  <View style={styles.timeColRight}>
+                    <Text style={styles.timeRight}>{departureTime}</Text>
+                  </View>
                 </View>
+                {rainHint.show ? (
+                  <View
+                    style={[
+                      styles.originRainBanner,
+                      {
+                        backgroundColor: rainHint.heavy ? '#FEE2E2' : '#FFFBEB',
+                        borderColor: rainHint.heavy ? '#FECACA' : '#FDE68A',
+                      },
+                    ]}
+                    accessibilityRole="summary"
+                    accessibilityLabel={rainHint.label}
+                  >
+                    <MaterialCommunityIcons
+                      name={rainHint.icon}
+                      size={17}
+                      color={rainHint.iconColor}
+                    />
+                    <Text style={[styles.originRainBannerText, { color: rainHint.textColor }]}>
+                      {rainHint.label}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             </View>
 
@@ -788,7 +865,7 @@ export default function RouteDetailScreen() {
               const nextStage = route.stages[index + 1];
               const prevStage = route.stages[index - 1];
               const lineCode = extractLineCode(stage);
-              const accent = getLineAccentColor(lineCode);
+              const accent = getRouteCardLineStripeColor(lineCode);
               const walkOpen = !!expandedWalk[index];
               const rideOpen = !!expandedRide[index];
               const punctualText = stage.accessible
@@ -817,11 +894,11 @@ export default function RouteDetailScreen() {
                     };
               const prevTransitAccent =
                 prevStage && (prevStage.mode === 'bus' || prevStage.mode === 'subway')
-                  ? getLineAccentColor(extractLineCode(prevStage))
+                  ? getTransitInstructionColor(prevStage)
                   : null;
               const nextTransitAccent =
                 nextStage && (nextStage.mode === 'bus' || nextStage.mode === 'subway')
-                  ? getLineAccentColor(extractLineCode(nextStage))
+                  ? getTransitInstructionColor(nextStage)
                   : null;
               const prevIsSameTransitLine =
                 !!prevStage &&
@@ -850,7 +927,9 @@ export default function RouteDetailScreen() {
                     : stage.street_view_image
                       ? [stage.street_view_image]
                       : []
-                ).filter((u, i, arr) => arr.indexOf(u) === i);
+                )
+                  .filter((u, i, arr) => arr.indexOf(u) === i)
+                  .slice(0, 3);
                 return (
                   <View key={`s-${index}`}>
                     <View style={styles.timelineRow}>
@@ -900,7 +979,7 @@ export default function RouteDetailScreen() {
                             color={COLORS.primary}
                           />
                         </TouchableOpacity>
-                        {walkOpen && walkImages.length > 0 ? (
+                        {walkImages.length > 0 ? (
                           <ScrollView
                             horizontal
                             showsHorizontalScrollIndicator={false}
@@ -1070,18 +1149,18 @@ export default function RouteDetailScreen() {
                       backgroundColor:
                         route.stages[route.stages.length - 1]?.mode === 'walk'
                           ? COLORS.lineGrey
-                          : getLineAccentColor(
-                              extractLineCode(route.stages[route.stages.length - 1]),
-                            ),
+                          : getTransitInstructionColor(route.stages[route.stages.length - 1]),
                     },
                   ]}
                 />
                 <View style={styles.destDot} />
               </View>
               <View style={styles.rowMain}>
-                <Text style={styles.titleBold} numberOfLines={3}>
-                  {route.destination}
-                </Text>
+                <View style={styles.originTitleRow}>
+                  <Text style={styles.titleBold} numberOfLines={3}>
+                    {route.destination}
+                  </Text>
+                </View>
                 <View style={styles.timeColRight}>
                   <Text style={styles.timeRight}>{arrivalTime}</Text>
                   <Text style={styles.timeSubRight}>Chegada</Text>
@@ -1100,6 +1179,26 @@ export default function RouteDetailScreen() {
             accessibilityLabel={isReading ? 'Parar' : 'Ouvir rota'}
           >
             <MaterialCommunityIcons name={isReading ? 'stop' : 'play'} size={26} color="#FFFFFF" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.btnReview}
+            activeOpacity={0.88}
+            accessibilityRole="button"
+            accessibilityLabel="Avaliar esta rota"
+            onPress={() => {
+              const label = [route.origin, route.destination].filter(Boolean).join(' → ') || 'Rota';
+              router.push({
+                pathname: '/write-review',
+                params: {
+                  type: 'route',
+                  id: '0',
+                  name: label,
+                },
+              });
+            }}
+          >
+            <MaterialCommunityIcons name="star" size={18} color="#FFFFFF" />
+            <Text style={styles.btnReviewText}>Avaliar</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.btnPill} activeOpacity={0.88}>
             <MaterialCommunityIcons name="bus-clock" size={18} color="#FFFFFF" />
@@ -1170,6 +1269,45 @@ const styles = StyleSheet.create({
     backgroundColor: '#FAFAFA',
     paddingVertical: 8,
     paddingHorizontal: 10,
+  },
+  originStack: {
+    flex: 1,
+    minWidth: 0,
+    paddingLeft: 8,
+    paddingBottom: 16,
+  },
+  originHeadRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  originTitleRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    minWidth: 0,
+  },
+  originRainBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    marginTop: 6,
+    marginRight: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    maxWidth: '88%',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  originRainBannerText: {
+    flex: 1,
+    flexShrink: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 17,
   },
   routeCardStagesScrollContent: {
     flexDirection: 'row',
@@ -1444,6 +1582,9 @@ const styles = StyleSheet.create({
   },
   timeColRight: {
     alignItems: 'flex-end',
+    flexShrink: 0,
+    minWidth: 52,
+    marginLeft: 6,
   },
   timeRight: {
     fontSize: 17,
@@ -1732,6 +1873,21 @@ const styles = StyleSheet.create({
     backgroundColor: '#22c55e',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  btnReview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    minHeight: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary,
+  },
+  btnReviewText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   btnPill: {
     flex: 1,

@@ -6,6 +6,7 @@ export async function searchRoutes(
   destination: string,
   userId: number,
   transportType: string,
+  accompanied?: string,
 ) {
   try {
     const token = await getToken();
@@ -15,6 +16,7 @@ export async function searchRoutes(
       destination,
       user_id: userId,
       transport_type: transportType,
+      ...(accompanied !== undefined && accompanied !== '' ? { accompanied } : {}),
     };
     const bodyString = JSON.stringify(body);
 

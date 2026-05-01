@@ -13,17 +13,7 @@ import {
 } from 'react-native';
 import { API_URL } from '../constants/api';
 import { getToken } from '../services/token.service';
-
-const QUICK_TAGS = [
-  '♿ Sem rampa',
-  '🚶 Calçada quebrada',
-  '✅ Ônibus acessível',
-  '👨‍✈️ Motorista atencioso',
-  '🔊 Sem sinal sonoro',
-  '🚌 Ônibus lotado',
-  '⚠️ Piso irregular',
-  '🅿️ Sem estacionamento acessível',
-];
+import { REVIEW_QUICK_TAGS } from '../mocks/review-tags';
 
 const RATING_LABEL: Record<number, string> = {
   1: 'Ruim',
@@ -108,7 +98,7 @@ export default function WriteReviewScreen() {
 
         <Text style={styles.sectionTitle}>O que você observou?</Text>
         <View style={styles.tagsWrap}>
-          {QUICK_TAGS.map((tag) => {
+          {REVIEW_QUICK_TAGS.map((tag) => {
             const selected = tags.includes(tag);
             return (
               <TouchableOpacity

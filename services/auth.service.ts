@@ -32,6 +32,7 @@ export type LoginResponse = {
 
 export async function login(email: string, password: string) {
   const loginUrl = `${API_URL}/auth/login`;
+  const payload = { email: email.trim().toLowerCase(), password };
   console.log('[auth.login] Calling URL:', loginUrl);
 
   let response: Response;
@@ -39,7 +40,7 @@ export async function login(email: string, password: string) {
     response = await fetch(loginUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(payload),
     });
   } catch (err) {
     const hint =
@@ -98,8 +99,9 @@ export async function register(
 ) {
   const body: Record<string, string> = {
     name,
-    email,
+    email: email.trim().toLowerCase(),
     password,
+    confirm_password: password,
     disability_type,
   };
   // Não enviar `accompanied`: o DTO do backend (POST /users) não declara esse campo e
@@ -153,4 +155,39 @@ export async function register(
   } catch {
     return {};
   }
+}
+
+export async function forgotPassword(email: string) {
+  const url = `${API_URL}/auth/forgot-password`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+  } catch (err) {
+    const hint =
+      err instanceof TypeError
+        ? ' Verifique constants/api.ts e se o backend está acessível deste aparelho/emulador.'
+        : '';
+    throw new Error(`Não foi possível conectar ao servidor (${API_URL}).${hint}`);
+  }
+
+  const text = await response.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    data = {};
+  }
+  if (!response.ok) {
+    const detail = formatApiErrorBody(data, response.status);
+    throw new Error(
+      detail !== `HTTP ${response.status}`
+        ? detail
+        : `Falha ao solicitar código (HTTP ${response.status}).`,
+    );
+  }
+  return data;
 }
