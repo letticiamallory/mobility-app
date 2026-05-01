@@ -1,14 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Image as ExpoImage } from 'expo-image';
-import { HeaderRoutesProgressStrip } from '../components/HeaderRoutesProgressStrip';
-import { PulsingRouteSearchButton } from '../components/PulsingRouteSearchButton';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { ACTIVE_MOCK_WEATHER } from '../mocks';
-import { searchRoutes } from '../services/routes.service';
+import { fetchDiverseRoutes } from '../services/fetch-diverse-routes';
 import { getUserInfo } from '../services/token.service';
 import * as Location from 'expo-location';
 import {
+  Alert,
   Keyboard,
   Linking,
   Platform,
@@ -22,8 +20,6 @@ import {
 } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-const DEFAULT_TRANSPORT_TYPE = 'bus';
 
 type Stage = {
   mode?: string;
@@ -368,18 +364,6 @@ function routeTransportFamily(route: RouteItem): 'walk-only' | 'bus-only' | 'sub
   return 'other';
 }
 
-function hasRepeatedTransitSequence(stages: Stage[]): boolean {
-  for (let i = 1; i < stages.length; i += 1) {
-    const prevMode = `${stages[i - 1]?.mode ?? ''}`.toLowerCase();
-    const currMode = `${stages[i]?.mode ?? ''}`.toLowerCase();
-    const bothTransit =
-      (prevMode === 'bus' || prevMode === 'subway') &&
-      (currMode === 'bus' || currMode === 'subway');
-    if (bothTransit && prevMode === currMode) return true;
-  }
-  return false;
-}
-
 type CompanionTab = 'alone' | 'companied';
 type SearchField = 'origin' | 'destination' | 'waypoint';
 type PlaceSuggestion = { description: string; placeId: string };
@@ -449,133 +433,11 @@ function stageNeedsAttention(stage: Stage): boolean {
   return w.length > 0;
 }
 
-function pickExplicitImageUrl(stage: Record<string, unknown> | null | undefined): string | undefined {
-  if (!stage || typeof stage !== 'object') return undefined;
-  const keys = [
-    'street_view_image',
-    'streetViewImage',
-    'streetview_url',
-    'image_url',
-    'imageUrl',
-    'thumbnail_url',
-    'thumbnailUrl',
-    'photo_url',
-    'photoUrl',
-    'map_image',
-    'preview_image',
-    'picture',
-    'url',
-    'map_url',
-    'mapUrl',
-  ];
-  for (const k of keys) {
-    const v = stage[k];
-    if (typeof v === 'string' && /^https?:\/\//i.test(v.trim())) return v.trim();
-  }
-  return undefined;
-}
-
 function toFiniteLatLng(lat: unknown, lng: unknown): { lat: number; lng: number } | null {
   const la = typeof lat === 'number' ? lat : Number(lat);
   const lo = typeof lng === 'number' ? lng : Number(lng);
   if (!Number.isFinite(la) || !Number.isFinite(lo)) return null;
   return { lat: la, lng: lo };
-}
-
-function firstLatLng(stage: Record<string, unknown> | null | undefined): { lat: number; lng: number } | null {
-  if (!stage || typeof stage !== 'object') return null;
-  const pts = stage.points;
-  if (Array.isArray(pts) && pts.length > 0) {
-    for (const x of pts) {
-      if (typeof x !== 'object' || x == null) continue;
-      const o = x as { latitude?: unknown; longitude?: unknown };
-      const ll = toFiniteLatLng(o.latitude, o.longitude);
-      if (ll) return ll;
-    }
-  }
-  const ll1 = toFiniteLatLng(stage.lat, stage.lng);
-  if (ll1) return ll1;
-  const ll2 = toFiniteLatLng(stage.latitude, stage.longitude);
-  if (ll2) return ll2;
-  return null;
-}
-
-/** Mapa estático só como fallback (não é “foto do lugar”, é visão de cima com pin). */
-function staticMapPreviewFromCoords(lat: number, lng: number): string | undefined {
-  const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
-  if (!key || !Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
-  return `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=17&size=400x300&scale=2&maptype=roadmap&markers=color:0x0057A8%7C${lat},${lng}&key=${key}`;
-}
-
-/** Foto da rua (Street View) no ponto — é o que parece “foto do local”. */
-function streetViewFromCoords(lat: number, lng: number): string | undefined {
-  const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
-  if (!key || !Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
-  return `https://maps.googleapis.com/maps/api/streetview?size=640x480&location=${lat},${lng}&source=outdoor&pitch=0&fov=80&key=${key}`;
-}
-
-type PreviewPair = { primary: string; fallback?: string };
-
-function previewFromCoords(lat: number, lng: number): PreviewPair | null {
-  const street = streetViewFromCoords(lat, lng);
-  const map = staticMapPreviewFromCoords(lat, lng);
-  if (street && map) return { primary: street, fallback: map };
-  if (street) return { primary: street };
-  if (map) return { primary: map };
-  return null;
-}
-
-/** Fallback quando a API não manda foto nas etapas: coordenadas do deep link Uber da própria rota. */
-function coordsFromUberDeeplink(link: unknown): { lat: number; lng: number } | null {
-  if (typeof link !== 'string') return null;
-  const decoded = (() => {
-    try {
-      return decodeURIComponent(link);
-    } catch {
-      return link;
-    }
-  })();
-  for (const candidate of [link, decoded]) {
-    const latM =
-      candidate.match(/pickup\[latitude\]=([^&]+)/i) ??
-      candidate.match(/pickup%5Blatitude%5D=([^&]+)/i);
-    const lngM =
-      candidate.match(/pickup\[longitude\]=([^&]+)/i) ??
-      candidate.match(/pickup%5Blongitude%5D=([^&]+)/i);
-    if (!latM?.[1] || !lngM?.[1]) continue;
-    const lat = Number(latM[1]);
-    const lng = Number(lngM[1]);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) continue;
-    return { lat, lng };
-  }
-  return null;
-}
-
-function resolveStagePreview(stage?: Stage | null): PreviewPair | null {
-  const raw = stage as Record<string, unknown> | undefined;
-  const direct = pickExplicitImageUrl(raw);
-  if (direct) return { primary: direct };
-  const ll = firstLatLng(raw);
-  if (!ll) return null;
-  return previewFromCoords(ll.lat, ll.lng);
-}
-
-/** Próxima etapa: 2+ etapas → imagem da etapa seguinte; só caminhada → etapa única. */
-function nextStagePreviewUris(stages: Stage[]): PreviewPair | null {
-  const list = stages ?? [];
-  if (list.length >= 2) {
-    const a = resolveStagePreview(list[1]);
-    if (a) return a;
-    const b = resolveStagePreview(list[0]);
-    if (b) return b;
-    for (let i = 2; i < list.length; i += 1) {
-      const c = resolveStagePreview(list[i]);
-      if (c) return c;
-    }
-    return null;
-  }
-  if (list.length === 1) return resolveStagePreview(list[0]);
-  return null;
 }
 
 const JOURNEY_RAIL_W = 14;
@@ -627,99 +489,12 @@ function JourneyTimelineRail() {
   );
 }
 
-const ROUTE_THUMB = { width: 96, height: 72, radius: 12, marginTop: 10 } as const;
-
-function RouteStageThumbnail({ primaryUri, fallbackUri }: { primaryUri?: string; fallbackUri?: string }) {
-  const [phase, setPhase] = useState<'primary' | 'fallback' | 'failed'>('primary');
-
-  useEffect(() => {
-    setPhase('primary');
-  }, [primaryUri, fallbackUri]);
-
-  const uri = phase === 'fallback' ? fallbackUri : primaryUri;
-
-  if (phase === 'failed' || !uri) {
-    return (
-      <View
-        style={{
-          width: ROUTE_THUMB.width,
-          height: ROUTE_THUMB.height,
-          borderRadius: ROUTE_THUMB.radius,
-          marginTop: ROUTE_THUMB.marginTop,
-          backgroundColor: '#EEF2F6',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <MaterialCommunityIcons name="image-off-outline" size={30} color="#9CA3AF" />
-      </View>
-    );
-  }
-
-  return (
-    <ExpoImage
-      recyclingKey={uri}
-      source={{ uri }}
-      style={{
-        width: ROUTE_THUMB.width,
-        height: ROUTE_THUMB.height,
-        borderRadius: ROUTE_THUMB.radius,
-        marginTop: ROUTE_THUMB.marginTop,
-        backgroundColor: '#E5E7EB',
-      }}
-      contentFit="cover"
-      cachePolicy="memory-disk"
-      onError={() => {
-        setPhase((p) => {
-          if (p === 'primary' && fallbackUri) return 'fallback';
-          return 'failed';
-        });
-      }}
-    />
-  );
-}
-
 function formatWaitTime(totalMinutes: number): string {
   if (totalMinutes <= 59) return `${totalMinutes} min`;
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   if (minutes === 0) return `${hours}h`;
   return `${hours}h ${minutes.toString().padStart(2, '0')}min`;
-}
-
-/** Horários exibidos no cartão Uber / resumo (mesma lógica do cartão de rota). */
-function computeRouteTimeLabels(route: RouteItem): {
-  durationMain: string;
-  departure: string;
-  arrival: string;
-} {
-  const orderedStages = (route.stages ?? []).filter((s) => {
-    const m = `${s.mode ?? ''}`.toLowerCase();
-    return isWalkStageMode(s.mode) || m === 'bus' || m === 'subway';
-  });
-  const firstTransitStage = orderedStages.find((s) => s.mode === 'bus' || s.mode === 'subway');
-  const lastTransitStage = [...orderedStages].reverse().find((s) => s.mode === 'bus' || s.mode === 'subway');
-  const routeMinutesFromLabel = routeDurationMinutes(route);
-  const stageMinutesSum = orderedStages.reduce((acc, s) => acc + stageDurationMinutes(s), 0);
-  const totalMinutes = routeMinutesFromLabel > 0 ? routeMinutesFromLabel : stageMinutesSum;
-  const firstTransitDepartureMinutes = normalizeDepartureMinutes(firstTransitStage?.departure_minutes);
-  const rawDepartureTime =
-    firstTransitStage?.departure_time ??
-    firstTransitStage?.departureTime ??
-    route.departTime;
-  const departureTime = isClock(rawDepartureTime)
-    ? rawDepartureTime!.trim()
-    : typeof firstTransitDepartureMinutes === 'number'
-      ? formatClockFromNow(firstTransitDepartureMinutes)
-      : formatClockNow();
-  const rawArrivalTime = lastTransitStage?.arrival_time ?? lastTransitStage?.arrivalTime ?? route.arriveTime;
-  const arrivalTime = isClock(rawArrivalTime)
-    ? rawArrivalTime!.trim()
-    : addMinutesToClock(departureTime, totalMinutes > 0 ? totalMinutes : 0);
-  const minsForDisplay = totalMinutes > 0 ? totalMinutes : routeDurationMinutes(route);
-  const durationMain =
-    minsForDisplay > 59 ? formatWaitTime(minsForDisplay) : minsForDisplay > 0 ? `${minsForDisplay} min` : '-- min';
-  return { durationMain, departure: departureTime, arrival: arrivalTime };
 }
 
 function extractPlaceName(stage: Stage): string {
@@ -808,75 +583,13 @@ export default function RouteResultsScreen() {
   const [activeDestCoord, setActiveDestCoord] = useState<LatLng | null>(null);
   const [activeCompanionTab, setActiveCompanionTab] = useState<CompanionTab>('alone');
   const [fetchedRoutes, setFetchedRoutes] = useState<RouteItem[] | null>(null);
-  const [headerRoutesLoading, setHeaderRoutesLoading] = useState(() => {
-    const packaged = Array.isArray(params.routes) ? params.routes[0] : params.routes;
-    if (packaged && String(packaged).trim()) return false;
-    const d = (Array.isArray(params.destination) ? params.destination[0] : params.destination) ?? '';
-    return String(d).trim().length > 0;
-  });
   const [activeSearchField, setActiveSearchField] = useState<SearchField | null>(null);
   const [placeSuggestions, setPlaceSuggestions] = useState<PlaceSuggestion[]>([]);
 
-  const fetchDiverseRoutes = useCallback(
-    async (
-      originQuery: string,
-      destinationQuery: string,
-      userId: number,
-      accompanied: string,
-    ) => {
-      const mergeSettled = (results: PromiseSettledResult<unknown>[]) => {
-        const merged: RouteItem[] = [];
-        for (const result of results) {
-          if (result.status !== 'fulfilled') continue;
-          const parsed =
-            result.value && typeof result.value === 'object'
-              ? (result.value as Record<string, unknown>)
-              : {};
-          const list = Array.isArray(parsed.routes)
-            ? (parsed.routes as RouteItem[])
-            : [];
-          merged.push(...list);
-        }
-        return merged;
-      };
-
-      /** Ônibus/metro/combinado em paralelo; a pé depois (evita bloquear tudo no walk lento). */
-      const fastTypes = ['bus', 'subway', 'combined'] as const;
-      const fastResults = await Promise.allSettled(
-        fastTypes.map((transportType) =>
-          searchRoutes(originQuery, destinationQuery, userId, transportType, accompanied),
-        ),
-      );
-      let merged = mergeSettled(fastResults);
-
-      const walkResults = await Promise.allSettled([
-        searchRoutes(originQuery, destinationQuery, userId, 'walk', accompanied),
-      ]);
-      merged = merged.concat(mergeSettled(walkResults));
-
-      if (merged.length === 0) {
-        const fallbackRaw = await searchRoutes(
-          originQuery,
-          destinationQuery,
-          userId,
-          DEFAULT_TRANSPORT_TYPE,
-          accompanied,
-        );
-        const parsed =
-          fallbackRaw && typeof fallbackRaw === 'object'
-            ? (fallbackRaw as Record<string, unknown>)
-            : {};
-        return Array.isArray(parsed.routes) ? (parsed.routes as RouteItem[]) : [];
-      }
-      const bySignature = new Map<string, RouteItem>();
-      for (const route of merged) {
-        const key = routeSignature(route);
-        if (!bySignature.has(key)) bySignature.set(key, route);
-      }
-      return Array.from(bySignature.values());
-    },
-    [],
-  );
+  const hasPackagedRoutes = useMemo(() => {
+    const rawParam = Array.isArray(params.routes) ? params.routes[0] : params.routes;
+    return !!(rawParam && String(rawParam).trim());
+  }, [params.routes]);
 
   useEffect(() => {
     setHeaderOrigin(originFromParams);
@@ -887,7 +600,7 @@ export default function RouteResultsScreen() {
     setFetchedRoutes(null);
   }, [originFromParams, destinationFromParams, originCoordParam, destCoordParam]);
 
-  /** Entrada só com destino (ex.: home) não envia `routes` na URL — busca na API ao abrir o ecrã. */
+  /** Sem `routes` na URL (ex.: home / estações): busca na API ao abrir. */
   useEffect(() => {
     const rawParam = Array.isArray(params.routes) ? params.routes[0] : params.routes;
     if (rawParam && String(rawParam).trim()) return;
@@ -903,7 +616,6 @@ export default function RouteResultsScreen() {
           if (!cancelled) setFetchedRoutes([]);
           return;
         }
-        setHeaderRoutesLoading(true);
         const originQuery = originFromParams.trim() || 'Local atual';
         const list = await fetchDiverseRoutes(
           originQuery,
@@ -912,25 +624,17 @@ export default function RouteResultsScreen() {
           activeCompanionTab === 'alone' ? 'alone' : 'companied',
         );
         if (!cancelled) {
-          setFetchedRoutes(list);
+          setFetchedRoutes(list as RouteItem[]);
           setMiddleStop(null);
         }
       } catch {
         if (!cancelled) setFetchedRoutes([]);
-      } finally {
-        if (!cancelled) setHeaderRoutesLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [
-    destinationFromParams,
-    originFromParams,
-    params.routes,
-    activeCompanionTab,
-    fetchDiverseRoutes,
-  ]);
+  }, [destinationFromParams, originFromParams, params.routes, activeCompanionTab]);
 
   useEffect(() => {
     if (originFromParams.trim()) return;
@@ -1028,10 +732,15 @@ export default function RouteResultsScreen() {
   const fetchRoutesForHeader = async () => {
     const destinationQuery = headerDestination.trim();
     if (!destinationQuery) return;
-    setHeaderRoutesLoading(true);
+    Keyboard.dismiss();
+    setActiveSearchField(null);
+    setPlaceSuggestions([]);
     try {
       const { userId } = await getUserInfo();
-      if (typeof userId !== 'number' || Number.isNaN(userId)) return;
+      if (typeof userId !== 'number' || Number.isNaN(userId)) {
+        setFetchedRoutes([]);
+        return;
+      }
       const originQuery = headerOrigin.trim() || 'Local atual';
       const list = await fetchDiverseRoutes(
         originQuery,
@@ -1039,12 +748,10 @@ export default function RouteResultsScreen() {
         userId,
         activeCompanionTab === 'alone' ? 'alone' : 'companied',
       );
-      setFetchedRoutes(list);
+      setFetchedRoutes(list as RouteItem[]);
       setMiddleStop(null);
     } catch {
       setFetchedRoutes([]);
-    } finally {
-      setHeaderRoutesLoading(false);
     }
   };
 
@@ -1059,6 +766,8 @@ export default function RouteResultsScreen() {
     }
     return fetchedRoutes ?? [];
   }, [params.routes, fetchedRoutes]);
+
+  const showRouteResults = hasPackagedRoutes || fetchedRoutes !== null;
 
   const filteredRoutes = useMemo(() => {
     const calmRoutes = (routes as RouteItem[]).filter((route) => {
@@ -1128,15 +837,6 @@ export default function RouteResultsScreen() {
     }
     return picked;
   }, [filteredRoutes, mostAccessibleRoute]);
-
-  const uberRoutePreview = useMemo(
-    () => displayedRoutes[0] ?? mostAccessibleRoute,
-    [displayedRoutes, mostAccessibleRoute],
-  );
-  const uberTimeSummary = useMemo(
-    () => (uberRoutePreview ? computeRouteTimeLabels(uberRoutePreview) : null),
-    [uberRoutePreview],
-  );
 
   const openRouteDetail = useCallback(
     (route: RouteItem) => {
@@ -1210,9 +910,6 @@ export default function RouteResultsScreen() {
       ? rawArrivalTime!.trim()
       : addMinutesToClock(departureTime, totalMinutes > 0 ? totalMinutes : 0);
     const stageCount = orderedStages.length;
-    const showRailUnderline = hasRepeatedTransitSequence(
-      orderedStages.length > 0 ? orderedStages : [{ mode: 'walk' }],
-    );
     const hasInaccessibleStage = orderedStages.some((s) => s.accessible === false);
     const hasAttentionSegments =
       route.slope_warning === true ||
@@ -1234,269 +931,260 @@ export default function RouteResultsScreen() {
       .filter((name, idx, arr) => idx === 0 || name.toLowerCase() !== arr[idx - 1]?.toLowerCase())
       .slice(0, 3);
 
-    const rawStages = (route.stages ?? []) as Stage[];
-    let nextStepPreview = nextStagePreviewUris(rawStages);
-    if (!nextStepPreview) {
-      const uberLl = coordsFromUberDeeplink((route as RouteItem).uber_deeplink);
-      if (uberLl) nextStepPreview = previewFromCoords(uberLl.lat, uberLl.lng);
-    }
-    if (!nextStepPreview && activeDestCoord) {
-      nextStepPreview = previewFromCoords(activeDestCoord.lat, activeDestCoord.lng);
-    }
-    if (!nextStepPreview && activeOriginCoord) {
-      nextStepPreview = previewFromCoords(activeOriginCoord.lat, activeOriginCoord.lng);
-    }
+    const odSummary =
+      summaryPlaces.length >= 2
+        ? `${summaryPlaces[0]} › ${summaryPlaces[summaryPlaces.length - 1]}`
+        : summaryPlaces.length === 1
+          ? summaryPlaces[0]
+          : [headerOrigin.trim(), headerDestination.trim()].filter(Boolean).join(' › ') || 'Trajeto direto';
+
+    const departureInfoLine =
+      firstTransitStage
+        ? (() => {
+            const minutes = normalizeDepartureMinutes(firstTransitStage.departure_minutes);
+            const explicitDeparture = firstTransitStage.departure_time ?? firstTransitStage.departureTime;
+            const departureClock = isClock(explicitDeparture)
+              ? explicitDeparture!.trim()
+              : departureTime;
+            const minutesLeft =
+              typeof minutes === 'number' ? minutes : minutesUntilClock(departureClock);
+            return `Sai às ${departureClock} · em ${formatWaitTime(minutesLeft)}`;
+          })()
+        : `Sai às ${departureTime}`;
+
+    const stageRow = (orderedStages.length > 0 ? orderedStages : [{ mode: 'walk' }]) as Stage[];
 
     return (
       <View
         key={key}
         style={[
           styles.routeCard,
-          featured
-            ? { borderColor: '#0057A8', borderWidth: 1.5, borderLeftWidth: 4, borderLeftColor: '#0057A8' }
-            : null,
+          {
+            padding: 0,
+            overflow: 'hidden',
+            borderRadius: 16,
+            backgroundColor: '#FFFFFF',
+            borderWidth: featured ? 1.5 : 0.5,
+            borderColor: featured ? '#0057A8' : '#E0E0E0',
+            marginBottom: 10,
+          },
         ]}
       >
-        {featured ? (
-          <View style={{ backgroundColor: '#0057A8', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 }}>
-            <MaterialCommunityIcons name="wheelchair-accessibility" size={13} color="white" />
-            <Text style={{ color: 'white', fontSize: 12, fontWeight: '700' }}>Rota mais acessível</Text>
+        {featured && (
+          <View
+            style={{
+              backgroundColor: '#0057A8',
+              paddingHorizontal: 14,
+              paddingVertical: 7,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.6)' }} />
+            <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '500' }}>Rota mais acessível</Text>
           </View>
-        ) : null}
+        )}
 
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-          <View style={{ width: 112, alignItems: 'center' }}>
-            <Text
-              style={{
-                color: '#1E1D1D',
-                fontSize: 18,
-                fontWeight: '800',
-                textAlign: 'center',
-                lineHeight: 22,
-              }}
-              numberOfLines={2}
-            >
-              {formatTripDurationDisplay(totalMinutes, route)}
-            </Text>
-            <View
-              style={{
-                marginTop: 10,
-                width: '100%',
-                minHeight: 32,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 4 }}>
-                <JourneyTimelineRail />
-                <View style={{ justifyContent: 'flex-start', gap: 2, paddingVertical: 0, marginLeft: -1 }}>
-                  <Text style={{ color: '#6B7280', fontSize: 12, lineHeight: 12, fontWeight: '600', textAlign: 'left' }}>
-                    {departureTime}
-                  </Text>
-                  <Text style={{ color: '#6B7280', fontSize: 12, lineHeight: 12, fontWeight: '600', textAlign: 'left' }}>
-                    {arrivalTime}
-                  </Text>
-                </View>
-              </View>
+        <View style={{ padding: 14 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              marginBottom: 10,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 2 }}>
+              <Text style={{ color: '#1E1D1D', fontSize: 32, fontWeight: '700', lineHeight: 36 }}>
+                {totalMinutes > 0 ? totalMinutes : '--'}
+              </Text>
+              <Text style={{ color: '#999999', fontSize: 14 }}> min</Text>
             </View>
-            <RouteStageThumbnail
-              primaryUri={nextStepPreview?.primary}
-              fallbackUri={nextStepPreview?.fallback}
-            />
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={{ color: '#1E1D1D', fontSize: 13, fontWeight: '500' }}>{departureTime}</Text>
+              <Text style={{ color: '#999999', fontSize: 11, marginTop: 2 }}>chegada {arrivalTime}</Text>
+            </View>
           </View>
 
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <View style={styles.routeStagesFrame}>
-              <ScrollView
-                horizontal
-                nestedScrollEnabled
-                directionalLockEnabled
-                scrollEnabled
-                keyboardShouldPersistTaps="always"
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.routeCardStagesScrollContent}
-              >
-                <MaterialCommunityIcons name="walk" size={17} color="#6B7280" />
-                <Text style={{ color: '#374151', fontSize: 18, fontWeight: '700' }}>{stageCount}</Text>
-                <MaterialCommunityIcons name="chevron-right" size={13} color="#CCCCCC" />
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, position: 'relative', paddingBottom: 6 }}>
-                  {showRailUnderline ? (
+          <View
+            style={{
+              backgroundColor: '#F5F7FA',
+              borderRadius: 10,
+              paddingHorizontal: 10,
+              paddingVertical: 8,
+              flexDirection: 'row',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 4,
+              marginBottom: 12,
+            }}
+          >
+            {stageRow.map((stage, i, arr) => (
+              <Fragment key={`${key}-s-${i}`}>
+                {isWalkStageMode(stage.mode) ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                    <MaterialCommunityIcons name="walk" size={15} color="#666666" />
+                    {stage.duration ? (
+                      <Text style={{ fontSize: 11, color: '#666666' }}>{stage.duration}</Text>
+                    ) : null}
+                  </View>
+                ) : (
+                  <View
+                    style={{
+                      backgroundColor: '#1E1D1D',
+                      borderRadius: 6,
+                      paddingHorizontal: 8,
+                      paddingTop: 3,
+                      paddingBottom: 5,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                      <MaterialCommunityIcons
+                        name={stage.mode === 'subway' ? 'subway-variant' : 'bus'}
+                        size={11}
+                        color="#FFFFFF"
+                      />
+                      <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '700' }}>
+                        {stage.line_code ?? stage.mode}
+                      </Text>
+                    </View>
                     <View
                       style={{
                         position: 'absolute',
+                        bottom: 0,
                         left: 0,
                         right: 0,
-                        bottom: 0,
-                        height: 2,
-                        backgroundColor: '#1E88E5',
-                        borderRadius: 2,
+                        height: 3,
+                        backgroundColor: getLineColor(stage.line_code ?? stage.mode ?? ''),
                       }}
                     />
-                  ) : null}
-                  {(orderedStages.length > 0 ? orderedStages : [{ mode: 'walk' }]).map((stage, i, arr) => (
-                    <View key={`${key}-stage-${i}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      {isWalkStageMode(stage.mode) ? (
-                        <MaterialCommunityIcons name="walk" size={17} color="#6B7280" />
-                      ) : (
-                        <View style={{ backgroundColor: '#FFFFFF', borderRadius: 5, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden', borderWidth: 1, borderColor: '#E5E7EB' }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                            <MaterialCommunityIcons
-                              name={stage.mode === 'subway' ? 'subway-variant' : 'bus'}
-                              size={11}
-                              color="#1E1D1D"
-                            />
-                            <Text style={{ color: '#1E1D1D', fontSize: 10.5, fontWeight: '700' }}>
-                              {stage.line_code ?? stage.mode}
-                            </Text>
-                          </View>
-                          <View
-                            style={{
-                              position: 'absolute',
-                              left: 0,
-                              right: 0,
-                              bottom: 0,
-                              height: 2.5,
-                              backgroundColor: getLineColor(stage.line_code ?? stage.mode ?? 'line'),
-                            }}
-                          />
-                        </View>
-                      )}
-                      {i < arr.length - 1 ? (
-                        <MaterialCommunityIcons name="chevron-right" size={13} color="#CCCCCC" />
-                      ) : null}
-                    </View>
-                  ))}
-                </View>
-              </ScrollView>
-            </View>
+                  </View>
+                )}
+                {i < arr.length - 1 && <Text style={{ color: '#CCCCCC', fontSize: 12 }}>›</Text>}
+              </Fragment>
+            ))}
+          </View>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 }}>
-              <MaterialCommunityIcons
-                name={firstTransitStage?.mode === 'subway' ? 'subway-variant' : 'bus'}
-                size={12}
-                color="#22c55e"
-              />
-              <Text style={{ color: '#22c55e', fontSize: 12 }}>
-                {(() => {
-                  if (firstTransitStage) {
-                    const minutes = normalizeDepartureMinutes(firstTransitStage.departure_minutes);
-                    const explicitDeparture = firstTransitStage.departure_time ?? firstTransitStage.departureTime;
-                    const departureClock = isClock(explicitDeparture)
-                      ? explicitDeparture!.trim()
-                      : departureTime;
-                    const minutesLeft = typeof minutes === 'number'
-                      ? minutes
-                      : minutesUntilClock(departureClock);
-                    return `Sai às ${departureClock} · em ${formatWaitTime(minutesLeft)}`;
-                  }
-                  return `Sai às ${departureTime}`;
-                })()}
-              </Text>
-            </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#22c55e' }} />
+            <Text style={{ color: '#22c55e', fontSize: 12, fontWeight: '500' }} numberOfLines={1}>
+              {departureInfoLine}
+            </Text>
+          </View>
+          <Text style={{ color: '#999999', fontSize: 12, marginBottom: 12 }} numberOfLines={1}>
+            {odSummary}
+          </Text>
 
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              directionalLockEnabled
-              scrollEnabled
-              keyboardShouldPersistTaps="always"
-              showsHorizontalScrollIndicator={false}
-              style={{ marginTop: 2 }}
-              contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 20 }}
-              onStartShouldSetResponder={() => true}
-              onMoveShouldSetResponder={() => true}
-            >
-              {summaryPlaces.length > 0 ? summaryPlaces.map((place, idx) => (
-                <View key={`${key}-place-${idx}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <Text style={{ color: '#6B7280', fontSize: 12 }} numberOfLines={1}>
-                    {place}
-                  </Text>
-                  {idx < summaryPlaces.length - 1 ? (
-                    <MaterialCommunityIcons name="chevron-right" size={12} color="#9CA3AF" />
-                  ) : null}
-                </View>
-              )) : (
-                <Text style={{ color: '#6B7280', fontSize: 12 }}>Trajeto direto</Text>
-              )}
-            </ScrollView>
+          <View style={{ height: 0.5, backgroundColor: '#EEEEEE', marginBottom: 10 }} />
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-              {accessibilityStatus ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, flex: 1 }}>
+              {accessibilityStatus && (
                 <View
                   style={{
-                    backgroundColor: accessibilityStatus.bg,
-                    borderRadius: 10,
-                    paddingHorizontal: 8,
-                    paddingVertical: 3,
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 4,
+                    backgroundColor: accessibilityStatus.bg,
+                    borderRadius: 20,
+                    paddingHorizontal: 10,
+                    paddingVertical: 4,
                   }}
                 >
-                  <MaterialCommunityIcons name="wheelchair-accessibility" size={11} color={accessibilityStatus.fg} />
-                  <Text style={{ color: accessibilityStatus.fg, fontSize: 11, fontWeight: '600' }}>
+                  <View
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 3,
+                      backgroundColor: accessibilityStatus.fg,
+                    }}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: '500',
+                      color: accessibilityStatus.label === 'Acessível' ? '#166534' : '#991B1B',
+                    }}
+                  >
                     {accessibilityStatus.label}
                   </Text>
                 </View>
-              ) : null}
-              {hasAttentionSegments ? (
-                <View
+              )}
+              {hasAttentionSegments && (
+                <TouchableOpacity
+                  onPress={() =>
+                    Alert.alert(
+                      'Atenção neste trajeto',
+                      route.warning ??
+                        route.accompanied_warning ??
+                        'Este trajeto contém trechos que requerem atenção.',
+                    )
+                  }
                   style={{
-                    backgroundColor: '#FEF9C3',
-                    borderRadius: 10,
-                    paddingHorizontal: 8,
-                    paddingVertical: 3,
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 4,
-                    borderWidth: 1,
-                    borderColor: '#FACC15',
+                    backgroundColor: '#FEF3C7',
+                    borderRadius: 20,
+                    paddingHorizontal: 10,
+                    paddingVertical: 4,
                   }}
                 >
-                  <MaterialCommunityIcons name="alert" size={12} color="#A16207" />
-                  <Text style={{ color: '#A16207', fontSize: 11, fontWeight: '700' }}>Atenção</Text>
-                </View>
-              ) : null}
-              {rainChip ? (
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#D97706' }} />
+                  <Text style={{ fontSize: 11, fontWeight: '500', color: '#92400E' }}>Atenção</Text>
+                </TouchableOpacity>
+              )}
+              {rainChip && (
                 <View
                   style={{
-                    backgroundColor: rainChip.bg,
-                    borderRadius: 10,
-                    paddingHorizontal: 8,
-                    paddingVertical: 3,
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 4,
-                    borderWidth: 1,
-                    borderColor: rainChip.borderColor,
+                    backgroundColor: rainChip.icon === 'weather-pouring' ? '#FEE2E2' : '#FEF3C7',
+                    borderRadius: 20,
+                    paddingHorizontal: 10,
+                    paddingVertical: 4,
                   }}
                 >
-                  <MaterialCommunityIcons name={rainChip.icon} size={12} color={rainChip.fg} />
-                  <Text style={{ color: rainChip.fg, fontSize: 11, fontWeight: '700' }}>{rainChip.label}</Text>
+                  <View
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 3,
+                      backgroundColor: rainChip.icon === 'weather-pouring' ? '#DC2626' : '#D97706',
+                    }}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: '500',
+                      color: rainChip.icon === 'weather-pouring' ? '#991B1B' : '#92400E',
+                    }}
+                  >
+                    {rainChip.icon === 'weather-rainy' ? 'Chuva leve' : 'Chuva forte'}
+                  </Text>
                 </View>
-              ) : null}
+              )}
             </View>
 
             <TouchableOpacity
               onPress={() => openRouteDetail(route)}
               style={{
-                marginTop: 8,
-                backgroundColor: '#EEF2FF',
-                borderRadius: 14,
-                paddingHorizontal: 10,
-                paddingVertical: 6,
                 flexDirection: 'row',
                 alignItems: 'center',
-                justifyContent: 'space-between',
+                gap: 5,
+                backgroundColor: '#0057A8',
+                borderRadius: 20,
+                paddingHorizontal: 14,
+                paddingVertical: 7,
+                flexShrink: 0,
               }}
+              activeOpacity={0.88}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <MaterialCommunityIcons name="map-search-outline" size={13} color="#0057A8" />
-                <Text style={{ color: '#374151', fontSize: 12, fontWeight: '600' }}>Analisar trechos</Text>
-              </View>
-              <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#0057A8', alignItems: 'center', justifyContent: 'center' }}>
-                <MaterialCommunityIcons name="arrow-right" size={14} color="#FFFFFF" />
-              </View>
+              <MaterialCommunityIcons name="map-search" size={13} color="#FFFFFF" />
+              <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '500' }}>Trechos</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1641,7 +1329,12 @@ export default function RouteResultsScreen() {
                   placeholderTextColor="#9CA3AF"
                   style={styles.fieldInput}
                   returnKeyType="search"
-                  onSubmitEditing={() => Keyboard.dismiss()}
+                  onSubmitEditing={() => {
+                    Keyboard.dismiss();
+                    setActiveSearchField(null);
+                    setPlaceSuggestions([]);
+                    fetchRoutesForHeader();
+                  }}
                 />
               </View>
               {activeSearchField === 'destination' && placeSuggestions.length > 0 ? (
@@ -1674,22 +1367,6 @@ export default function RouteResultsScreen() {
                   </View>
                 </View>
               ) : null}
-              <PulsingRouteSearchButton
-                loading={headerRoutesLoading}
-                loadingMode="idle-muted"
-                onPress={() => {
-                  setActiveSearchField(null);
-                  setPlaceSuggestions([]);
-                  fetchRoutesForHeader();
-                }}
-                disabled={!headerDestination.trim() || headerRoutesLoading}
-                style={[
-                  styles.headerSearchButton,
-                  !headerDestination.trim() || headerRoutesLoading ? styles.headerSearchButtonDisabled : null,
-                ]}
-                textStyle={styles.headerSearchButtonText}
-                activeOpacity={0.9}
-              />
             </View>
           </View>
           <View style={styles.headerSwapOverlay} pointerEvents="box-none">
@@ -1710,9 +1387,61 @@ export default function RouteResultsScreen() {
             </TouchableOpacity>
           </View>
         </View>
-        {headerRoutesLoading ? <HeaderRoutesProgressStrip /> : null}
+
+        <View style={styles.headerCompanionBlock}>
+          <View style={styles.headerCompanionTabsWrap}>
+            <TouchableOpacity
+              style={styles.companionTabBtn}
+              onPress={() => setActiveCompanionTab('alone')}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[
+                  styles.companionTabText,
+                  activeCompanionTab === 'alone' ? styles.companionTabTextActive : null,
+                ]}
+              >
+                Sozinho
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.companionTabBtn}
+              onPress={() => setActiveCompanionTab('companied')}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[
+                  styles.companionTabText,
+                  activeCompanionTab === 'companied' ? styles.companionTabTextActive : null,
+                ]}
+              >
+                Acompanhado
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.headerCompanionBottomBar} pointerEvents="none">
+            <View
+              style={[
+                styles.headerCompanionBottomHalf,
+                activeCompanionTab === 'alone'
+                  ? styles.headerCompanionBottomHalfActive
+                  : styles.headerCompanionBottomHalfMuted,
+              ]}
+            />
+            <View
+              style={[
+                styles.headerCompanionBottomHalf,
+                activeCompanionTab === 'companied'
+                  ? styles.headerCompanionBottomHalfActive
+                  : styles.headerCompanionBottomHalfMuted,
+              ]}
+            />
+          </View>
+        </View>
+
       </View>
 
+      {showRouteResults ? (
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 28 }}>
         <ScrollView
           horizontal
@@ -1741,98 +1470,23 @@ export default function RouteResultsScreen() {
         </ScrollView>
 
         <Text style={styles.sectionTitleMuted}>Táxi e transporte privado</Text>
-        <TouchableOpacity onPress={() => Linking.openURL(uberDeepLink)} style={styles.uberCard} activeOpacity={0.92}>
-          <View style={styles.uberRowMoovit}>
-            <View style={styles.uberTimeColumn}>
-              {uberTimeSummary ? (
-                <>
-                  <Text style={styles.uberBigMinutes}>{uberTimeSummary.durationMain}</Text>
-                  <View style={styles.uberClockColumn}>
-                    <Text style={styles.uberClockText}>{uberTimeSummary.departure}</Text>
-                    <MaterialCommunityIcons name="arrow-down" size={12} color="#9CA3AF" style={{ marginVertical: 2 }} />
-                    <Text style={styles.uberClockText}>{uberTimeSummary.arrival}</Text>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.uberBigMinutes}>—</Text>
-                  <Text style={styles.uberNoRoutesHint}>Aguarde as rotas ou abra o Uber</Text>
-                </>
-              )}
+        <TouchableOpacity onPress={() => Linking.openURL(uberDeepLink)} style={styles.uberCard} activeOpacity={0.9}>
+          <View style={styles.uberLeft}>
+            <View style={styles.uberLogo}>
+              <Text style={styles.uberLogoText}>U</Text>
             </View>
-            <View style={styles.uberMid}>
-              <View style={styles.uberLogo}>
-                <Text style={styles.uberLogoText}>U</Text>
-              </View>
-              <View style={styles.uberMidText}>
-                <Text style={styles.uberTitle}>Uber</Text>
-                <Text style={styles.uberSub} numberOfLines={2}>
-                  {uberRoutePreview
-                    ? 'Estimativa alinhada à sua primeira rota sugerida abaixo'
-                    : 'Toque para pedir no aplicativo Uber'}
-                </Text>
-                <View style={styles.uberCo2Row}>
-                  <MaterialCommunityIcons name="leaf" size={14} color="#16A34A" />
-                  <Text style={styles.uberCo2Text}>Menos CO₂e que ir sozinho de carro</Text>
-                </View>
-              </View>
+            <View>
+              <Text style={styles.uberTitle}>Pedir um Uber</Text>
+              <Text style={styles.uberSub}>Toque para pedir uma corrida</Text>
             </View>
-            <View style={styles.uberButton}>
-              <Text style={styles.uberButtonText}>Pedir</Text>
-            </View>
+          </View>
+          <View style={styles.uberButton}>
+            <Text style={styles.uberButtonText}>Pedir</Text>
           </View>
         </TouchableOpacity>
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitleStrong}>Rotas sugeridas</Text>
-          <TouchableOpacity
-            style={[styles.verRotaBtn, !displayedRoutes[0] ? styles.verRotaBtnDisabled : null]}
-            onPress={() => displayedRoutes[0] && openRouteDetail(displayedRoutes[0])}
-            disabled={!displayedRoutes[0]}
-            activeOpacity={0.85}
-          >
-            <MaterialCommunityIcons name="map-outline" size={16} color="#0057A8" />
-            <Text style={styles.verRotaBtnText}>Ver</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.companionTabsWrap}>
-          <TouchableOpacity
-            style={[
-              styles.companionTabBtn,
-              activeCompanionTab === 'alone' ? styles.companionTabBtnActive : null,
-            ]}
-            onPress={() => setActiveCompanionTab('alone')}
-            activeOpacity={0.85}
-          >
-            <Text
-              style={[
-                styles.companionTabText,
-                activeCompanionTab === 'alone' ? styles.companionTabTextActive : null,
-              ]}
-            >
-              Sozinho
-            </Text>
-            {activeCompanionTab === 'alone' ? <View style={styles.companionTabIndicator} /> : null}
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.companionTabBtn,
-              activeCompanionTab === 'companied' ? styles.companionTabBtnActive : null,
-            ]}
-            onPress={() => setActiveCompanionTab('companied')}
-            activeOpacity={0.85}
-          >
-            <Text
-              style={[
-                styles.companionTabText,
-                activeCompanionTab === 'companied' ? styles.companionTabTextActive : null,
-              ]}
-            >
-              Acompanhado
-            </Text>
-            {activeCompanionTab === 'companied' ? <View style={styles.companionTabIndicator} /> : null}
-          </TouchableOpacity>
         </View>
 
         {mostAccessibleRoute ? renderRouteCard(mostAccessibleRoute, 'most-accessible', true) : null}
@@ -1852,6 +1506,15 @@ export default function RouteResultsScreen() {
         ) : null}
         {displayedRoutes.map((route, index) => renderRouteCard(route, `route-${index}`))}
       </ScrollView>
+      ) : (
+        <View style={styles.preSearchArea}>
+          <MaterialCommunityIcons name="map-search-outline" size={48} color="#CBD5E1" />
+          <Text style={styles.preSearchTitle}>Pronto para pesquisar</Text>
+          <Text style={styles.preSearchText}>
+            Confira origem e destino acima e toque em Buscar rotas para ver táxi, Uber e trajetos sugeridos.
+          </Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -1861,11 +1524,62 @@ const styles = StyleSheet.create({
   header: {
     position: 'relative',
     backgroundColor: '#FFFFFF',
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 0,
   },
-  headerOriginDestWrap: { position: 'relative' },
+  headerOriginDestWrap: { position: 'relative', paddingBottom: 10 },
+  /** Abas + faixa inferior de 50% / 50%; o fundo do header termina nessa linha. */
+  headerCompanionBlock: {
+    alignSelf: 'stretch',
+    width: '100%',
+    marginHorizontal: -12,
+    marginTop: 2,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E7EB',
+  },
+  headerCompanionTabsWrap: {
+    flexDirection: 'row',
+  },
+  headerCompanionBottomBar: {
+    flexDirection: 'row',
+    width: '100%',
+    height: 3,
+  },
+  headerCompanionBottomHalf: {
+    flex: 1,
+    minWidth: 0,
+    height: 3,
+  },
+  headerCompanionBottomHalfActive: {
+    backgroundColor: '#0057A8',
+  },
+  headerCompanionBottomHalfMuted: {
+    backgroundColor: '#E5E7EB',
+  },
+  preSearchArea: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+    paddingHorizontal: 32,
+    paddingVertical: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  preSearchTitle: {
+    marginTop: 16,
+    fontSize: 17,
+    color: '#1E1D1D',
+    fontFamily: 'Agrandir-TextBold',
+    textAlign: 'center',
+  },
+  preSearchText: {
+    marginTop: 10,
+    fontSize: 14,
+    color: '#6B7280',
+    fontFamily: 'Agrandir-Regular',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
   /** Ícones à esquerda + coluna única de campos: origem e destino com a mesma largura de barra. */
   headerOriginDestBlock: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   headerIconsColumn: { width: 26, gap: 8 },
@@ -1883,22 +1597,6 @@ const styles = StyleSheet.create({
     color: '#1E1D1D',
     fontSize: 13,
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
-  },
-  headerSearchButton: {
-    marginTop: 8,
-    backgroundColor: '#0057A8',
-    borderRadius: 20,
-    height: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerSearchButtonDisabled: {
-    opacity: 0.5,
-  },
-  headerSearchButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
   },
   suggestionsBox: {
     marginTop: 8,
@@ -1991,6 +1689,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  uberLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
   uberLogo: {
     width: 40,
     height: 40,
@@ -2031,9 +1735,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Agrandir-Regular',
   },
   sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     marginHorizontal: 16,
     marginTop: 20,
     marginBottom: 8,
@@ -2043,26 +1744,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: 'Agrandir-TextBold',
   },
-  verRotaBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#EBF3FF',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  verRotaBtnDisabled: { opacity: 0.35 },
-  verRotaBtnText: {
-    color: '#0057A8',
-    fontSize: 13,
-    fontFamily: 'Agrandir-TextBold',
-  },
   filterChipsScroll: {
     maxHeight: 48,
-    marginTop: 4,
+    marginTop: 16,
     marginBottom: 8,
   },
   filterChipsContent: {
@@ -2086,43 +1770,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Agrandir-Regular',
   },
-  uberRowMoovit: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  uberTimeColumn: {
-    width: 76,
-    alignItems: 'center',
-  },
-  uberBigMinutes: {
-    color: '#1E1D1D',
-    fontSize: 20,
-    fontFamily: 'Agrandir-GrandHeavy',
-  },
-  uberClockColumn: { alignItems: 'center', marginTop: 8 },
-  uberClockText: {
-    color: '#6B7280',
-    fontSize: 12,
-    fontFamily: 'Agrandir-TextBold',
-  },
-  uberNoRoutesHint: {
-    marginTop: 6,
-    fontSize: 11,
-    color: '#9CA3AF',
-    textAlign: 'center',
-    fontFamily: 'Agrandir-Regular',
-  },
-  uberMid: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minWidth: 0,
-  },
-  uberMidText: { flex: 1, minWidth: 0 },
-  uberCo2Row: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
-  uberCo2Text: { color: '#6B7280', fontSize: 11, flex: 1, fontFamily: 'Agrandir-Regular' },
   routeStagesFrame: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -2137,22 +1784,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
-  companionTabsWrap: {
-    marginHorizontal: 16,
-    marginBottom: 10,
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
   companionTabBtn: {
     flex: 1,
+    minWidth: 0,
     paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
-  },
-  companionTabBtnActive: {
-    backgroundColor: 'transparent',
   },
   companionTabText: {
     color: '#6B7280',
@@ -2161,15 +1798,6 @@ const styles = StyleSheet.create({
   },
   companionTabTextActive: {
     color: '#0057A8',
-  },
-  companionTabIndicator: {
-    position: 'absolute',
-    left: 18,
-    right: 18,
-    bottom: -1,
-    height: 2.5,
-    borderRadius: 2,
-    backgroundColor: '#0057A8',
   },
   emptyRoutesWrap: {
     alignItems: 'center',

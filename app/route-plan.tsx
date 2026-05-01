@@ -13,6 +13,8 @@ import {
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
+import { fetchDiverseRoutes } from '../services/fetch-diverse-routes';
+import { getUserInfo } from '../services/token.service';
 
 const PRIMARY = '#0057A8';
 const BG = '#F5F5F5';
@@ -87,6 +89,7 @@ export default function RoutePlanScreen() {
   const [destCoord, setDestCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [findRoutesLoading, setFindRoutesLoading] = useState(false);
 
   const fitBoth = useCallback(() => {
     const o = originCoord;
@@ -202,10 +205,28 @@ export default function RoutePlanScreen() {
     setTimeout(() => fitBoth(), 320);
   }, [originLabel, destLabel, originCoord, destCoord, fitBoth]);
 
-  const goFindRoutes = useCallback(() => {
+  const goFindRoutes = useCallback(async () => {
+    const dest = destLabel.trim() || destinationParam;
+    const orig = originLabel.trim() || 'Local atual';
+    if (!dest) return;
+
+    setFindRoutesLoading(true);
+    let list: unknown[] = [];
+    try {
+      const { userId } = await getUserInfo();
+      if (typeof userId === 'number' && !Number.isNaN(userId)) {
+        list = await fetchDiverseRoutes(orig, dest, userId, 'alone');
+      }
+    } catch {
+      list = [];
+    } finally {
+      setFindRoutesLoading(false);
+    }
+
     const p: Record<string, string> = {
-      origin: originLabel.trim() || 'Local atual',
-      destination: destLabel.trim() || destinationParam,
+      origin: orig,
+      destination: dest,
+      routes: encodeURIComponent(JSON.stringify(list)),
     };
     if (originCoord) {
       p.originCoordinate = JSON.stringify({
@@ -283,8 +304,19 @@ export default function RoutePlanScreen() {
         </View>
       </View>
 
-      <TouchableOpacity style={styles.cta} onPress={goFindRoutes} activeOpacity={0.92}>
-        <Text style={styles.ctaText}>Encontrar rotas</Text>
+      <TouchableOpacity
+        style={[styles.cta, findRoutesLoading && styles.ctaDisabled]}
+        onPress={() => {
+          void goFindRoutes();
+        }}
+        disabled={findRoutesLoading}
+        activeOpacity={0.92}
+      >
+        {findRoutesLoading ? (
+          <ActivityIndicator color="#FFFFFF" size="small" />
+        ) : (
+          <Text style={styles.ctaText}>Encontrar rotas</Text>
+        )}
       </TouchableOpacity>
 
       {loadError ? <Text style={styles.warn}>{loadError}</Text> : null}
@@ -426,6 +458,9 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  ctaDisabled: {
+    opacity: 0.7,
   },
   ctaText: {
     color: '#FFFFFF',
