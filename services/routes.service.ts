@@ -7,6 +7,9 @@ export async function searchRoutes(
   userId: number,
   transportType: string,
   accompanied?: string,
+  timeFilter?: string,
+  timeValue?: string,
+  routePreference?: string,
 ) {
   try {
     const token = await getToken();
@@ -17,6 +20,9 @@ export async function searchRoutes(
       user_id: userId,
       transport_type: transportType,
       ...(accompanied !== undefined && accompanied !== '' ? { accompanied } : {}),
+      ...(timeFilter ? { time_filter: timeFilter } : {}),
+      ...(timeValue ? { time_value: timeValue } : {}),
+      ...(routePreference ? { route_preference: routePreference } : {}),
     };
     const bodyString = JSON.stringify(body);
 

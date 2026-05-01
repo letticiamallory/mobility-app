@@ -22,6 +22,9 @@ export default function RootLayout() {
     <>
       <Stack>
         <Stack.Screen name="profile" />
+        <Stack.Screen name="profile-info" />
+        <Stack.Screen name="profile-reviews" />
+        <Stack.Screen name="profile-history" />
         <Stack.Screen name="stations" />
         <Stack.Screen name="lines" />
         <Stack.Screen name="route-results" />
@@ -31,6 +34,7 @@ export default function RootLayout() {
         <Stack.Screen name="write-review" />
         <Stack.Screen name="forgot-password" />
         <Stack.Screen name="email-confirmation" />
+        <Stack.Screen name="reset-password" />
         <Stack.Screen name="success" />
       </Stack>
       <Redirect href={'/splash' as any} />

@@ -191,3 +191,55 @@ export async function forgotPassword(email: string) {
   }
   return data;
 }
+
+export async function verifyResetCode(email: string, code: string) {
+  const url = `${API_URL}/auth/verify-reset-code`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.trim() }),
+  });
+  const text = await response.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    data = {};
+  }
+  if (!response.ok) {
+    const detail = formatApiErrorBody(data, response.status);
+    throw new Error(detail !== `HTTP ${response.status}` ? detail : 'Código inválido ou expirado.');
+  }
+  return data as { reset_token: string; expires_in_seconds: number };
+}
+
+export async function resetPassword(
+  email: string,
+  resetToken: string,
+  newPassword: string,
+  confirmPassword: string,
+) {
+  const url = `${API_URL}/auth/reset-password`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: email.trim().toLowerCase(),
+      reset_token: resetToken,
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    }),
+  });
+  const text = await response.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    data = {};
+  }
+  if (!response.ok) {
+    const detail = formatApiErrorBody(data, response.status);
+    throw new Error(detail !== `HTTP ${response.status}` ? detail : 'Não foi possível redefinir a senha.');
+  }
+  return data as { message: string };
+}

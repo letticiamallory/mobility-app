@@ -16,7 +16,13 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { login } from '../services/auth.service';
-import { saveToken, saveUserInfo } from '../services/token.service';
+import {
+  getRememberMe,
+  getToken,
+  saveRememberMe,
+  saveToken,
+  saveUserInfo,
+} from '../services/token.service';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -30,6 +36,19 @@ export default function LoginScreen() {
   const dot3 = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const remember = await getRememberMe();
+      if (cancelled) return;
+      setRememberMe(remember);
+      if (!remember) return;
+      const token = await getToken();
+      if (cancelled) return;
+      if (token) {
+        router.replace('/home');
+      }
+    })();
+
     const pulse = (dot: Animated.Value, delay: number) =>
       Animated.sequence([
         Animated.delay(delay),
@@ -44,7 +63,10 @@ export default function LoginScreen() {
         pulse(dot3, 400),
       ])
     ).start();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   const handleLogin = async () => {
     const emailTrimmed = email.trim();
@@ -56,6 +78,7 @@ export default function LoginScreen() {
     try {
       setLoading(true);
       const loginData = await login(emailTrimmed, password); // ← chama o backend
+      await saveRememberMe(rememberMe);
       await saveToken(loginData.access_token); // ← salva o token no dispositivo
       await saveUserInfo(loginData.user_id, loginData.name, emailTrimmed.toLowerCase());
       router.replace('/home'); // ← vai pra tela principal
@@ -78,6 +101,7 @@ export default function LoginScreen() {
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
+          scrollEnabled={false}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           bounces={false}

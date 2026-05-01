@@ -490,14 +490,6 @@ export default function SearchDestinationScreen() {
             <>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitleMuted}>Locais</Text>
-                <TouchableOpacity
-                  style={styles.sectionLinkRow}
-                  onPress={() => router.push('/stations')}
-                  activeOpacity={0.75}
-                >
-                  <MaterialCommunityIcons name="map-marker-radius" size={18} color={PRIMARY} />
-                  <Text style={styles.linkBlue}>Mostrar no mapa</Text>
-                </TouchableOpacity>
               </View>
 
               {query.trim().length < AUTOCOMPLETE_MIN ? (

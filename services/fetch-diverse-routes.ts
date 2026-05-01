@@ -40,6 +40,9 @@ export async function fetchDiverseRoutes(
   destinationQuery: string,
   userId: number,
   accompanied: string,
+  timeFilter?: string,
+  timeValue?: string,
+  routePreference?: string,
 ): Promise<FetchedRouteItem[]> {
   const mergeSettled = (results: PromiseSettledResult<unknown>[]) => {
     const merged: FetchedRouteItem[] = [];
@@ -56,13 +59,31 @@ export async function fetchDiverseRoutes(
   const fastTypes = ['bus', 'subway', 'combined'] as const;
   const fastResults = await Promise.allSettled(
     fastTypes.map((transportType) =>
-      searchRoutes(originQuery, destinationQuery, userId, transportType, accompanied),
+      searchRoutes(
+        originQuery,
+        destinationQuery,
+        userId,
+        transportType,
+        accompanied,
+        timeFilter,
+        timeValue,
+        routePreference,
+      ),
     ),
   );
   let merged = mergeSettled(fastResults);
 
   const walkResults = await Promise.allSettled([
-    searchRoutes(originQuery, destinationQuery, userId, 'walk', accompanied),
+    searchRoutes(
+      originQuery,
+      destinationQuery,
+      userId,
+      'walk',
+      accompanied,
+      timeFilter,
+      timeValue,
+      routePreference,
+    ),
   ]);
   merged = merged.concat(mergeSettled(walkResults));
 
@@ -73,6 +94,9 @@ export async function fetchDiverseRoutes(
       userId,
       DEFAULT_TRANSPORT_TYPE,
       accompanied,
+      timeFilter,
+      timeValue,
+      routePreference,
     );
     const parsed =
       fallbackRaw && typeof fallbackRaw === 'object' ? (fallbackRaw as Record<string, unknown>) : {};

@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -131,6 +131,10 @@ function parseStations(data: unknown): Station[] {
 
 export default function StationsScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ tab?: string | string[] }>();
+  const initialTab = (Array.isArray(params.tab) ? params.tab[0] : params.tab) === 'favorites'
+    ? 'favorites'
+    : 'all';
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView | null>(null);
   const sheetAnim = useRef(new Animated.Value(0)).current;
@@ -139,7 +143,7 @@ export default function StationsScreen() {
   const [search, setSearch] = useState('');
   const [stations, setStations] = useState<Station[]>([]);
   const [filtered, setFiltered] = useState<Station[]>([]);
-  const [selectedTab, setSelectedTab] = useState<'all' | 'favorites'>('all');
+  const [selectedTab, setSelectedTab] = useState<'all' | 'favorites'>(initialTab);
   const [selectedStation, setSelectedStation] = useState<Station | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [isDemo, setIsDemo] = useState(false);

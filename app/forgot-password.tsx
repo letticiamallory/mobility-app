@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -17,7 +17,11 @@ import { forgotPassword } from '../services/auth.service';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
+  const params = useLocalSearchParams<{ email?: string | string[] }>();
+  const emailFromParams = useRef(
+    Array.isArray(params.email) ? params.email[0] ?? '' : params.email ?? '',
+  ).current;
+  const [email, setEmail] = useState(emailFromParams);
   const [loading, setLoading] = useState(false);
   const entryTranslateY = useRef(new Animated.Value(40)).current;
   const entryOpacity = useRef(new Animated.Value(0)).current;
@@ -95,8 +99,9 @@ export default function ForgotPasswordScreen() {
         >
           <MailIllustration width={260} height={200} />
         </Animated.View>
+        <Text style={styles.title}>Insira seu e-mail</Text>
         <Text style={styles.subtitle}>
-          Digite seu email cadastrado e enviaremos um código de verificação
+          Informe seu e-mail cadastrado e enviaremos um link para você criar uma nova senha
         </Text>
 
         <Text style={styles.label}>Email</Text>
@@ -151,6 +156,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
     textAlign: 'center',
+  },
+  title: {
+    color: '#1E1D1D',
+    fontSize: 22,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginTop: 24,
+    fontFamily: 'Agrandir-TextBold',
   },
   illustrationWrap: {
     width: 260,

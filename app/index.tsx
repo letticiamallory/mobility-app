@@ -1,9 +1,11 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import {
   Alert,
   Dimensions,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -17,7 +19,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { login, register } from '../services/auth.service';
-import { saveToken, saveUserInfo } from '../services/token.service';
+import { saveToken, saveUserAvatar, saveUserInfo } from '../services/token.service';
 import WomanAvatarIllustration from '../assets/images/undraw_a-woman-avatar_ifsl.svg';
 
 const SCREEN_H = Dimensions.get('window').height;
@@ -103,6 +105,8 @@ export default function RegisterScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [disabilityType, setDisabilityType] = useState<DisabilityType>('');
   const [loading, setLoading] = useState(false);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [showAvatarAccessModal, setShowAvatarAccessModal] = useState(false);
 
   const [menu, setMenu] = useState<MenuKind | null>(null);
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
@@ -159,6 +163,7 @@ export default function RegisterScreen() {
       const loginData = await login(email, password);
       await saveToken(loginData.access_token);
       await saveUserInfo(loginData.user_id, loginData.name, email);
+      await saveUserAvatar(avatarUri ?? undefined);
       router.push('/email-confirmation');
     } catch (error) {
       const message =
@@ -168,6 +173,45 @@ export default function RegisterScreen() {
       Alert.alert('Erro', message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const pickAvatarImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (result.canceled || !result.assets?.[0]?.uri) return;
+    setAvatarUri(result.assets[0].uri);
+  };
+
+  const handlePickAvatar = async (mode: 'full' | 'limited') => {
+    try {
+      setShowAvatarAccessModal(false);
+
+      if (mode === 'limited' && Platform.OS === 'ios') {
+        const current = await ImagePicker.getMediaLibraryPermissionsAsync();
+        if (!current.granted) {
+          const req = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (!req.granted) {
+            Alert.alert('Permissão necessária', 'Permita acesso às fotos para alterar o avatar.');
+            return;
+          }
+        }
+        await pickAvatarImage();
+        return;
+      }
+
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permissão necessária', 'Permita acesso às fotos para alterar o avatar.');
+        return;
+      }
+      await pickAvatarImage();
+    } catch {
+      Alert.alert('Erro', 'Não foi possível selecionar a imagem.');
     }
   };
 
@@ -240,12 +284,20 @@ export default function RegisterScreen() {
         </TouchableOpacity>
 
         <View style={styles.avatarWrap}>
-          <View style={styles.avatarCircle}>
-            <WomanAvatarIllustration width={80} height={80} />
+          <TouchableOpacity
+            style={styles.avatarCircle}
+            onPress={() => setShowAvatarAccessModal(true)}
+            activeOpacity={0.85}
+          >
+            {avatarUri ? (
+              <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+            ) : (
+              <WomanAvatarIllustration width={80} height={80} />
+            )}
             <View style={styles.editBadge}>
               <MaterialCommunityIcons name="pencil" size={14} color="#FFFFFF" />
             </View>
-          </View>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.label}>Nome</Text>
@@ -396,6 +448,38 @@ export default function RegisterScreen() {
           ) : null}
         </View>
       </Modal>
+
+      <Modal visible={showAvatarAccessModal} transparent animationType="fade">
+        <View style={styles.modalRoot}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowAvatarAccessModal(false)} />
+          <View style={styles.avatarAccessPanel}>
+            <Text style={styles.avatarAccessTitle}>Permitir acesso à galeria?</Text>
+            <Text style={styles.avatarAccessSubtitle}>
+              Escolha como deseja liberar o acesso para trocar seu avatar.
+            </Text>
+            <TouchableOpacity
+              style={styles.avatarAccessPrimaryBtn}
+              activeOpacity={0.85}
+              onPress={() => handlePickAvatar('full')}
+            >
+              <Text style={styles.avatarAccessPrimaryText}>Permitir tudo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.avatarAccessSecondaryBtn}
+              activeOpacity={0.85}
+              onPress={() => handlePickAvatar('limited')}
+            >
+              <Text style={styles.avatarAccessSecondaryText}>Permitir de forma restrita</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setShowAvatarAccessModal(false)}
+            >
+              <Text style={styles.avatarAccessCancelText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -431,16 +515,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#D9D9D9',
     position: 'relative',
   },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 40,
+  },
   editBadge: {
     width: 24,
     height: 24,
     borderRadius: 12,
     backgroundColor: '#0057A8',
     position: 'absolute',
-    right: 0,
-    bottom: 0,
+    right: -2,
+    bottom: -2,
+    zIndex: 6,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
   },
   label: {
     color: '#1E1D1D',
@@ -585,5 +677,58 @@ const styles = StyleSheet.create({
   menuRowTextSelected: {
     color: '#0057A8',
     fontWeight: '600',
+  },
+  avatarAccessPanel: {
+    marginTop: 'auto',
+    marginHorizontal: 16,
+    marginBottom: 'auto',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    gap: 10,
+  },
+  avatarAccessTitle: {
+    color: '#1E1D1D',
+    fontSize: 16,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  avatarAccessSubtitle: {
+    color: '#64748B',
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: 'Agrandir-Regular',
+  },
+  avatarAccessPrimaryBtn: {
+    height: 44,
+    borderRadius: 999,
+    backgroundColor: '#0057A8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  avatarAccessPrimaryText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  avatarAccessSecondaryBtn: {
+    height: 44,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#0057A8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarAccessSecondaryText: {
+    color: '#0057A8',
+    fontSize: 14,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  avatarAccessCancelText: {
+    color: '#6B7280',
+    textAlign: 'center',
+    fontSize: 13,
+    marginTop: 2,
+    fontFamily: 'Agrandir-Regular',
   },
 });

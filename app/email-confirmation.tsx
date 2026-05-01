@@ -1,7 +1,8 @@
-import { Stack, useRouter } from 'expo-router';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Animated,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,58 +11,30 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MailSvg from '../assets/images/mail.svg';
-import { getUserInfo } from '../services/token.service';
+import ForgotPasswordSvg from '../assets/images/undraw_forgot-password_nttj (1).svg';
+import { forgotPassword, verifyResetCode } from '../services/auth.service';
 
 export default function EmailConfirmationScreen() {
   const router = useRouter();
-  const [userEmail, setUserEmail] = useState('seu email');
+  const params = useLocalSearchParams<{ email?: string | string[] }>();
+  const emailParam = Array.isArray(params.email) ? params.email[0] : params.email;
+  const [userEmail, setUserEmail] = useState((emailParam ?? '').trim());
   const [digits, setDigits] = useState(['', '', '', '', '', '']);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendLeftSeconds, setResendLeftSeconds] = useState(60);
   const inputsRef = useRef<Array<TextInput | null>>([]);
 
-  const entryTranslateY = useRef(new Animated.Value(40)).current;
-  const entryOpacity = useRef(new Animated.Value(0)).current;
-  const floatY = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    setUserEmail((emailParam ?? '').trim());
+  }, [emailParam]);
 
   useEffect(() => {
-    (async () => {
-      const info = await getUserInfo();
-      if (info?.email) setUserEmail(info.email);
-    })();
-  }, []);
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.spring(entryTranslateY, {
-        toValue: 0,
-        useNativeDriver: true,
-        friction: 8,
-        tension: 60,
-      }),
-      Animated.spring(entryOpacity, {
-        toValue: 1,
-        useNativeDriver: true,
-        friction: 8,
-        tension: 60,
-      }),
-    ]).start(() => {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(floatY, {
-            toValue: -8,
-            duration: 1200,
-            useNativeDriver: true,
-          }),
-          Animated.timing(floatY, {
-            toValue: 0,
-            duration: 1200,
-            useNativeDriver: true,
-          }),
-        ]),
-      ).start();
-    });
-  }, [entryOpacity, entryTranslateY, floatY]);
+    if (resendLeftSeconds <= 0) return;
+    const timer = setTimeout(() => setResendLeftSeconds((prev) => prev - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendLeftSeconds]);
 
   const handleDigitChange = (text: string, index: number) => {
     const char = text.slice(-1);
@@ -83,27 +56,57 @@ export default function EmailConfirmationScreen() {
     }
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
+    if (!userEmail) {
+      Alert.alert('Atenção', 'Email inválido para confirmação.');
+      return;
+    }
     const code = digits.join('');
-    if (code.length < 6) return;
-    router.replace('/success');
+    if (code.length < 6) {
+      Alert.alert('Atenção', 'Digite o código completo de 6 dígitos.');
+      return;
+    }
+    try {
+      setConfirming(true);
+      const result = await verifyResetCode(userEmail, code);
+      router.replace({
+        pathname: '/reset-password',
+        params: { email: userEmail, resetToken: result.reset_token },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Código inválido.';
+      Alert.alert('Erro', message);
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const handleResend = async () => {
+    if (resending || resendLeftSeconds > 0 || !userEmail) return;
+    try {
+      setResending(true);
+      const result = await forgotPassword(userEmail);
+      const next = Number((result as { resend_after_seconds?: unknown }).resend_after_seconds);
+      setResendLeftSeconds(Number.isFinite(next) && next > 0 ? next : 60);
+      Alert.alert('Pronto', 'Enviamos um novo código para seu email.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível reenviar o código.';
+      Alert.alert('Erro', message);
+    } finally {
+      setResending(false);
+    }
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <Stack.Screen options={{ headerShown: false }} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Animated.View
-          style={[
-            styles.illustrationWrap,
-            {
-              opacity: entryOpacity,
-              transform: [{ translateY: entryTranslateY }, { translateY: floatY }],
-            },
-          ]}
-        >
-          <MailSvg width={260} height={200} />
-        </Animated.View>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
+        </TouchableOpacity>
+        <View style={styles.illustrationWrap}>
+          <ForgotPasswordSvg width={260} height={200} />
+        </View>
 
         <Text style={styles.title}>Verifique seu email</Text>
         <Text style={styles.subtitle}>Enviamos um código de confirmação para</Text>
@@ -132,12 +135,18 @@ export default function EmailConfirmationScreen() {
           })}
         </View>
 
-        <TouchableOpacity style={styles.confirmButton} onPress={handleConfirm}>
-          <Text style={styles.confirmText}>Confirmar</Text>
+        <TouchableOpacity style={styles.confirmButton} onPress={handleConfirm} disabled={confirming}>
+          <Text style={styles.confirmText}>{confirming ? 'Validando...' : 'Confirmar'}</Text>
         </TouchableOpacity>
 
         <Text style={styles.resendText}>
-          Não recebeu? <Text style={styles.resendHighlight}>Reenviar código</Text>
+          Não recebeu?{' '}
+          <Text
+            style={[styles.resendHighlight, (resendLeftSeconds > 0 || resending) ? styles.resendDisabled : null]}
+            onPress={handleResend}
+          >
+            {resendLeftSeconds > 0 ? `Reenviar em ${resendLeftSeconds}s` : resending ? 'Reenviando...' : 'Reenviar código'}
+          </Text>
         </Text>
       </ScrollView>
     </SafeAreaView>
@@ -152,20 +161,26 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 24,
     paddingTop: 132,
+    paddingBottom: 24,
     alignItems: 'center',
+  },
+  backBtn: {
+    alignSelf: 'flex-start',
+    marginBottom: 24,
   },
   illustrationWrap: {
     width: 260,
     height: 200,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 24,
   },
   title: {
     color: '#1E1D1D',
     fontSize: 22,
     fontWeight: '700',
     textAlign: 'center',
-    marginTop: 24,
+    marginTop: 0,
     fontFamily: 'Agrandir-TextBold',
   },
   subtitle: {
@@ -224,5 +239,8 @@ const styles = StyleSheet.create({
     color: '#0057A8',
     fontWeight: '600',
     fontFamily: 'Agrandir-TextBold',
+  },
+  resendDisabled: {
+    color: '#9CA3AF',
   },
 });

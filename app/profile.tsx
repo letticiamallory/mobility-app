@@ -1,16 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
-import { getToken, removeToken } from '../services/token.service';
+import { getToken, getUserAvatar, removeToken } from '../services/token.service';
 
 type MeResponse = {
   name?: string;
@@ -41,6 +35,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const [profile, setProfile] = useState<MeResponse>({});
   const [reviews, setReviews] = useState<ReviewResponseItem[]>([]);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -51,6 +46,8 @@ export default function ProfileScreen() {
       }
 
       try {
+        const savedAvatar = await getUserAvatar();
+        setAvatarUri(savedAvatar);
         const meResponse = await fetch(`${API_URL}/users/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -91,6 +88,34 @@ export default function ProfileScreen() {
     router.replace('/login');
   };
 
+  const openProfileInfo = () => {
+    router.push('/profile-info');
+  };
+
+  const openAccessibilitySettings = () => {
+    router.push({ pathname: '/profile-info', params: { section: 'accessibility' } });
+  };
+
+  const openMyReviews = () => {
+    router.push('/profile-reviews');
+  };
+
+  const openFavorites = () => {
+    router.push({ pathname: '/stations', params: { tab: 'favorites' } });
+  };
+
+  const openTripHistory = () => {
+    router.push('/profile-history');
+  };
+
+  const openChangePassword = () => {
+    if (!profile.email) {
+      Alert.alert('Atenção', 'Não foi possível identificar seu email para alterar a senha.');
+      return;
+    }
+    router.push({ pathname: '/forgot-password', params: { email: profile.email } });
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -111,28 +136,32 @@ export default function ProfileScreen() {
 
           <View style={styles.profileRow}>
             <View style={styles.initialsCircle}>
-              <Text style={styles.initialsText}>{initials}</Text>
+              {avatarUri ? (
+                <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+              ) : (
+                <Text style={styles.initialsText}>{initials}</Text>
+              )}
             </View>
             <View style={styles.headerInfoWrap}>
               <Text style={styles.userName}>{profile.name || '-'}</Text>
               <Text style={styles.userEmail}>{profile.email || '-'}</Text>
               <Text style={styles.disabilityType}>{profile.disability_type || '-'}</Text>
             </View>
-            <TouchableOpacity style={styles.editButton}>
+            <TouchableOpacity style={styles.editButton} onPress={openProfileInfo}>
               <Text style={styles.editButtonText}>Editar</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         <View style={styles.listGroup}>
-          <TouchableOpacity style={styles.listItem}>
+          <TouchableOpacity style={styles.listItem} onPress={openProfileInfo}>
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="account-edit" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Minhas informações</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.listItem, styles.noBorder]}>
+          <TouchableOpacity style={[styles.listItem, styles.noBorder]} onPress={openAccessibilitySettings}>
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="human" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Acessibilidade</Text>
@@ -144,7 +173,7 @@ export default function ProfileScreen() {
         <View style={styles.groupDivider} />
 
         <View style={styles.listGroup}>
-          <TouchableOpacity style={styles.listItem}>
+          <TouchableOpacity style={styles.listItem} onPress={openMyReviews}>
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="star-outline" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Minhas avaliações</Text>
@@ -156,14 +185,14 @@ export default function ProfileScreen() {
             </View>
             <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.listItem}>
+          <TouchableOpacity style={styles.listItem} onPress={openFavorites}>
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="heart-outline" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Favoritos</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.listItem, styles.noBorder]}>
+          <TouchableOpacity style={[styles.listItem, styles.noBorder]} onPress={openTripHistory}>
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="history" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Histórico de viagens</Text>
@@ -175,7 +204,7 @@ export default function ProfileScreen() {
         <View style={styles.groupDivider} />
 
         <View style={styles.listGroup}>
-          <TouchableOpacity style={styles.listItem}>
+          <TouchableOpacity style={styles.listItem} onPress={openChangePassword}>
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="lock-outline" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Alterar senha</Text>
@@ -234,6 +263,11 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
   },
   profileRow: {
     flexDirection: 'row',

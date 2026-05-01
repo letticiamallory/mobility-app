@@ -9,6 +9,7 @@ import {
   Alert,
   Keyboard,
   Linking,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -61,6 +62,55 @@ type RouteItem = {
   } | null;
   stages?: Stage[];
 };
+
+type TimeFilterOption = {
+  key:
+    | 'leave_now'
+    | 'set_departure_time'
+    | 'set_arrival_time'
+    | 'last_departures_today';
+  label: string;
+  timeValue?: string;
+};
+
+type TimeFilterKey = TimeFilterOption['key'];
+type RoutePreference = 'active' | 'less_transfers' | 'less_walking';
+
+const TIME_FILTER_OPTIONS: TimeFilterOption[] = [
+  { key: 'leave_now', label: 'Sair agora' },
+  { key: 'set_departure_time', label: 'Definir horário de saída', timeValue: '08:00' },
+  { key: 'set_arrival_time', label: 'Definir horário de chegada desejado', timeValue: '09:00' },
+  { key: 'last_departures_today', label: 'Últimas partidas para hoje' },
+];
+
+const ROUTE_PREFERENCE_OPTIONS: Array<{ key: RoutePreference; label: string; icon: string }> = [
+  { key: 'less_transfers', label: 'Menos trocas', icon: 'swap-horizontal' },
+  { key: 'less_walking', label: 'Caminhar menos', icon: 'walk' },
+];
+
+const TIME_FILTER_LABELS: Record<TimeFilterKey, string> = {
+  leave_now: 'Sair agora',
+  set_departure_time: 'Definir horário de saída',
+  set_arrival_time: 'Definir horário de chegada desejado',
+  last_departures_today: 'Últimas partidas para hoje',
+};
+
+function makeTimeFilterOption(key: TimeFilterKey, timeValue?: string): TimeFilterOption {
+  const baseLabel = TIME_FILTER_LABELS[key];
+  if (
+    timeValue &&
+    (key === 'set_departure_time' || key === 'set_arrival_time')
+  ) {
+    return { key, label: `${baseLabel} (${timeValue})`, timeValue };
+  }
+  return { key, label: baseLabel, timeValue };
+}
+
+function splitTimeToDigits(timeValue?: string): string[] {
+  const match = `${timeValue ?? ''}`.match(/^(\d{2}):(\d{2})$/);
+  if (!match) return ['', '', '', ''];
+  return [match[1][0], match[1][1], match[2][0], match[2][1]];
+}
 
 const uberDeepLink = 'uber://?action=setPickup';
 
@@ -180,6 +230,22 @@ function serializeRouteDetail(
     destinationCoordinate: DetailLatLng;
   },
 ): string {
+  const topLevelDuration = `${route.total_duration ?? route.totalDuration ?? route.totalTime ?? ''}`.trim();
+  const durationFromStages = (() => {
+    const toMinutes = (raw: unknown): number => {
+      const s = `${raw ?? ''}`;
+      const h = s.match(/(\d+)\s*h/i);
+      const m = s.match(/(\d+)\s*min/i);
+      const fromLabel = (h ? Number(h[1]) * 60 : 0) + (m ? Number(m[1]) : 0);
+      if (fromLabel > 0) return fromLabel;
+      const onlyNumber = s.match(/\d+/)?.[0];
+      return onlyNumber ? Number(onlyNumber) : 0;
+    };
+    const sum = (route.stages ?? []).reduce((acc, st) => acc + toMinutes(st.duration), 0);
+    return sum > 0 ? `${sum} min` : '';
+  })();
+  const detailTotalTime = topLevelDuration || durationFromStages;
+
   const stages = (route.stages ?? []).map((s) => {
     const pts = Array.isArray(s.points)
       ? (s.points as { latitude?: number; longitude?: number }[])
@@ -197,6 +263,10 @@ function serializeRouteDetail(
       instruction: String(s.instruction ?? ''),
       distance: String(s.distance ?? ''),
       duration: String(s.duration ?? ''),
+      departure_time: s.departure_time,
+      arrival_time: s.arrival_time,
+      departureTime: s.departureTime,
+      arrivalTime: s.arrivalTime,
       departure_minutes: s.departure_minutes,
       accessible: s.accessible !== false,
       warning: s.warning != null && String(s.warning).trim() ? String(s.warning) : undefined,
@@ -211,7 +281,7 @@ function serializeRouteDetail(
   return JSON.stringify({
     origin: ctx.origin,
     destination: ctx.destination,
-    totalTime: String(route.total_duration ?? route.totalDuration ?? route.totalTime ?? ''),
+    totalTime: detailTotalTime,
     originCoordinate: ctx.originCoordinate,
     destinationCoordinate: ctx.destinationCoordinate,
     weather:
@@ -367,6 +437,7 @@ function routeTransportFamily(route: RouteItem): 'walk-only' | 'bus-only' | 'sub
 type CompanionTab = 'alone' | 'companied';
 type SearchField = 'origin' | 'destination' | 'waypoint';
 type PlaceSuggestion = { description: string; placeId: string };
+type PackagedRoutesByTab = { alone: RouteItem[]; companied: RouteItem[] };
 
 function routeCompanionAudience(route: RouteItem): 'alone' | 'companied' | 'both' | null {
   const rawValues = [
@@ -585,6 +656,15 @@ export default function RouteResultsScreen() {
   const [fetchedRoutes, setFetchedRoutes] = useState<RouteItem[] | null>(null);
   const [activeSearchField, setActiveSearchField] = useState<SearchField | null>(null);
   const [placeSuggestions, setPlaceSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [selectedTimeFilter, setSelectedTimeFilter] = useState<TimeFilterOption>(TIME_FILTER_OPTIONS[0]);
+  const [showTimeFilterList, setShowTimeFilterList] = useState(false);
+  const [forcedServerResults, setForcedServerResults] = useState(false);
+  const [selectedRoutePreference, setSelectedRoutePreference] = useState<RoutePreference>('active');
+  const [showManualTimeModal, setShowManualTimeModal] = useState(false);
+  const [pendingTimeFilterKey, setPendingTimeFilterKey] = useState<
+    'set_departure_time' | 'set_arrival_time' | null
+  >(null);
+  const [manualTimeDigits, setManualTimeDigits] = useState<string[]>(['', '', '', '']);
 
   const hasPackagedRoutes = useMemo(() => {
     const rawParam = Array.isArray(params.routes) ? params.routes[0] : params.routes;
@@ -598,6 +678,13 @@ export default function RouteResultsScreen() {
     setActiveOriginCoord(originCoordParam);
     setActiveDestCoord(destCoordParam);
     setFetchedRoutes(null);
+    setShowTimeFilterList(false);
+    setForcedServerResults(false);
+    setSelectedTimeFilter(TIME_FILTER_OPTIONS[0]);
+    setSelectedRoutePreference('active');
+    setShowManualTimeModal(false);
+    setPendingTimeFilterKey(null);
+    setManualTimeDigits(['', '', '', '']);
   }, [originFromParams, destinationFromParams, originCoordParam, destCoordParam]);
 
   /** Sem `routes` na URL (ex.: home / estações): busca na API ao abrir. */
@@ -622,6 +709,9 @@ export default function RouteResultsScreen() {
           dest,
           userId,
           activeCompanionTab === 'alone' ? 'alone' : 'companied',
+          selectedTimeFilter.key,
+          selectedTimeFilter.timeValue,
+          selectedRoutePreference,
         );
         if (!cancelled) {
           setFetchedRoutes(list as RouteItem[]);
@@ -634,7 +724,14 @@ export default function RouteResultsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [destinationFromParams, originFromParams, params.routes, activeCompanionTab]);
+  }, [
+    destinationFromParams,
+    originFromParams,
+    params.routes,
+    activeCompanionTab,
+    selectedTimeFilter,
+    selectedRoutePreference,
+  ]);
 
   useEffect(() => {
     if (originFromParams.trim()) return;
@@ -729,10 +826,16 @@ export default function RouteResultsScreen() {
     setMiddleStop(null);
   };
 
-  const fetchRoutesForHeader = async () => {
+  const fetchRoutesForHeader = async (opts?: {
+    timeOption?: TimeFilterOption;
+    routePreference?: RoutePreference;
+  }) => {
+    const nextTimeOption = opts?.timeOption ?? selectedTimeFilter;
+    const nextRoutePreference = opts?.routePreference ?? selectedRoutePreference;
     const destinationQuery = headerDestination.trim();
     if (!destinationQuery) return;
     Keyboard.dismiss();
+    setShowTimeFilterList(false);
     setActiveSearchField(null);
     setPlaceSuggestions([]);
     try {
@@ -747,15 +850,79 @@ export default function RouteResultsScreen() {
         destinationQuery,
         userId,
         activeCompanionTab === 'alone' ? 'alone' : 'companied',
+        nextTimeOption.key,
+        nextTimeOption.timeValue,
+        nextRoutePreference,
       );
       setFetchedRoutes(list as RouteItem[]);
+      setForcedServerResults(true);
       setMiddleStop(null);
     } catch {
       setFetchedRoutes([]);
+      setForcedServerResults(true);
     }
   };
 
+  const openManualTimeModal = useCallback(
+    (filterKey: 'set_departure_time' | 'set_arrival_time') => {
+      setPendingTimeFilterKey(filterKey);
+      setManualTimeDigits(splitTimeToDigits(selectedTimeFilter.timeValue));
+      setShowManualTimeModal(true);
+    },
+    [selectedTimeFilter.timeValue],
+  );
+
+  const handleManualTimeCancel = useCallback(() => {
+    setShowManualTimeModal(false);
+    setPendingTimeFilterKey(null);
+    setManualTimeDigits(['', '', '', '']);
+  }, []);
+
+  const handleManualTimeConfirm = useCallback(() => {
+    if (!pendingTimeFilterKey) return;
+    const [h1, h2, m1, m2] = manualTimeDigits;
+    if (![h1, h2, m1, m2].every((d) => /^\d$/.test(d))) {
+      Alert.alert('Horário inválido', 'Preencha os 4 campos com números.');
+      return;
+    }
+    const hour = Number(`${h1}${h2}`);
+    const minute = Number(`${m1}${m2}`);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+      Alert.alert('Horário inválido', 'Informe um horário válido entre 00:00 e 23:59.');
+      return;
+    }
+    const hhmm = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    const nextFilter = makeTimeFilterOption(pendingTimeFilterKey, hhmm);
+    setSelectedTimeFilter(nextFilter);
+    setShowManualTimeModal(false);
+    setPendingTimeFilterKey(null);
+    setManualTimeDigits(['', '', '', '']);
+    fetchRoutesForHeader({ timeOption: nextFilter });
+  }, [fetchRoutesForHeader, manualTimeDigits, pendingTimeFilterKey]);
+
+  const packagedRoutesByTab = useMemo<PackagedRoutesByTab | null>(() => {
+    const rawParam = Array.isArray(params.routes) ? params.routes[0] : params.routes;
+    if (!rawParam || !rawParam.trim()) return null;
+    try {
+      const parsed = JSON.parse(decodeURIComponent(rawParam)) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      const obj = parsed as Record<string, unknown>;
+      const alone = Array.isArray(obj.alone) ? (obj.alone as RouteItem[]) : null;
+      const companied = Array.isArray(obj.companied) ? (obj.companied as RouteItem[]) : null;
+      if (!alone || !companied) return null;
+      return { alone, companied };
+    } catch {
+      return null;
+    }
+  }, [params.routes]);
+
   const routes = useMemo(() => {
+    if (forcedServerResults) return fetchedRoutes ?? [];
+    if (packagedRoutesByTab) {
+      return activeCompanionTab === 'alone'
+        ? packagedRoutesByTab.alone
+        : packagedRoutesByTab.companied;
+    }
     const rawParam = Array.isArray(params.routes) ? params.routes[0] : params.routes;
     if (rawParam && rawParam.trim()) {
       try {
@@ -765,9 +932,9 @@ export default function RouteResultsScreen() {
       }
     }
     return fetchedRoutes ?? [];
-  }, [params.routes, fetchedRoutes]);
+  }, [forcedServerResults, packagedRoutesByTab, activeCompanionTab, params.routes, fetchedRoutes]);
 
-  const showRouteResults = hasPackagedRoutes || fetchedRoutes !== null;
+  const showRouteResults = hasPackagedRoutes || fetchedRoutes !== null || forcedServerResults;
 
   const filteredRoutes = useMemo(() => {
     const calmRoutes = (routes as RouteItem[]).filter((route) => {
@@ -838,8 +1005,13 @@ export default function RouteResultsScreen() {
     return picked;
   }, [filteredRoutes, mostAccessibleRoute]);
 
+  const cardRoutes = useMemo(
+    () => (mostAccessibleRoute ? [mostAccessibleRoute, ...displayedRoutes] : displayedRoutes),
+    [mostAccessibleRoute, displayedRoutes],
+  );
+
   const openRouteDetail = useCallback(
-    (route: RouteItem) => {
+    (route: RouteItem, cardIndex: number) => {
       const fb = detailCoordinateFallbacks(route);
       const originCoordinate =
         activeOriginCoord != null
@@ -849,6 +1021,20 @@ export default function RouteResultsScreen() {
         activeDestCoord != null
           ? { latitude: activeDestCoord.lat, longitude: activeDestCoord.lng }
           : fb.destination;
+      const detailRoutes = cardRoutes.map((cardRoute) =>
+        serializeRouteDetail(cardRoute, {
+          origin: headerOrigin,
+          destination: headerDestination,
+          originCoordinate:
+            activeOriginCoord != null
+              ? { latitude: activeOriginCoord.lat, longitude: activeOriginCoord.lng }
+              : detailCoordinateFallbacks(cardRoute).origin,
+          destinationCoordinate:
+            activeDestCoord != null
+              ? { latitude: activeDestCoord.lat, longitude: activeDestCoord.lng }
+              : detailCoordinateFallbacks(cardRoute).destination,
+        }),
+      );
       router.push({
         pathname: '/route-detail',
         params: {
@@ -858,10 +1044,12 @@ export default function RouteResultsScreen() {
             originCoordinate,
             destinationCoordinate,
           }),
+          routeIndex: String(cardIndex),
+          routeList: encodeURIComponent(JSON.stringify(detailRoutes)),
         },
       });
     },
-    [router, headerOrigin, headerDestination, activeOriginCoord, activeDestCoord],
+    [router, headerOrigin, headerDestination, activeOriginCoord, activeDestCoord, cardRoutes],
   );
 
   const formatDurationLabel = (route: RouteItem) => {
@@ -885,7 +1073,7 @@ export default function RouteResultsScreen() {
     return formatDurationLabel(route);
   };
 
-  const renderRouteCard = (route: RouteItem, key: string, featured = false) => {
+  const renderRouteCard = (route: RouteItem, key: string, featured = false, cardIndex = 0) => {
     const orderedStages = (route.stages ?? []).filter((s) => {
       const m = `${s.mode ?? ''}`.toLowerCase();
       return isWalkStageMode(s.mode) || m === 'bus' || m === 'subway';
@@ -953,6 +1141,16 @@ export default function RouteResultsScreen() {
         : `Sai às ${departureTime}`;
 
     const stageRow = (orderedStages.length > 0 ? orderedStages : [{ mode: 'walk' }]) as Stage[];
+    const allStagesAreWalk =
+      stageRow.length > 0 && stageRow.every((stage) => isWalkStageMode(stage.mode));
+    const durationTopValue =
+      totalMinutes > 0
+        ? `${totalMinutes}`
+        : (() => {
+            const fallback = formatDurationLabel(route);
+            const digits = fallback.match(/\d+/)?.[0];
+            return digits ?? '--';
+          })();
 
     return (
       <View
@@ -997,7 +1195,7 @@ export default function RouteResultsScreen() {
           >
             <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 2 }}>
               <Text style={{ color: '#1E1D1D', fontSize: 32, fontWeight: '700', lineHeight: 36 }}>
-                {totalMinutes > 0 ? totalMinutes : '--'}
+                {durationTopValue}
               </Text>
               <Text style={{ color: '#999999', fontSize: 14 }}> min</Text>
             </View>
@@ -1020,51 +1218,64 @@ export default function RouteResultsScreen() {
               marginBottom: 12,
             }}
           >
-            {stageRow.map((stage, i, arr) => (
-              <Fragment key={`${key}-s-${i}`}>
-                {isWalkStageMode(stage.mode) ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                    <MaterialCommunityIcons name="walk" size={15} color="#666666" />
-                    {stage.duration ? (
-                      <Text style={{ fontSize: 11, color: '#666666' }}>{stage.duration}</Text>
-                    ) : null}
-                  </View>
-                ) : (
-                  <View
-                    style={{
-                      backgroundColor: '#1E1D1D',
-                      borderRadius: 6,
-                      paddingHorizontal: 8,
-                      paddingTop: 3,
-                      paddingBottom: 5,
-                      overflow: 'hidden',
-                    }}
-                  >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <MaterialCommunityIcons name="walk" size={15} color="#666666" />
+              <Text style={{ fontSize: 11, color: '#000000', fontWeight: '800' }}>{stageCount}</Text>
+            </View>
+            {stageRow.length > 0 ? <Text style={{ color: '#CCCCCC', fontSize: 12 }}>›</Text> : null}
+            {allStagesAreWalk ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                <MaterialCommunityIcons name="walk" size={15} color="#666666" />
+              </View>
+            ) : (
+              stageRow.map((stage, i, arr) => (
+                <Fragment key={`${key}-s-${i}`}>
+                  {isWalkStageMode(stage.mode) ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                      <MaterialCommunityIcons
-                        name={stage.mode === 'subway' ? 'subway-variant' : 'bus'}
-                        size={11}
-                        color="#FFFFFF"
-                      />
-                      <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '700' }}>
-                        {stage.line_code ?? stage.mode}
-                      </Text>
+                      <MaterialCommunityIcons name="walk" size={15} color="#666666" />
+                      {stage.duration ? (
+                        <Text style={{ fontSize: 11, color: '#666666' }}>{stage.duration}</Text>
+                      ) : null}
                     </View>
+                  ) : (
                     <View
                       style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: 3,
-                        backgroundColor: getLineColor(stage.line_code ?? stage.mode ?? ''),
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 6,
+                        paddingHorizontal: 8,
+                        paddingTop: 3,
+                        paddingBottom: 5,
+                        overflow: 'hidden',
+                        borderWidth: 1,
+                        borderColor: '#E5E7EB',
                       }}
-                    />
-                  </View>
-                )}
-                {i < arr.length - 1 && <Text style={{ color: '#CCCCCC', fontSize: 12 }}>›</Text>}
-              </Fragment>
-            ))}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                        <MaterialCommunityIcons
+                          name={stage.mode === 'subway' ? 'subway-variant' : 'bus'}
+                          size={11}
+                          color="#1E1D1D"
+                        />
+                        <Text style={{ color: '#1E1D1D', fontSize: 11, fontWeight: '700' }}>
+                          {stage.line_code ?? stage.mode}
+                        </Text>
+                      </View>
+                      <View
+                        style={{
+                          position: 'absolute',
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          height: 3,
+                          backgroundColor: getLineColor(stage.line_code ?? stage.mode ?? ''),
+                        }}
+                      />
+                    </View>
+                  )}
+                  {i < arr.length - 1 && <Text style={{ color: '#CCCCCC', fontSize: 12 }}>›</Text>}
+                </Fragment>
+              ))
+            )}
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
@@ -1170,7 +1381,7 @@ export default function RouteResultsScreen() {
             </View>
 
             <TouchableOpacity
-              onPress={() => openRouteDetail(route)}
+              onPress={() => openRouteDetail(route, cardIndex)}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -1369,23 +1580,6 @@ export default function RouteResultsScreen() {
               ) : null}
             </View>
           </View>
-          <View style={styles.headerSwapOverlay} pointerEvents="box-none">
-            <TouchableOpacity style={styles.swap} onPress={handleSwapLocations}>
-              <MaterialCommunityIcons name="swap-vertical" size={18} color="#0057A8" />
-            </TouchableOpacity>
-          </View>
-          <View style={styles.headerActionsOverlay} pointerEvents="box-none">
-            <TouchableOpacity onPress={() => Keyboard.dismiss()}>
-              <MaterialCommunityIcons name="tune" size={20} color="#0057A8" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.headerPlusBtn, middleStop !== null ? styles.headerPlusBtnDisabled : null]}
-              onPress={handleAddWaypoint}
-              disabled={middleStop !== null}
-            >
-              <MaterialCommunityIcons name="plus" size={18} color="#0057A8" />
-            </TouchableOpacity>
-          </View>
         </View>
 
         <View style={styles.headerCompanionBlock}>
@@ -1443,31 +1637,87 @@ export default function RouteResultsScreen() {
 
       {showRouteResults ? (
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 28 }}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.filterChipsScroll}
-          contentContainerStyle={styles.filterChipsContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          <TouchableOpacity style={styles.filterChip} activeOpacity={0.85} onPress={() => Keyboard.dismiss()}>
-            <Text style={styles.filterChipText}>Sair agora</Text>
-            <MaterialCommunityIcons name="chevron-down" size={16} color="#4B5563" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.filterChip} activeOpacity={0.85} onPress={() => Keyboard.dismiss()}>
-            <MaterialCommunityIcons name="sort-variant" size={16} color="#4B5563" />
-            <Text style={styles.filterChipText}>Ordenar</Text>
-            <MaterialCommunityIcons name="chevron-down" size={16} color="#4B5563" />
-          </TouchableOpacity>
-          <View style={styles.filterChip}>
-            <MaterialCommunityIcons name="walk" size={16} color="#4B5563" />
-            <Text style={styles.filterChipText}>Partida</Text>
-          </View>
-          <TouchableOpacity style={styles.filterChip} activeOpacity={0.85} onPress={() => Keyboard.dismiss()}>
-            <MaterialCommunityIcons name="swap-horizontal" size={16} color="#4B5563" />
-            <Text style={styles.filterChipText}>Troca rápida</Text>
-          </TouchableOpacity>
-        </ScrollView>
+        <View style={styles.filterRowWrap}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterChipsScroll}
+            contentContainerStyle={styles.filterChipsContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            <TouchableOpacity
+              style={styles.filterChip}
+              activeOpacity={0.85}
+              onPress={() => {
+                Keyboard.dismiss();
+                setShowTimeFilterList((prev) => !prev);
+              }}
+            >
+              <Text style={styles.filterChipText}>{selectedTimeFilter.label}</Text>
+              <MaterialCommunityIcons name="chevron-down" size={16} color="#4B5563" />
+            </TouchableOpacity>
+            {ROUTE_PREFERENCE_OPTIONS.map((pref) => {
+              const selected = selectedRoutePreference === pref.key;
+              return (
+                <TouchableOpacity
+                  key={pref.key}
+                  style={[styles.filterChip, selected ? styles.filterChipActive : null]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setSelectedRoutePreference(pref.key);
+                    fetchRoutesForHeader({ routePreference: pref.key });
+                  }}
+                >
+                  <MaterialCommunityIcons
+                    name={pref.icon}
+                    size={16}
+                    color={selected ? '#FFFFFF' : '#4B5563'}
+                  />
+                  <Text style={[styles.filterChipText, selected ? styles.filterChipTextActive : null]}>
+                    {pref.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          {showTimeFilterList ? (
+            <View style={styles.timeFilterList}>
+              {TIME_FILTER_OPTIONS.map((option) => {
+                const selected = option.key === selectedTimeFilter.key;
+                return (
+                  <TouchableOpacity
+                    key={option.key}
+                    style={[styles.timeFilterListItem, selected ? styles.timeFilterListItemSelected : null]}
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      if (
+                        option.key === 'set_departure_time' ||
+                        option.key === 'set_arrival_time'
+                      ) {
+                        Keyboard.dismiss();
+                        setShowTimeFilterList(false);
+                        openManualTimeModal(option.key);
+                        return;
+                      }
+                      setSelectedTimeFilter(option);
+                      fetchRoutesForHeader({ timeOption: option });
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.timeFilterListItemText,
+                        selected ? styles.timeFilterListItemTextSelected : null,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
 
         <Text style={styles.sectionTitleMuted}>Táxi e transporte privado</Text>
         <TouchableOpacity onPress={() => Linking.openURL(uberDeepLink)} style={styles.uberCard} activeOpacity={0.9}>
@@ -1489,7 +1739,7 @@ export default function RouteResultsScreen() {
           <Text style={styles.sectionTitleStrong}>Rotas sugeridas</Text>
         </View>
 
-        {mostAccessibleRoute ? renderRouteCard(mostAccessibleRoute, 'most-accessible', true) : null}
+        {mostAccessibleRoute ? renderRouteCard(mostAccessibleRoute, 'most-accessible', true, 0) : null}
 
         {filteredRoutes.length === 0 ? (
           hasTypedAddress ? (
@@ -1504,7 +1754,9 @@ export default function RouteResultsScreen() {
             </View>
           )
         ) : null}
-        {displayedRoutes.map((route, index) => renderRouteCard(route, `route-${index}`))}
+        {displayedRoutes.map((route, index) =>
+          renderRouteCard(route, `route-${index}`, false, mostAccessibleRoute ? index + 1 : index),
+        )}
       </ScrollView>
       ) : (
         <View style={styles.preSearchArea}>
@@ -1515,6 +1767,73 @@ export default function RouteResultsScreen() {
           </Text>
         </View>
       )}
+      <Modal
+        transparent
+        animationType="fade"
+        visible={showManualTimeModal}
+        onRequestClose={handleManualTimeCancel}
+      >
+        <View style={styles.manualTimeBackdrop}>
+          <View style={styles.manualTimeSheet}>
+            <Text style={styles.manualTimeTitle}>
+              {pendingTimeFilterKey === 'set_arrival_time'
+                ? 'Definir horário de chegada desejado'
+                : 'Definir horário de saída'}
+            </Text>
+            <View style={styles.manualTimeDigitsRow}>
+              {[0, 1].map((idx) => (
+                <TextInput
+                  key={`h-${idx}`}
+                  value={manualTimeDigits[idx] ?? ''}
+                  onChangeText={(value) => {
+                    const digit = value.replace(/\D/g, '').slice(-1);
+                    setManualTimeDigits((prev) => {
+                      const next = [...prev];
+                      next[idx] = digit;
+                      return next;
+                    });
+                  }}
+                  keyboardType="number-pad"
+                  maxLength={1}
+                  style={styles.manualTimeDigitInput}
+                  textAlign="center"
+                  placeholder="0"
+                  placeholderTextColor="#9CA3AF"
+                />
+              ))}
+              <Text style={styles.manualTimeSeparator}>:</Text>
+              {[2, 3].map((idx) => (
+                <TextInput
+                  key={`m-${idx}`}
+                  value={manualTimeDigits[idx] ?? ''}
+                  onChangeText={(value) => {
+                    const digit = value.replace(/\D/g, '').slice(-1);
+                    setManualTimeDigits((prev) => {
+                      const next = [...prev];
+                      next[idx] = digit;
+                      return next;
+                    });
+                  }}
+                  keyboardType="number-pad"
+                  maxLength={1}
+                  style={styles.manualTimeDigitInput}
+                  textAlign="center"
+                  placeholder="0"
+                  placeholderTextColor="#9CA3AF"
+                />
+              ))}
+            </View>
+            <View style={styles.manualTimeActions}>
+              <TouchableOpacity style={styles.manualTimeConfirmBtn} onPress={handleManualTimeConfirm}>
+                <Text style={styles.manualTimeConfirmText}>Concluído</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleManualTimeCancel}>
+                <Text style={styles.manualTimeCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1637,7 +1956,7 @@ const styles = StyleSheet.create({
   headerPlusBtnDisabled: { opacity: 0.4 },
   headerSwapOverlay: {
     position: 'absolute',
-    right: 44,
+    right: 8,
     top: 4,
     height: 88,
     width: 34,
@@ -1746,13 +2065,17 @@ const styles = StyleSheet.create({
   },
   filterChipsScroll: {
     maxHeight: 48,
-    marginTop: 16,
-    marginBottom: 8,
   },
   filterChipsContent: {
     paddingHorizontal: 16,
     gap: 8,
     alignItems: 'center',
+  },
+  filterRowWrap: {
+    position: 'relative',
+    marginTop: 16,
+    marginBottom: 8,
+    zIndex: 20,
   },
   filterChip: {
     flexDirection: 'row',
@@ -1765,10 +2088,121 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
   },
+  filterChipActive: {
+    backgroundColor: '#0057A8',
+    borderColor: '#0057A8',
+  },
   filterChipText: {
     color: '#374151',
     fontSize: 13,
     fontFamily: 'Agrandir-Regular',
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
+  },
+  timeFilterList: {
+    position: 'absolute',
+    top: 50,
+    left: 16,
+    width: 250,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+  timeFilterListItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#EEF2F7',
+  },
+  timeFilterListItemSelected: {
+    backgroundColor: '#EFF6FF',
+  },
+  timeFilterListItemText: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  timeFilterListItemTextSelected: {
+    color: '#0057A8',
+    fontWeight: '700',
+  },
+  manualTimeBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  manualTimeSheet: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 16,
+  },
+  manualTimeTitle: {
+    color: '#0F172A',
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 14,
+  },
+  manualTimeDigitsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 20,
+  },
+  manualTimeDigitInput: {
+    width: 46,
+    height: 54,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#93C5FD',
+    backgroundColor: '#F8FAFC',
+    color: '#0F172A',
+    fontSize: 28,
+    fontWeight: '700',
+    paddingVertical: 0,
+  },
+  manualTimeSeparator: {
+    color: '#334155',
+    fontSize: 26,
+    fontWeight: '700',
+    marginHorizontal: 2,
+  },
+  manualTimeActions: {
+    alignItems: 'center',
+    gap: 12,
+  },
+  manualTimeConfirmBtn: {
+    width: '100%',
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#3B82F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  manualTimeConfirmText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  manualTimeCancelText: {
+    color: '#2563EB',
+    fontSize: 18,
+    fontWeight: '600',
   },
   routeStagesFrame: {
     borderWidth: 1,
