@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilityPreferences, useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import * as Location from 'expo-location';
 import { API_URL } from '../constants/api';
 import type { Station } from '../mocks/stations';
@@ -465,8 +466,10 @@ export default function SearchDestinationScreen() {
         <View style={[styles.headerRow, sx.fillScreen]}>
           <TouchableOpacity
             onPress={() => router.back()}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            hitSlop={A11Y_HIT_SLOP}
             style={styles.headerIconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Voltar"
           >
             <MaterialCommunityIcons name="arrow-left" size={24} color={TITLE} />
           </TouchableOpacity>
@@ -484,9 +487,17 @@ export default function SearchDestinationScreen() {
             }}
             autoCorrect={false}
             autoCapitalize="sentences"
+            accessibilityLabel="Destino da viagem"
+            accessibilityHint="Digite para onde deseja ir e confirme para buscar rotas"
+            importantForAccessibility="yes"
           />
           {hasQuery ? (
-            <TouchableOpacity onPress={() => setQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity
+              onPress={() => setQuery('')}
+              hitSlop={A11Y_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="Limpar busca"
+            >
               <MaterialCommunityIcons name="close-circle" size={22} color="#9CA3AF" />
             </TouchableOpacity>
           ) : null}
@@ -504,6 +515,8 @@ export default function SearchDestinationScreen() {
                 style={styles.lineSearchRow}
                 onPress={() => router.push('/lines')}
                 activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Procure uma linha de transporte"
               >
                 <MaterialCommunityIcons name="transit-connection-variant" size={22} color={PRIMARY} />
                 <Text style={styles.linkBlue}>Procure uma linha</Text>
@@ -516,7 +529,9 @@ export default function SearchDestinationScreen() {
                     <TouchableOpacity
                       activeOpacity={0.75}
                       onPress={() => router.push('/home')}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      hitSlop={A11Y_HIT_SLOP}
+                      accessibilityRole="button"
+                      accessibilityLabel="Adicionar favorito na página inicial"
                     >
                       <Text style={styles.linkBlue}>+ Adicionar</Text>
                     </TouchableOpacity>
@@ -528,6 +543,8 @@ export default function SearchDestinationScreen() {
                       style={styles.emptyFavoritesWrap}
                       onPress={() => router.push('/home')}
                       activeOpacity={0.75}
+                      accessibilityRole="button"
+                      accessibilityLabel="Ir à página inicial para adicionar favoritos"
                     >
                       <Text style={styles.emptyFavoritesText}>
                         Você ainda não tem favoritos na página inicial. Lá você pode tocar em{' '}
@@ -548,6 +565,8 @@ export default function SearchDestinationScreen() {
                             })
                           }
                           activeOpacity={0.75}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Favorito: ${item.label}. ${item.subtitle || item.address}`}
                         >
                           <MaterialCommunityIcons
                             name={item.icon as keyof typeof MaterialCommunityIcons.glyphMap}
@@ -572,9 +591,9 @@ export default function SearchDestinationScreen() {
 
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitleMuted}>Recentes</Text>
-                <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <View accessible={false} importantForAccessibility="no-hide-descendants">
                   <MaterialCommunityIcons name="dots-vertical" size={22} color="#9CA3AF" />
-                </TouchableOpacity>
+                </View>
               </View>
               {loadingRecents ? (
                 <Text style={styles.loadingRecents}>Carregando…</Text>
@@ -587,6 +606,12 @@ export default function SearchDestinationScreen() {
                       style={styles.rowPad}
                       onPress={() => goToResults(route.destination, route.origin)}
                       activeOpacity={0.75}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        route.origin
+                          ? `Viagem recente para ${route.destination}, partindo de ${route.origin}`
+                          : `Viagem recente para ${route.destination}`
+                      }
                     >
                       <MaterialCommunityIcons name="shopping-outline" size={22} color="#9CA3AF" />
                       <View style={styles.rowBody}>
@@ -628,6 +653,8 @@ export default function SearchDestinationScreen() {
                       style={styles.rowPad}
                       onPress={() => void openPlaceForFlow(item)}
                       activeOpacity={0.75}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${item.title}. ${item.subtitle || item.fullDescription}. Distância ${item.distanceLabel}`}
                     >
                       <View style={styles.rowLeftCol}>
                         <MaterialCommunityIcons
@@ -682,6 +709,8 @@ export default function SearchDestinationScreen() {
                         });
                       }}
                       activeOpacity={0.75}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Estação ${station.name}, ${station.address}. Distância ${distanceLabel}`}
                     >
                       <View style={styles.rowLeftCol}>
                         <View style={styles.busTile}>

@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import ForgotPasswordSvg from '../assets/images/undraw_forgot-password_nttj (1).svg';
 import { API_URL } from '../constants/api';
 
@@ -113,7 +114,13 @@ export default function EmailConfirmationScreen() {
     <SafeAreaView style={[styles.safeArea, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          hitSlop={A11Y_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel="Voltar"
+        >
           <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
         </TouchableOpacity>
         <View style={styles.illustrationWrap}>
@@ -142,18 +149,38 @@ export default function EmailConfirmationScreen() {
                 keyboardType="number-pad"
                 maxLength={1}
                 textAlign="center"
+                accessibilityLabel={`Dígito ${index + 1} do código de 6 dígitos`}
               />
             );
           })}
         </View>
 
-        <TouchableOpacity style={styles.confirmButton} onPress={handleConfirm} disabled={confirming}>
+        <TouchableOpacity
+          style={styles.confirmButton}
+          onPress={handleConfirm}
+          disabled={confirming}
+          accessibilityRole="button"
+          accessibilityLabel={confirming ? 'Validando código' : 'Confirmar email'}
+          accessibilityState={{ disabled: confirming }}
+        >
           <Text style={styles.confirmText}>{confirming ? 'Validando...' : 'Confirmar'}</Text>
         </TouchableOpacity>
 
         <View style={styles.resendRow}>
           <Text style={styles.resendText}>Não recebeu? </Text>
-          <TouchableOpacity onPress={handleResend} disabled={resendLeftSeconds > 0 || resending}>
+          <TouchableOpacity
+            onPress={handleResend}
+            disabled={resendLeftSeconds > 0 || resending}
+            accessibilityRole="button"
+            accessibilityLabel={
+              resending
+                ? 'Reenviando código'
+                : resendLeftSeconds > 0
+                  ? `Reenviar código em ${resendLeftSeconds} segundos`
+                  : 'Reenviar código de confirmação'
+            }
+            accessibilityState={{ disabled: resendLeftSeconds > 0 || resending }}
+          >
             <Text
               style={{
                 color: resendLeftSeconds > 0 ? '#AAAAAA' : '#0057A8',

@@ -14,6 +14,7 @@ import {
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { API_URL } from '../constants/api';
@@ -375,8 +376,10 @@ export default function RoutePlanScreen() {
       <View style={styles.topBar}>
         <TouchableOpacity
           onPress={() => router.back()}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          hitSlop={A11Y_HIT_SLOP}
           style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Voltar"
         >
           <MaterialCommunityIcons name="arrow-left" size={24} color={TITLE} />
         </TouchableOpacity>
@@ -390,13 +393,23 @@ export default function RoutePlanScreen() {
             <MaterialCommunityIcons name="map-marker" size={22} color={PRIMARY} />
           </View>
           <View style={styles.odTexts}>
-            <TouchableOpacity onPress={goEditLocations} activeOpacity={0.75}>
+            <TouchableOpacity
+              onPress={goEditLocations}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={`Origem: ${originDisplay}. Toque para editar origem e destino`}
+            >
               <Text style={styles.odPrimary} numberOfLines={1} ellipsizeMode="tail">
                 {originDisplay}
               </Text>
             </TouchableOpacity>
             <View style={styles.odDivider} />
-            <TouchableOpacity onPress={goEditLocations} activeOpacity={0.75}>
+            <TouchableOpacity
+              onPress={goEditLocations}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={`Destino: ${destDisplay}. Toque para editar origem e destino`}
+            >
               <Text style={styles.odPrimary} numberOfLines={1} ellipsizeMode="tail">
                 {destDisplay}
               </Text>
@@ -407,7 +420,10 @@ export default function RoutePlanScreen() {
               style={[styles.swapCircle, !canSwapCoords && styles.swapDisabled]}
               onPress={canSwapCoords ? handleSwap : undefined}
               disabled={!canSwapCoords}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              hitSlop={A11Y_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="Trocar origem e destino"
+              accessibilityState={{ disabled: !canSwapCoords }}
             >
               <MaterialCommunityIcons name="swap-vertical" size={22} color={PRIMARY} />
             </TouchableOpacity>
@@ -422,6 +438,9 @@ export default function RoutePlanScreen() {
         }}
         disabled={findRoutesLoading}
         activeOpacity={0.92}
+        accessibilityRole="button"
+        accessibilityLabel={findRoutesLoading ? 'Buscando rotas' : 'Encontrar rotas'}
+        accessibilityState={{ disabled: findRoutesLoading }}
       >
         {findRoutesLoading ? (
           <ActivityIndicator color="#FFFFFF" size="small" />
@@ -441,6 +460,7 @@ export default function RoutePlanScreen() {
             mapType="standard"
             showsUserLocation={false}
             showsMyLocationButton={false}
+            accessibilityLabel={`Mapa da rota de ${originDisplay} até ${destDisplay}`}
             initialRegion={{
               latitude: destCoord.latitude,
               longitude: destCoord.longitude,
@@ -510,7 +530,14 @@ export default function RoutePlanScreen() {
           </View>
         ) : null}
 
-        <TouchableOpacity style={styles.recenter} onPress={fitBoth} activeOpacity={0.85}>
+        <TouchableOpacity
+          style={styles.recenter}
+          onPress={fitBoth}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Centralizar mapa na rota"
+          hitSlop={A11Y_HIT_SLOP}
+        >
           <MaterialCommunityIcons name="crosshairs-gps" size={22} color={PRIMARY} />
         </TouchableOpacity>
       </View>
@@ -524,6 +551,8 @@ export default function RoutePlanScreen() {
           <TouchableOpacity
             style={{ flex: 1 }}
             onPress={() => setSelectedPoint(null)}
+            accessibilityLabel="Fechar detalhes do local"
+            accessibilityRole="button"
           />
           <View style={{
             backgroundColor: '#FFFFFF',
@@ -551,6 +580,9 @@ export default function RoutePlanScreen() {
                 <TouchableOpacity
                   onPress={() => setSelectedPoint(null)}
                   style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#F5F5F5', alignItems: 'center', justifyContent: 'center' }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Fechar"
+                  hitSlop={A11Y_HIT_SLOP}
                 >
                   <MaterialCommunityIcons name="close" size={16} color="#666666" />
                 </TouchableOpacity>

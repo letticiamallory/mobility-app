@@ -16,6 +16,8 @@ type Props = {
   textStyle: TextStyle;
   idleLabel?: string;
   loadingLabel?: string;
+  /** Rótulo para leitores de tela (padrão deriva dos rótulos visíveis). */
+  accessibilityLabel?: string;
   /** `spinner`: indicador + texto. `idle-muted`: mantém o rótulo normal com o estilo “desativado” (use com barra de progresso no header). */
   loadingMode?: 'spinner' | 'idle-muted';
   activeOpacity?: number;
@@ -34,8 +36,11 @@ export function PulsingRouteSearchButton({
   loadingLabel = 'Buscando rotas',
   loadingMode = 'spinner',
   activeOpacity = 0.85,
+  accessibilityLabel: accessibilityLabelProp,
 }: Props) {
   const showMutedIdle = loading && loadingMode === 'idle-muted';
+  const a11yLabel =
+    accessibilityLabelProp ?? (loading && !showMutedIdle ? loadingLabel : idleLabel);
 
   return (
     <TouchableOpacity
@@ -43,6 +48,9 @@ export function PulsingRouteSearchButton({
       onPress={onPress}
       disabled={disabled}
       activeOpacity={activeOpacity}
+      accessibilityRole="button"
+      accessibilityLabel={a11yLabel}
+      accessibilityState={{ disabled }}
     >
       {loading && !showMutedIdle ? (
         <View style={styles.loadingRow}>

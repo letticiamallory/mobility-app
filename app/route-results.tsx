@@ -21,6 +21,7 @@ import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Stage = {
@@ -1346,6 +1347,8 @@ export default function RouteResultsScreen() {
                     paddingHorizontal: 10,
                     paddingVertical: 4,
                   }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Atenção neste trajeto. Toque para detalhes"
                 >
                   <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#D97706' }} />
                   <Text style={{ fontSize: 11, fontWeight: '500', color: '#92400E' }}>Atenção</Text>
@@ -1397,6 +1400,8 @@ export default function RouteResultsScreen() {
                 flexShrink: 0,
               }}
               activeOpacity={0.88}
+              accessibilityRole="button"
+              accessibilityLabel="Ver trechos e detalhes da rota no mapa"
             >
               <MaterialCommunityIcons name="map-search" size={13} color="#FFFFFF" />
               <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '500' }}>Trechos</Text>
@@ -1416,7 +1421,12 @@ export default function RouteResultsScreen() {
           <View style={styles.headerOriginDestBlock}>
             <View style={styles.headerIconsColumn}>
               <View style={styles.headerLeadIconRow}>
-                <TouchableOpacity onPress={() => router.back()}>
+                <TouchableOpacity
+                  onPress={() => router.back()}
+                  hitSlop={A11Y_HIT_SLOP}
+                  accessibilityRole="button"
+                  accessibilityLabel="Voltar"
+                >
                   <MaterialCommunityIcons name="arrow-left" size={22} color="#0057A8" />
                 </TouchableOpacity>
               </View>
@@ -1447,6 +1457,7 @@ export default function RouteResultsScreen() {
                   placeholderTextColor="#9CA3AF"
                   style={styles.fieldInput}
                   returnKeyType="next"
+                  accessibilityLabel="Origem da viagem"
                 />
               </View>
               {activeSearchField === 'origin' && placeSuggestions.length > 0 ? (
@@ -1471,6 +1482,8 @@ export default function RouteResultsScreen() {
                             setActiveSearchField(null);
                             setPlaceSuggestions([]);
                           }}
+                          accessibilityRole="button"
+                          accessibilityLabel={item.description}
                         >
                           <Text style={styles.suggestionText} numberOfLines={2}>{item.description}</Text>
                         </TouchableOpacity>
@@ -1491,12 +1504,13 @@ export default function RouteResultsScreen() {
                     onFocus={() => setActiveSearchField('waypoint')}
                     placeholder="Adicione uma parada"
                     placeholderTextColor="#9CA3AF"
+                    accessibilityLabel="Parada intermediária"
                   />
                   <TouchableOpacity
                     onPress={handleRemoveMiddleStop}
                     accessibilityRole="button"
                     accessibilityLabel="Remover parada"
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    hitSlop={A11Y_HIT_SLOP}
                   >
                     <MaterialCommunityIcons name="close-circle-outline" size={22} color="#9CA3AF" />
                   </TouchableOpacity>
@@ -1524,6 +1538,8 @@ export default function RouteResultsScreen() {
                             setActiveSearchField(null);
                             setPlaceSuggestions([]);
                           }}
+                          accessibilityRole="button"
+                          accessibilityLabel={item.description}
                         >
                           <Text style={styles.suggestionText} numberOfLines={2}>{item.description}</Text>
                         </TouchableOpacity>
@@ -1550,6 +1566,7 @@ export default function RouteResultsScreen() {
                     setPlaceSuggestions([]);
                     fetchRoutesForHeader();
                   }}
+                  accessibilityLabel="Destino da viagem"
                 />
               </View>
               {activeSearchField === 'destination' && placeSuggestions.length > 0 ? (
@@ -1574,6 +1591,8 @@ export default function RouteResultsScreen() {
                             setActiveSearchField(null);
                             setPlaceSuggestions([]);
                           }}
+                          accessibilityRole="button"
+                          accessibilityLabel={item.description}
                         >
                           <Text style={styles.suggestionText} numberOfLines={2}>{item.description}</Text>
                         </TouchableOpacity>
@@ -1592,6 +1611,9 @@ export default function RouteResultsScreen() {
               style={styles.companionTabBtn}
               onPress={() => setActiveCompanionTab('alone')}
               activeOpacity={0.85}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: activeCompanionTab === 'alone' }}
+              accessibilityLabel="Viajar sozinho"
             >
               <Text
                 style={[
@@ -1606,6 +1628,9 @@ export default function RouteResultsScreen() {
               style={styles.companionTabBtn}
               onPress={() => setActiveCompanionTab('companied')}
               activeOpacity={0.85}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: activeCompanionTab === 'companied' }}
+              accessibilityLabel="Viajar acompanhado"
             >
               <Text
                 style={[
@@ -1656,6 +1681,9 @@ export default function RouteResultsScreen() {
                 Keyboard.dismiss();
                 setShowTimeFilterList((prev) => !prev);
               }}
+              accessibilityRole="button"
+              accessibilityLabel={`Filtro de horário: ${selectedTimeFilter.label}`}
+              accessibilityState={{ expanded: showTimeFilterList }}
             >
               <Text style={styles.filterChipText}>{selectedTimeFilter.label}</Text>
               <MaterialCommunityIcons name="chevron-down" size={16} color="#4B5563" />
@@ -1672,6 +1700,9 @@ export default function RouteResultsScreen() {
                     setSelectedRoutePreference(pref.key);
                     fetchRoutesForHeader({ routePreference: pref.key });
                   }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Preferência de rota: ${pref.label}`}
+                  accessibilityState={{ selected }}
                 >
                   <MaterialCommunityIcons
                     name={pref.icon}
@@ -1707,6 +1738,9 @@ export default function RouteResultsScreen() {
                       setSelectedTimeFilter(option);
                       fetchRoutesForHeader({ timeOption: option });
                     }}
+                    accessibilityRole="button"
+                    accessibilityLabel={option.label}
+                    accessibilityState={{ selected }}
                   >
                     <Text
                       style={[
@@ -1724,7 +1758,14 @@ export default function RouteResultsScreen() {
         </View>
 
         <Text style={styles.sectionTitleMuted}>Táxi e transporte privado</Text>
-        <TouchableOpacity onPress={() => Linking.openURL(uberDeepLink)} style={styles.uberCard} activeOpacity={0.9}>
+        <TouchableOpacity
+          onPress={() => Linking.openURL(uberDeepLink)}
+          style={styles.uberCard}
+          activeOpacity={0.9}
+          accessibilityRole="button"
+          accessibilityLabel="Pedir corrida no Uber"
+          accessibilityHint="Abre o aplicativo Uber"
+        >
           <View style={styles.uberLeft}>
             <View style={styles.uberLogo}>
               <Text style={styles.uberLogoText}>U</Text>
@@ -1803,6 +1844,7 @@ export default function RouteResultsScreen() {
                   textAlign="center"
                   placeholder="0"
                   placeholderTextColor="#9CA3AF"
+                  accessibilityLabel={`Hora, dígito ${idx + 1} de 2`}
                 />
               ))}
               <Text style={styles.manualTimeSeparator}>:</Text>
@@ -1824,14 +1866,24 @@ export default function RouteResultsScreen() {
                   textAlign="center"
                   placeholder="0"
                   placeholderTextColor="#9CA3AF"
+                  accessibilityLabel={`Minutos, dígito ${idx - 1} de 2`}
                 />
               ))}
             </View>
             <View style={styles.manualTimeActions}>
-              <TouchableOpacity style={styles.manualTimeConfirmBtn} onPress={handleManualTimeConfirm}>
+              <TouchableOpacity
+                style={styles.manualTimeConfirmBtn}
+                onPress={handleManualTimeConfirm}
+                accessibilityRole="button"
+                accessibilityLabel="Confirmar horário"
+              >
                 <Text style={styles.manualTimeConfirmText}>Concluído</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={handleManualTimeCancel}>
+              <TouchableOpacity
+                onPress={handleManualTimeCancel}
+                accessibilityRole="button"
+                accessibilityLabel="Cancelar edição de horário"
+              >
                 <Text style={styles.manualTimeCancelText}>Cancelar</Text>
               </TouchableOpacity>
             </View>

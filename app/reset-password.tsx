@@ -13,6 +13,7 @@ import { resetPassword } from '../services/auth.service';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 
 export default function ResetPasswordScreen() {
   const router = useRouter();
@@ -58,7 +59,13 @@ export default function ResetPasswordScreen() {
     <SafeAreaView style={[styles.safeArea, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          hitSlop={A11Y_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel="Voltar"
+        >
           <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
         </TouchableOpacity>
 
@@ -75,6 +82,9 @@ export default function ResetPasswordScreen() {
             onChangeText={setNewPassword}
             placeholder="Digite a nova senha"
             secureTextEntry
+            accessibilityLabel="Nova senha"
+            textContentType="newPassword"
+            autoComplete="password-new"
           />
         </View>
 
@@ -86,6 +96,8 @@ export default function ResetPasswordScreen() {
             onChangeText={setConfirmPassword}
             placeholder="Repita a nova senha"
             secureTextEntry
+            accessibilityLabel="Confirmar nova senha"
+            textContentType="newPassword"
           />
         </View>
 
@@ -93,6 +105,9 @@ export default function ResetPasswordScreen() {
           style={[styles.saveBtn, loading ? styles.saveBtnDisabled : null]}
           onPress={handleSubmit}
           disabled={loading}
+          accessibilityRole="button"
+          accessibilityLabel={loading ? 'Salvando nova senha' : 'Salvar nova senha'}
+          accessibilityState={{ disabled: loading }}
         >
           <Text style={styles.saveBtnText}>{loading ? 'Salvando...' : 'Salvar nova senha'}</Text>
         </TouchableOpacity>

@@ -20,6 +20,7 @@ import {
   useAccessibilityPreferences,
   useAccessibilitySurfaces,
 } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { login } from '../services/auth.service';
 import { API_URL } from '../constants/api';
@@ -256,6 +257,9 @@ function LoginScreenInner() {
                 autoCapitalize="none"
                 value={email}
                 onChangeText={setEmail}
+                accessibilityLabel="Email"
+                textContentType="emailAddress"
+                autoComplete="email"
               />
 
               <Text style={styles.fieldLabel}>Senha</Text>
@@ -268,8 +272,16 @@ function LoginScreenInner() {
                   secureTextEntry={!showPassword}
                   value={password}
                   onChangeText={setPassword}
+                  accessibilityLabel="Senha"
+                  textContentType="password"
+                  autoComplete="password"
                 />
-                <TouchableOpacity onPress={() => setShowPassword((prev) => !prev)}>
+                <TouchableOpacity
+                  onPress={() => setShowPassword((prev) => !prev)}
+                  hitSlop={A11Y_HIT_SLOP}
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                >
                   <MaterialCommunityIcons
                     name={showPassword ? 'eye-off-outline' : 'eye-outline'}
                     size={22}
@@ -283,6 +295,9 @@ function LoginScreenInner() {
                   style={styles.rememberWrap}
                   activeOpacity={0.8}
                   onPress={() => setRememberMe((v) => !v)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: rememberMe }}
+                  accessibilityLabel="Lembrar-me neste dispositivo"
                 >
                   <View style={styles.checkBox}>
                     {rememberMe ? (
@@ -291,7 +306,12 @@ function LoginScreenInner() {
                   </View>
                   <Text style={styles.rememberText}>Lembrar-me</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => router.push('/forgot-password')} activeOpacity={0.8}>
+                <TouchableOpacity
+                  onPress={() => router.push('/forgot-password')}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Esqueci minha senha"
+                >
                   <Text style={styles.forgotText}>Esqueci minha senha</Text>
                 </TouchableOpacity>
               </View>
@@ -300,11 +320,20 @@ function LoginScreenInner() {
                 style={[styles.button, loading && styles.buttonDisabled]}
                 onPress={handleLogin}
                 disabled={loading}
+                accessibilityRole="button"
+                accessibilityLabel={loading ? 'Entrando' : 'Entrar'}
+                accessibilityState={{ disabled: loading }}
               >
                 <Text style={styles.buttonText}>{loading ? 'Entrando...' : 'Entrar'}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.signupRow} onPress={() => router.push('/register')} activeOpacity={0.8}>
+              <TouchableOpacity
+                style={styles.signupRow}
+                onPress={() => router.push('/register')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Não tem conta? Registre-se"
+              >
                 <Text style={styles.signupText}>
                   Não tem conta? <Text style={styles.signupLink}>Registre-se</Text>
                 </Text>
@@ -349,6 +378,8 @@ function LoginScreenInner() {
                     if (__DEV__) console.log('[login/dev] SecureStore + AsyncStorage limpos');
                     Alert.alert('Dev', 'Armazenamento limpo. Tente entrar de novo.');
                   }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Desenvolvimento: limpar armazenamento local do app"
                 >
                   <Text style={styles.devClearText}>Limpar dados (dev)</Text>
                 </TouchableOpacity>

@@ -338,9 +338,18 @@ export default function StationsScreen() {
             </View>
           ) : null}
         </View>
-        <TouchableOpacity style={[styles.searchBar, sx.searchInset]} onPress={() => router.push('/search-destination')} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={[styles.searchBar, sx.searchInset]}
+          onPress={() => router.push('/search-destination')}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Buscar estação"
+          accessibilityHint="Abre a busca de destino para encontrar uma estação"
+        >
           <MaterialCommunityIcons name="magnify" size={20} color="#AAAAAA" />
-          <Text style={[styles.searchInput, { color: '#AAAAAA', paddingTop: 2 }]}>Buscar estação...</Text>
+          <Text style={[styles.searchInput, { color: '#AAAAAA', paddingTop: 2 }]} importantForAccessibility="no">
+            Buscar estação...
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -377,11 +386,23 @@ export default function StationsScreen() {
       </MapView>
 
       <View style={[styles.tabsRow, sx.fillCard, sx.hairlineBottom]}>
-        <TouchableOpacity style={styles.tabButton} onPress={() => setSelectedTab('all')}>
+        <TouchableOpacity
+          style={styles.tabButton}
+          onPress={() => setSelectedTab('all')}
+          accessibilityRole="button"
+          accessibilityLabel="Todas as estações"
+          accessibilityState={{ selected: selectedTab === 'all' }}
+        >
           <Text style={[styles.tabText, selectedTab === 'all' && styles.tabTextActive]}>Todos</Text>
           <View style={[styles.tabLine, selectedTab === 'all' && styles.tabLineActive]} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabButton} onPress={() => setSelectedTab('favorites')}>
+        <TouchableOpacity
+          style={styles.tabButton}
+          onPress={() => setSelectedTab('favorites')}
+          accessibilityRole="button"
+          accessibilityLabel="Estações favoritas"
+          accessibilityState={{ selected: selectedTab === 'favorites' }}
+        >
           <Text style={[styles.tabText, selectedTab === 'favorites' && styles.tabTextActive]}>Favoritas</Text>
           <View style={[styles.tabLine, selectedTab === 'favorites' && styles.tabLineActive]} />
         </TouchableOpacity>
@@ -626,6 +647,9 @@ export default function StationsScreen() {
                 section.type === 'bus' && index === 0 ? { marginTop: 8 } : null,
               ]}
               onPress={() => openSheet(item)}
+              accessibilityRole="button"
+              accessibilityLabel={`Estação ${item.name}. ${item.address}. ${item.accessible ? 'Acessível' : 'Pode não ser acessível'}`}
+              accessibilityHint="Abre detalhes e horários desta estação"
             >
               <View style={styles.cardRow}>
                 <View style={styles.cardMain}>
@@ -762,7 +786,13 @@ export default function StationsScreen() {
       )}
 
       <Modal visible={!!selectedStation} transparent animationType="slide" onRequestClose={closeSheet}>
-        <TouchableOpacity style={styles.modalOverlay} onPress={closeSheet} activeOpacity={1} />
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          onPress={closeSheet}
+          activeOpacity={1}
+          accessibilityRole="button"
+          accessibilityLabel="Fechar detalhes da estação"
+        />
         <Animated.View style={[styles.sheet, sx.fillCard, { transform: [{ translateY: sheetTranslateY }] }]}>
           <View style={styles.handle} />
           <Text style={styles.sheetTitle}>{selectedStation?.name}</Text>
@@ -872,6 +902,12 @@ export default function StationsScreen() {
             <TouchableOpacity
               style={styles.secondaryBtn}
               onPress={() => selectedStation && toggleFavorite(selectedStation.id)}
+              accessibilityRole="button"
+              accessibilityLabel={
+                selectedStation && favorites.includes(selectedStation.id)
+                  ? 'Remover estação dos favoritos'
+                  : 'Adicionar estação aos favoritos'
+              }
             >
               <Text style={styles.secondaryBtnText}>
                 {selectedStation && favorites.includes(selectedStation.id) ? 'Desfavoritar' : 'Favoritar'}
@@ -884,6 +920,8 @@ export default function StationsScreen() {
                 closeSheet();
                 router.push({ pathname: '/route-results', params: { destination: selectedStation.name } });
               }}
+              accessibilityRole="button"
+              accessibilityLabel="Como chegar nesta estação"
             >
               <Text style={styles.primaryBtnText}>Como chegar</Text>
             </TouchableOpacity>

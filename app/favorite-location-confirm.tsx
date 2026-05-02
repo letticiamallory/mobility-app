@@ -13,6 +13,7 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   generateCustomFavoriteId,
@@ -162,7 +163,12 @@ export default function FavoriteLocationConfirmScreen() {
       <SafeAreaView style={[styles.root, styles.centered, sx.fillScreen]} edges={['top', 'left', 'right']}>
         <Stack.Screen options={{ headerShown: false }} />
         <Text style={styles.errText}>Localização inválida. Volte e escolha outro endereço.</Text>
-        <TouchableOpacity style={styles.primaryBtn} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.primaryBtn}
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Voltar"
+        >
           <Text style={styles.primaryBtnText}>Voltar</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -173,7 +179,13 @@ export default function FavoriteLocationConfirmScreen() {
     <SafeAreaView style={[styles.root, sx.fillScreen]} edges={['left', 'right']}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.header, sx.fillCard, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          hitSlop={A11Y_HIT_SLOP}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Voltar"
+        >
           <MaterialCommunityIcons name="arrow-left" size={24} color={TITLE} />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={2}>
@@ -204,6 +216,9 @@ export default function FavoriteLocationConfirmScreen() {
           style={[styles.primaryBtn, saving && styles.primaryBtnDisabled]}
           onPress={handleSave}
           disabled={saving}
+          accessibilityRole="button"
+          accessibilityLabel={saving ? 'Salvando favorito' : 'Salvar favorito'}
+          accessibilityState={{ disabled: saving }}
         >
           {saving ? (
             <ActivityIndicator color="#FFFFFF" />
@@ -220,6 +235,7 @@ export default function FavoriteLocationConfirmScreen() {
           provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
           mapType="standard"
           showsUserLocation={false}
+          accessibilityLabel={`Mapa do local: ${address}`}
           initialRegion={{
             latitude: lat,
             longitude: lng,
@@ -234,7 +250,14 @@ export default function FavoriteLocationConfirmScreen() {
             </View>
           </Marker>
         </MapView>
-        <TouchableOpacity style={styles.recenter} onPress={recenter} activeOpacity={0.85}>
+        <TouchableOpacity
+          style={styles.recenter}
+          onPress={recenter}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Centralizar mapa no marcador"
+          hitSlop={A11Y_HIT_SLOP}
+        >
           <MaterialCommunityIcons name="crosshairs-gps" size={22} color={PRIMARY} />
         </TouchableOpacity>
       </View>

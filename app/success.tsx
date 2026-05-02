@@ -4,12 +4,14 @@ import { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { ScaledText } from '@/components/ScaledText';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { useReduceMotion } from '@/hooks/useReduceMotion';
 
 const AnimatedScaledText = Animated.createAnimatedComponent(ScaledText);
 
 export default function SuccessScreen() {
   const router = useRouter();
   const sx = useAccessibilitySurfaces();
+  const reduceMotion = useReduceMotion();
 
   const dotTL = useRef(new Animated.Value(0)).current;
   const dotTR = useRef(new Animated.Value(0)).current;
@@ -21,6 +23,17 @@ export default function SuccessScreen() {
   const centralScale = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (reduceMotion) {
+      dotTL.setValue(1);
+      dotTR.setValue(1);
+      dotBL.setValue(1);
+      dotBR.setValue(1);
+      star1.setValue(1);
+      star2.setValue(1);
+      star3.setValue(1);
+      centralScale.setValue(1);
+      return;
+    }
     const springIn = (anim: Animated.Value, delay: number) =>
       Animated.spring(anim, {
         toValue: 1,
@@ -38,7 +51,7 @@ export default function SuccessScreen() {
     springIn(star2, 280).start();
     springIn(star3, 350).start();
     springIn(centralScale, 200).start();
-  }, [dotTL, dotTR, dotBL, dotBR, star1, star2, star3, centralScale]);
+  }, [reduceMotion, dotTL, dotTR, dotBL, dotBR, star1, star2, star3, centralScale]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -48,10 +61,14 @@ export default function SuccessScreen() {
   }, [router]);
 
   return (
-    <View style={[styles.screen, sx.fillScreen]}>
+    <View
+      style={[styles.screen, sx.fillScreen]}
+      accessible
+      accessibilityLabel="Cadastro realizado. Sua conta está pronta. Você será redirecionado para a tela inicial."
+    >
       <Stack.Screen options={{ headerShown: false }} />
 
-      <View style={styles.heroWrap}>
+      <View style={styles.heroWrap} importantForAccessibility="no-hide-descendants">
         <Animated.View
           style={[
             styles.decorDot,

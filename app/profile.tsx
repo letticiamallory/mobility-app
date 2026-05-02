@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
 import { getToken, getUserAvatar, getUserInfo, removeToken } from '../services/token.service';
@@ -147,6 +148,7 @@ export default function ProfileScreen() {
             <TouchableOpacity
               style={styles.backButton}
               onPress={() => router.back()}
+              hitSlop={A11Y_HIT_SLOP}
               accessibilityRole="button"
               accessibilityLabel="Voltar"
             >
@@ -175,21 +177,37 @@ export default function ProfileScreen() {
                 {formatDisabilityType(profile.disability_type)}
               </Text>
             </View>
-            <TouchableOpacity style={styles.editButton} onPress={openProfileInfo}>
+            <TouchableOpacity
+              style={styles.editButton}
+              onPress={openProfileInfo}
+              accessibilityRole="button"
+              accessibilityLabel="Editar minhas informações"
+            >
               <Text style={styles.editButtonText}>Editar</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         <View style={[styles.listGroup, sx.fillCard]}>
-          <TouchableOpacity style={styles.listItem} onPress={openProfileInfo}>
+          <TouchableOpacity
+            style={styles.listItem}
+            onPress={openProfileInfo}
+            accessibilityRole="button"
+            accessibilityLabel="Minhas informações"
+          >
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="account-edit" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Minhas informações</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.listItem, styles.noBorder]} onPress={openAccessibilitySettings}>
+          <TouchableOpacity
+            style={[styles.listItem, styles.noBorder]}
+            onPress={openAccessibilitySettings}
+            accessibilityRole="button"
+            accessibilityLabel="Acessibilidade"
+            accessibilityHint="Tipo de deficiência, contraste, fonte e leitura por voz"
+          >
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="human" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Acessibilidade</Text>
@@ -201,14 +219,25 @@ export default function ProfileScreen() {
         <View style={styles.groupDivider} />
 
         <View style={[styles.listGroup, sx.fillCard]}>
-          <TouchableOpacity style={styles.listItem} onPress={openFavorites}>
+          <TouchableOpacity
+            style={styles.listItem}
+            onPress={openFavorites}
+            accessibilityRole="button"
+            accessibilityLabel="Favoritos"
+            accessibilityHint="Abre a tela inicial na seção de favoritos"
+          >
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="heart-outline" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Favoritos</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.listItem, styles.noBorder]} onPress={openTripHistory}>
+          <TouchableOpacity
+            style={[styles.listItem, styles.noBorder]}
+            onPress={openTripHistory}
+            accessibilityRole="button"
+            accessibilityLabel="Histórico de viagens"
+          >
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="history" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Histórico de viagens</Text>
@@ -220,14 +249,24 @@ export default function ProfileScreen() {
         <View style={styles.groupDivider} />
 
         <View style={[styles.listGroup, sx.fillCard]}>
-          <TouchableOpacity style={styles.listItem} onPress={openChangePassword}>
+          <TouchableOpacity
+            style={styles.listItem}
+            onPress={openChangePassword}
+            accessibilityRole="button"
+            accessibilityLabel="Alterar senha"
+          >
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="lock-outline" size={22} color="#0057A8" />
               <Text style={styles.listItemText}>Alterar senha</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.listItem, styles.noBorder]} onPress={handleLogout}>
+          <TouchableOpacity
+            style={[styles.listItem, styles.noBorder]}
+            onPress={handleLogout}
+            accessibilityRole="button"
+            accessibilityLabel="Sair da conta"
+          >
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="logout" size={22} color="#EF4444" />
               <Text style={styles.logoutItemText}>Sair</Text>

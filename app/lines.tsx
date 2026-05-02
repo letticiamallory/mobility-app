@@ -18,6 +18,7 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
 import type { LineItem } from '../mocks/lines';
@@ -131,8 +132,15 @@ function LineRow({ item, onPress }: { item: LineItem; onPress: () => void }) {
   const sx = useAccessibilitySurfaces();
   const itemNext = nextScheduleToday(item.schedules);
   const modeIcon = item.type === 'metro' ? ('subway-variant' as const) : ('bus' as const);
+  const a11yHint = item.accessible ? 'Linha acessível' : 'Linha pode não ser acessível';
+  const nextLabel = itemNext ? `Próximo horário ${itemNext}` : 'Sem horários cadastrados';
   return (
-    <TouchableOpacity style={[styles.lineItem, sx.fillCard, sx.listSeparator]} onPress={onPress}>
+    <TouchableOpacity
+      style={[styles.lineItem, sx.fillCard, sx.listSeparator]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Linha ${item.code}, ${item.name}. ${nextLabel}. ${a11yHint}`}
+    >
       <View style={[styles.lineCodeBadge, sx.fillCard, sx.outlineBorder]}>
         <View style={styles.lineCodeRow}>
           <MaterialCommunityIcons name={modeIcon} size={11} color="#1E1D1D" />
@@ -387,9 +395,15 @@ export default function LinesScreen() {
             placeholderTextColor="#AAAAAA"
             value={search}
             onChangeText={setSearch}
+            accessibilityLabel="Pesquisar linha"
           />
           {search.length > 0 ? (
-            <TouchableOpacity onPress={() => setSearch('')}>
+            <TouchableOpacity
+              onPress={() => setSearch('')}
+              hitSlop={A11Y_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="Limpar pesquisa"
+            >
               <MaterialCommunityIcons name="close" size={20} color="#AAAAAA" />
             </TouchableOpacity>
           ) : null}
@@ -400,7 +414,14 @@ export default function LinesScreen() {
         {TABS.map((tab) => {
           const active = activeFilter === tab;
           return (
-            <TouchableOpacity key={tab} style={styles.tabButton} onPress={() => setActiveFilter(tab)}>
+            <TouchableOpacity
+              key={tab}
+              style={styles.tabButton}
+              onPress={() => setActiveFilter(tab)}
+              accessibilityRole="button"
+              accessibilityLabel={TAB_LABELS[tab]}
+              accessibilityState={{ selected: active }}
+            >
               <Text style={[styles.tabText, active && styles.tabTextActive]}>{TAB_LABELS[tab]}</Text>
               <View style={[styles.tabIndicator, active && styles.tabIndicatorActive]} />
             </TouchableOpacity>
@@ -469,7 +490,13 @@ export default function LinesScreen() {
       )}
 
       <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={closeModal}>
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={closeModal} />
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={closeModal}
+          accessibilityRole="button"
+          accessibilityLabel="Fechar detalhes da linha"
+        />
         <Animated.View style={[styles.sheet, sx.fillCard, { transform: [{ translateY: sheetTranslateY }] }]}>
           <View style={styles.handle} />
           <View style={styles.sheetTop}>
@@ -486,7 +513,12 @@ export default function LinesScreen() {
                 style={[styles.sheetCodeBottomBar, { backgroundColor: getLineColor(selectedLine?.code || '0') }]}
               />
             </View>
-            <TouchableOpacity onPress={() => selectedLine && toggleFavorite(selectedLine.id)}>
+            <TouchableOpacity
+              onPress={() => selectedLine && toggleFavorite(selectedLine.id)}
+              hitSlop={A11Y_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel={selectedIsFavorite ? 'Remover linha dos favoritos' : 'Adicionar linha aos favoritos'}
+            >
               <MaterialCommunityIcons
                 name={selectedIsFavorite ? 'heart' : 'heart-outline'}
                 size={24}
@@ -655,12 +687,16 @@ export default function LinesScreen() {
                   closeModal();
                   router.push({ pathname: '/route-results', params: { destination } });
                 }}
+                accessibilityRole="button"
+                accessibilityLabel="Traçar rota até o destino desta linha"
               >
                 <Text style={styles.primaryBtnText}>Traçar rota</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.secondaryBtn}
                 onPress={() => selectedLine && toggleFavorite(selectedLine.id)}
+                accessibilityRole="button"
+                accessibilityLabel={selectedIsFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
               >
                 <MaterialCommunityIcons
                   name={selectedIsFavorite ? 'heart' : 'heart-outline'}

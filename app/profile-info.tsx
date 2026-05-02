@@ -17,6 +17,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ScaledText as Text } from '@/components/ScaledText';
 import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilityPreferences, useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { API_URL } from '../constants/api';
 import type { FontSizeTier } from '../services/accessibility-prefs.service';
 import { getToken, getUserAvatar, saveUserAvatar, saveUserInfo } from '../services/token.service';
@@ -281,7 +282,13 @@ export default function ProfileInfoScreen() {
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.headerWrap, sx.fillCard, sx.hairlineBottom, { paddingTop: insets.top + 8 }]}>
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={styles.headerSide}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            hitSlop={A11Y_HIT_SLOP}
+            style={styles.headerSide}
+            accessibilityRole="button"
+            accessibilityLabel="Voltar"
+          >
             <MaterialCommunityIcons name="arrow-left" size={22} color="#1E1D1D" />
           </TouchableOpacity>
           <View style={styles.headerCenter}>
@@ -306,7 +313,14 @@ export default function ProfileInfoScreen() {
               ) : (
                 <Text style={styles.avatarInitials}>{initials}</Text>
               )}
-              <TouchableOpacity style={styles.cameraBtn} onPress={pickAvatar} activeOpacity={0.9}>
+              <TouchableOpacity
+                style={styles.cameraBtn}
+                onPress={pickAvatar}
+                activeOpacity={0.9}
+                accessibilityRole="button"
+                accessibilityLabel="Alterar foto do perfil"
+                accessibilityHint="Abre a galeria para escolher uma nova foto"
+              >
                 <MaterialCommunityIcons name="camera" size={14} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
@@ -322,6 +336,7 @@ export default function ProfileInfoScreen() {
                 onChangeText={(name) => setForm((p) => ({ ...p, name }))}
                 placeholder="Seu nome"
                 placeholderTextColor="#9CA3AF"
+                accessibilityLabel="Nome completo"
               />
               <MaterialCommunityIcons name="account-outline" size={18} color="#0057A8" />
             </View>
@@ -331,6 +346,9 @@ export default function ProfileInfoScreen() {
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={() => Alert.alert('Email', 'O email não pode ser alterado')}
+              accessibilityRole="button"
+              accessibilityLabel="Email"
+              accessibilityHint="Toque para ver que o email não pode ser alterado"
             >
               <View style={styles.fieldRow}>
                 <TextInput
@@ -339,6 +357,7 @@ export default function ProfileInfoScreen() {
                   editable={false}
                   placeholder="—"
                   placeholderTextColor="#AAAAAA"
+                  accessibilityLabel="Email somente leitura"
                 />
                 <MaterialCommunityIcons name="email-outline" size={18} color="#CCCCCC" />
               </View>
@@ -354,6 +373,8 @@ export default function ProfileInfoScreen() {
                 placeholder="(00) 00000-0000"
                 placeholderTextColor="#9CA3AF"
                 keyboardType="phone-pad"
+                accessibilityLabel="Telefone"
+                textContentType="telephoneNumber"
               />
               <MaterialCommunityIcons name="phone-outline" size={18} color="#0057A8" />
             </View>
@@ -366,6 +387,9 @@ export default function ProfileInfoScreen() {
                 setPickerDate(parseYmd(form.birth_date) ?? new Date(1990, 0, 1));
                 setShowDatePicker(true);
               }}
+              accessibilityRole="button"
+              accessibilityLabel="Data de nascimento"
+              accessibilityHint="Abre o seletor de data"
             >
               <View style={styles.fieldRow}>
                 <Text style={styles.birthText}>
@@ -386,7 +410,12 @@ export default function ProfileInfoScreen() {
             />
           ) : null}
           {Platform.OS === 'ios' && showDatePicker ? (
-            <TouchableOpacity style={styles.iosDateClose} onPress={() => setShowDatePicker(false)}>
+            <TouchableOpacity
+              style={styles.iosDateClose}
+              onPress={() => setShowDatePicker(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Fechar calendário"
+            >
               <Text style={styles.iosDateCloseText}>Fechar</Text>
             </TouchableOpacity>
           ) : null}
@@ -395,6 +424,9 @@ export default function ProfileInfoScreen() {
             style={[styles.primaryBtn, (!canSaveData || savingData || loading) && styles.primaryBtnDisabled]}
             disabled={!canSaveData || savingData || loading}
             onPress={handleSaveData}
+            accessibilityRole="button"
+            accessibilityLabel={savingData ? 'Salvando dados' : 'Salvar alterações das informações'}
+            accessibilityState={{ disabled: !canSaveData || savingData || loading }}
           >
             <Text style={styles.primaryBtnText}>{savingData ? 'Salvando...' : 'Salvar alterações'}</Text>
           </TouchableOpacity>
@@ -417,6 +449,9 @@ export default function ProfileInfoScreen() {
                   style={[styles.disabilityCard, selected && styles.disabilityCardSelected]}
                   onPress={() => setForm((p) => ({ ...p, disability_type: item.key }))}
                   activeOpacity={0.88}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.title}. ${item.desc}`}
+                  accessibilityState={{ selected }}
                 >
                   <View style={styles.disabilityIconWrap}>
                     <MaterialCommunityIcons name={item.icon} size={22} color="#0057A8" />
@@ -450,6 +485,8 @@ export default function ProfileInfoScreen() {
                 onValueChange={setVoiceRead}
                 trackColor={{ false: '#E5E7EB', true: '#0057A8' }}
                 thumbColor="#FFFFFF"
+                accessibilityLabel="Leitura por voz"
+                accessibilityHint="Lê instruções de rota em voz alta quando disponível"
               />
             </View>
             <View style={styles.settingsItem}>
@@ -465,6 +502,8 @@ export default function ProfileInfoScreen() {
                 onValueChange={setHighContrast}
                 trackColor={{ false: '#E5E7EB', true: '#0057A8' }}
                 thumbColor="#FFFFFF"
+                accessibilityLabel="Alto contraste"
+                accessibilityHint="Aumenta o contraste das cores em todo o aplicativo"
               />
             </View>
             <View style={[styles.settingsItem, { borderBottomWidth: 0 }]}>
@@ -481,6 +520,9 @@ export default function ProfileInfoScreen() {
                     key={k}
                     style={[styles.fontChip, fontSize === k && styles.fontChipActive]}
                     onPress={() => setFontSize(k)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Tamanho de texto ${k === 'A' ? 'normal' : k === 'AA' ? 'médio' : 'grande'}`}
+                    accessibilityState={{ selected: fontSize === k }}
                   >
                     <Text style={[styles.fontChipText, fontSize === k && styles.fontChipTextActive]}>{k}</Text>
                   </TouchableOpacity>
@@ -497,6 +539,9 @@ export default function ProfileInfoScreen() {
             ]}
             disabled={savingPrefs || loading}
             onPress={handleSavePreferences}
+            accessibilityRole="button"
+            accessibilityLabel={savingPrefs ? 'Salvando preferências' : 'Salvar preferências de acessibilidade'}
+            accessibilityState={{ disabled: savingPrefs || loading }}
           >
             <Text style={styles.primaryBtnText}>{savingPrefs ? 'Salvando...' : 'Salvar preferências'}</Text>
           </TouchableOpacity>

@@ -19,6 +19,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { register } from '../services/auth.service';
 import WomanAvatarIllustration from '../assets/images/undraw_a-woman-avatar_ifsl.svg';
 
@@ -234,6 +235,9 @@ export default function RegisterScreen() {
             closeMenu();
           }}
           activeOpacity={0.75}
+          accessibilityRole="menuitem"
+          accessibilityState={{ selected: isSelected }}
+          accessibilityLabel={option.label}
         >
           <MaterialCommunityIcons name={option.icon} size={20} color="#0057A8" />
           <Text style={[styles.menuRowText, isSelected && styles.menuRowTextSelected]}>
@@ -277,7 +281,9 @@ export default function RegisterScreen() {
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.push('/login')}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          hitSlop={A11Y_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel="Voltar para o login"
         >
           <MaterialCommunityIcons name="arrow-left" size={24} color={PRIMARY} />
         </TouchableOpacity>
@@ -287,6 +293,9 @@ export default function RegisterScreen() {
             style={styles.avatarCircle}
             onPress={() => setShowAvatarAccessModal(true)}
             activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Alterar foto do perfil"
+            accessibilityHint="Abre opções para escolher imagem da galeria"
           >
             {avatarUri ? (
               <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
@@ -308,6 +317,8 @@ export default function RegisterScreen() {
           value={name}
           onChangeText={setName}
           autoCapitalize="words"
+          accessibilityLabel="Nome"
+          textContentType="name"
         />
 
         <Text style={styles.label}>Email</Text>
@@ -320,6 +331,9 @@ export default function RegisterScreen() {
           autoCapitalize="none"
           value={email}
           onChangeText={setEmail}
+          accessibilityLabel="Email"
+          textContentType="emailAddress"
+          autoComplete="email"
         />
 
         <Text style={styles.label}>Senha</Text>
@@ -333,8 +347,16 @@ export default function RegisterScreen() {
             value={password}
             onChangeText={setPassword}
             onFocus={ensurePasswordVisible}
+            accessibilityLabel="Senha"
+            textContentType="newPassword"
+            autoComplete="password-new"
           />
-          <TouchableOpacity onPress={() => setShowPassword((prev) => !prev)}>
+          <TouchableOpacity
+            onPress={() => setShowPassword((prev) => !prev)}
+            hitSlop={A11Y_HIT_SLOP}
+            accessibilityRole="button"
+            accessibilityLabel={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+          >
             <MaterialCommunityIcons
               name={showPassword ? 'eye-off-outline' : 'eye-outline'}
               size={20}
@@ -354,6 +376,8 @@ export default function RegisterScreen() {
             value={confirmPassword}
             onChangeText={setConfirmPassword}
             onFocus={ensurePasswordVisible}
+            accessibilityLabel="Confirmar senha"
+            textContentType="newPassword"
           />
           {passwordsMatch ? (
             <MaterialCommunityIcons
@@ -363,7 +387,12 @@ export default function RegisterScreen() {
               style={styles.passwordCheckIcon}
             />
           ) : null}
-          <TouchableOpacity onPress={() => setShowConfirmPassword((prev) => !prev)}>
+          <TouchableOpacity
+            onPress={() => setShowConfirmPassword((prev) => !prev)}
+            hitSlop={A11Y_HIT_SLOP}
+            accessibilityRole="button"
+            accessibilityLabel={showConfirmPassword ? 'Ocultar confirmação de senha' : 'Mostrar confirmação de senha'}
+          >
             <MaterialCommunityIcons
               name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
               size={20}
@@ -385,6 +414,10 @@ export default function RegisterScreen() {
             ]}
             onPress={() => openMenu('group', groupRef)}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Grupo de acessibilidade"
+            accessibilityHint="Abre lista: deficiência visual, cadeirante ou mobilidade reduzida"
+            accessibilityState={{ expanded: menu === 'group' }}
           >
             <View style={styles.selectBoxLeft}>
               {disabilityType ? (
@@ -421,6 +454,9 @@ export default function RegisterScreen() {
           ]}
           onPress={handleSubmit}
           disabled={loading || !passwordsMatch}
+          accessibilityRole="button"
+          accessibilityLabel={loading ? 'Carregando cadastro' : 'Continuar cadastro'}
+          accessibilityState={{ disabled: loading || !passwordsMatch }}
         >
           <Text style={styles.continueText}>{loading ? 'Carregando...' : 'Continue'}</Text>
         </TouchableOpacity>
@@ -428,7 +464,12 @@ export default function RegisterScreen() {
 
       <Modal visible={menu !== null && anchor !== null} transparent animationType="fade">
         <View style={styles.modalRoot}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu} />
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={closeMenu}
+            accessibilityLabel="Fechar menu"
+            accessibilityRole="button"
+          />
           {anchor && menu ? (
             <View
               style={[
@@ -454,7 +495,12 @@ export default function RegisterScreen() {
 
       <Modal visible={showAvatarAccessModal} transparent animationType="fade">
         <View style={styles.modalRoot}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowAvatarAccessModal(false)} />
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setShowAvatarAccessModal(false)}
+            accessibilityLabel="Fechar"
+            accessibilityRole="button"
+          />
           <View style={styles.avatarAccessPanel}>
             <Text style={styles.avatarAccessTitle}>Permitir acesso à galeria?</Text>
             <Text style={styles.avatarAccessSubtitle}>
@@ -464,6 +510,8 @@ export default function RegisterScreen() {
               style={styles.avatarAccessPrimaryBtn}
               activeOpacity={0.85}
               onPress={() => handlePickAvatar('full')}
+              accessibilityRole="button"
+              accessibilityLabel="Permitir acesso total à galeria de fotos"
             >
               <Text style={styles.avatarAccessPrimaryText}>Permitir tudo</Text>
             </TouchableOpacity>
@@ -471,12 +519,16 @@ export default function RegisterScreen() {
               style={styles.avatarAccessSecondaryBtn}
               activeOpacity={0.85}
               onPress={() => handlePickAvatar('limited')}
+              accessibilityRole="button"
+              accessibilityLabel="Permitir acesso restrito à galeria de fotos"
             >
               <Text style={styles.avatarAccessSecondaryText}>Permitir de forma restrita</Text>
             </TouchableOpacity>
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={() => setShowAvatarAccessModal(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Cancelar alteração de foto"
             >
               <Text style={styles.avatarAccessCancelText}>Cancelar</Text>
             </TouchableOpacity>

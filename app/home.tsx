@@ -15,6 +15,7 @@ import {
 import { ScaledText as PaperText } from '@/components/ScaledText';
 import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilityPreferences, useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
 import {
@@ -220,6 +221,9 @@ export default function HomeScreen() {
               style={styles.searchWrap}
               onPress={() => router.push('/search-destination')}
               activeOpacity={0.9}
+              accessibilityRole="button"
+              accessibilityLabel="Buscar destino"
+              accessibilityHint="Abre a busca para onde você quer ir"
             >
               <TextInput
                 style={styles.searchInput}
@@ -230,6 +234,8 @@ export default function HomeScreen() {
                 onSubmitEditing={submitSearch}
                 returnKeyType="search"
                 editable={false}
+                accessibilityLabel="Campo de destino"
+                importantForAccessibility="no-hide-descendants"
               />
               <View style={styles.searchButton}>
                 <MaterialCommunityIcons name="magnify" size={22} color="#9CA3AF" />
@@ -240,7 +246,13 @@ export default function HomeScreen() {
 
         <View style={styles.sectionHeader}>
           <PaperText style={styles.sectionTitle}>Favoritos</PaperText>
-          <TouchableOpacity onPress={openAddFavorite} activeOpacity={0.75}>
+          <TouchableOpacity
+            onPress={openAddFavorite}
+            activeOpacity={0.75}
+            hitSlop={A11Y_HIT_SLOP}
+            accessibilityRole="button"
+            accessibilityLabel="Adicionar favorito"
+          >
             <PaperText style={styles.sectionLink}>Adicionar</PaperText>
           </TouchableOpacity>
         </View>
@@ -257,6 +269,9 @@ export default function HomeScreen() {
                 style={[styles.favoriteCard, sx.fillCard]}
                 onPress={() => openFavoriteEditor(item)}
                 activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={`Favorito ${item.label}`}
+                accessibilityHint="Editar este endereço favorito"
               >
                 <MaterialCommunityIcons
                   name={item.icon as keyof typeof MaterialCommunityIcons.glyphMap}
@@ -275,9 +290,9 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={styles.favoriteDelete}
                 onPress={() => confirmRemoveFavorite(item)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                hitSlop={A11Y_HIT_SLOP}
                 accessibilityRole="button"
-                accessibilityLabel="Excluir favorito"
+                accessibilityLabel={`Excluir favorito ${item.label}`}
               >
                 <MaterialCommunityIcons name="close" size={16} color="#C5C5C5" />
               </TouchableOpacity>
@@ -297,7 +312,13 @@ export default function HomeScreen() {
                 <PaperText style={styles.uberSub}>Toque para pedir uma corrida</PaperText>
               </View>
             </View>
-            <TouchableOpacity style={styles.uberButton} onPress={openUber}>
+            <TouchableOpacity
+              style={styles.uberButton}
+              onPress={openUber}
+              accessibilityRole="button"
+              accessibilityLabel="Pedir Uber"
+              accessibilityHint="Abre o aplicativo ou site do Uber"
+            >
               <PaperText style={styles.uberButtonText}>Pedir</PaperText>
             </TouchableOpacity>
           </View>
@@ -309,7 +330,12 @@ export default function HomeScreen() {
             <View style={[styles.emptyWrap, sx.fillCard]}>
               <MaterialCommunityIcons name="map-search-outline" size={40} color="#CCCCCC" />
               <PaperText style={styles.emptyText}>Nenhuma viagem recente</PaperText>
-              <TouchableOpacity style={styles.emptyButton} onPress={() => router.push('/search-destination')}>
+              <TouchableOpacity
+                style={styles.emptyButton}
+                onPress={() => router.push('/search-destination')}
+                accessibilityRole="button"
+                accessibilityLabel="Buscar rota agora"
+              >
                 <PaperText style={styles.emptyButtonText}>Buscar rota agora</PaperText>
               </TouchableOpacity>
             </View>
@@ -321,6 +347,9 @@ export default function HomeScreen() {
                   style={[styles.recentCard, sx.fillCard]}
                   onPress={() => goToDirections(route.destination, route.origin)}
                   activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Viagem recente de ${route.origin} para ${route.destination}`}
+                  accessibilityHint="Abre rotas sugeridas para este trajeto"
                 >
                   <MaterialCommunityIcons name="clock-outline" size={18} color="#AAAAAA" />
                   <PaperText style={styles.recentOrigin}>{route.origin}</PaperText>
@@ -336,19 +365,40 @@ export default function HomeScreen() {
       </ScrollView>
 
       <View style={[styles.bottomNav, sx.fillCard, sx.hairlineTop]}>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/route-results')}>
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={() => router.push('/route-results')}
+          accessibilityRole="button"
+          accessibilityLabel="Direções"
+          accessibilityState={{ selected: true }}
+        >
           <MaterialCommunityIcons name="map-marker-path" size={23} color="#0057A8" />
           <PaperText style={styles.navActive}>Direções</PaperText>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/stations')}>
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={() => router.push('/stations')}
+          accessibilityRole="button"
+          accessibilityLabel="Estações"
+        >
           <MaterialCommunityIcons name="train" size={23} color="#AAAAAA" />
           <PaperText style={styles.navText}>Estações</PaperText>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/lines')}>
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={() => router.push('/lines')}
+          accessibilityRole="button"
+          accessibilityLabel="Linhas"
+        >
           <MaterialCommunityIcons name="vector-polyline" size={23} color="#AAAAAA" />
           <PaperText style={styles.navText}>Linhas</PaperText>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/profile')}>
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={() => router.push('/profile')}
+          accessibilityRole="button"
+          accessibilityLabel="Perfil"
+        >
           <MaterialCommunityIcons name="account" size={23} color="#AAAAAA" />
           <PaperText style={styles.navText}>Perfil</PaperText>
         </TouchableOpacity>

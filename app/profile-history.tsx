@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { FlatList, SafeAreaView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { API_URL } from '../constants/api';
 import { getToken, getUserInfo } from '../services/token.service';
 
@@ -54,7 +55,12 @@ export default function ProfileHistoryScreen() {
     <SafeAreaView style={[styles.safeArea, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.header, sx.fillCard]}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          hitSlop={A11Y_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel="Voltar"
+        >
           <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
         </TouchableOpacity>
         <Text style={styles.title}>Histórico de viagens</Text>
@@ -74,7 +80,11 @@ export default function ProfileHistoryScreen() {
           </View>
         }
         renderItem={({ item }) => (
-          <View style={[styles.card, sx.fillCard]}>
+          <View
+            style={[styles.card, sx.fillCard]}
+            accessible
+            accessibilityLabel={`Viagem de ${item.origin || 'origem desconhecida'} para ${item.destination || 'destino desconhecido'}. Transporte ${item.transport_type || 'não informado'}. ${item.accessible ? 'Acessível' : 'Com alerta'}. ${item.created_at ? new Date(item.created_at).toLocaleString('pt-BR') : ''}`}
+          >
             <Text style={styles.routeText}>{item.origin || '-'} {'→'} {item.destination || '-'}</Text>
             <View style={styles.metaRow}>
               <Text style={styles.metaText}>Transporte: {item.transport_type || '-'}</Text>
