@@ -1299,26 +1299,6 @@ export default function RouteDetailScreen() {
           >
             <MaterialCommunityIcons name={isReading ? 'stop' : 'play'} size={26} color="#FFFFFF" />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.btnReview}
-            activeOpacity={0.88}
-            accessibilityRole="button"
-            accessibilityLabel="Avaliar esta rota"
-            onPress={() => {
-              const label = [route.origin, route.destination].filter(Boolean).join(' → ') || 'Rota';
-              router.push({
-                pathname: '/write-review',
-                params: {
-                  type: 'route',
-                  id: '0',
-                  name: label,
-                },
-              });
-            }}
-          >
-            <MaterialCommunityIcons name="star" size={18} color="#FFFFFF" />
-            <Text style={styles.btnReviewText}>Avaliar</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={styles.btnPill} activeOpacity={0.88}>
             <MaterialCommunityIcons name="bus-clock" size={18} color="#FFFFFF" />
             <Text style={[styles.btnPillText, styles.btnPillTextSmall]} numberOfLines={2}>
@@ -2002,21 +1982,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#22c55e',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  btnReview: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    minHeight: 48,
-    borderRadius: 24,
-    backgroundColor: COLORS.primary,
-  },
-  btnReviewText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
   },
   btnPill: {
     flex: 1,

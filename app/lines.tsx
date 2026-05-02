@@ -138,7 +138,6 @@ export default function LinesScreen() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [isDemo, setIsDemo] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [reviewStats, setReviewStats] = useState<Record<string, { average: number; total: number }>>({});
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
 
   useEffect(() => {
@@ -188,32 +187,6 @@ export default function LinesScreen() {
     };
     loadLines();
   }, []);
-
-  useEffect(() => {
-    const loadRatings = async () => {
-      if (!lines.length) return;
-      try {
-        const token = await getToken();
-        const entries = await Promise.all(
-          lines.map(async (line) => {
-            try {
-              const response = await fetch(`${API_URL}/reviews?type=line&id=${line.id}`, {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-              });
-              const data = (await response.json()) as { average_rating?: number; total?: number };
-              return [line.id, { average: data.average_rating ?? 0, total: data.total ?? 0 }] as const;
-            } catch {
-              return [line.id, { average: 0, total: 0 }] as const;
-            }
-          }),
-        );
-        setReviewStats(Object.fromEntries(entries));
-      } catch {
-        setReviewStats({});
-      }
-    };
-    loadRatings();
-  }, [lines]);
 
   useEffect(() => {
     let result = lines;
@@ -463,15 +436,6 @@ export default function LinesScreen() {
                 {nextSchedule(item.schedules) ? (
                   <Text style={styles.nextBusText}>Próximo: {nextSchedule(item.schedules)}</Text>
                 ) : null}
-                {(reviewStats[item.id]?.total ?? 0) > 0 ? (
-                  <View style={styles.ratingRow}>
-                    <Text style={styles.ratingStars}>
-                      {'★'.repeat(Math.round(reviewStats[item.id].average))}
-                      {'☆'.repeat(5 - Math.round(reviewStats[item.id].average))}
-                    </Text>
-                    <Text style={styles.ratingValue}>{reviewStats[item.id].average.toFixed(1)}</Text>
-                  </View>
-                ) : null}
               </View>
               <MaterialCommunityIcons name="chevron-right" size={18} color="#CCCCCC" />
             </TouchableOpacity>
@@ -618,25 +582,6 @@ export default function LinesScreen() {
             </View>
           ))}
 
-          <View style={styles.reviewsRow}>
-            <Text style={styles.reviewsText}>
-              Nota média: {(selectedLine ? reviewStats[selectedLine.id]?.average : 0)?.toFixed(1) ?? '0.0'}
-            </Text>
-            <TouchableOpacity
-              onPress={() =>
-                selectedLine &&
-                router.push({
-                  pathname: '/reviews',
-                  params: { type: 'line', id: selectedLine.id, name: selectedLine.name },
-                })
-              }
-            >
-              <Text style={styles.reviewsLink}>
-                Ver avaliações ({selectedLine ? reviewStats[selectedLine.id]?.total ?? 0 : 0})
-              </Text>
-            </TouchableOpacity>
-          </View>
-
           <Text style={styles.scheduleTitle}>Horários</Text>
           <View style={styles.scheduleGrid}>
             {(selectedLine?.schedules || []).map((time, idx) => (
@@ -734,9 +679,6 @@ const styles = StyleSheet.create({
   lineName: { color: '#1E1D1D', fontSize: 14, fontWeight: '500' },
   lineVia: { color: '#999999', fontSize: 12, marginTop: 0 },
   nextBusText: { color: '#22c55e', fontSize: 12, marginTop: 1, fontWeight: '600' },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 6 },
-  ratingStars: { color: '#F59E0B', fontSize: 12 },
-  ratingValue: { color: '#666666', fontSize: 12, fontWeight: '600' },
   modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '88%', backgroundColor: '#FFFFFF', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, paddingBottom: 26 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: '#E0E0E0', alignSelf: 'center', marginBottom: 20 },
@@ -758,9 +700,6 @@ const styles = StyleSheet.create({
   badgeNext: { backgroundColor: '#EBF3FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   badgeNextText: { color: '#0057A8', fontSize: 12, fontWeight: '600' },
   miniMap: { height: 120, borderRadius: 12, marginTop: 12 },
-  reviewsRow: { marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  reviewsText: { color: '#1E1D1D', fontSize: 14, fontWeight: '600' },
-  reviewsLink: { color: '#0057A8', fontSize: 13, fontWeight: '700' },
   scheduleTitle: { marginTop: 14, color: '#1E1D1D', fontSize: 15, fontWeight: '700' },
   scheduleGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
   scheduleCell: { width: '22%', backgroundColor: '#F5F5F5', borderRadius: 8, paddingVertical: 8, margin: 4, alignItems: 'center' },

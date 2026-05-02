@@ -19,7 +19,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from '../constants/api';
-import { getToken } from '../services/token.service';
 import { MOCK_LINES } from '../mocks/lines';
 import type { Station } from '../mocks/stations';
 import { MOCK_STATIONS } from '../mocks/stations';
@@ -148,7 +147,6 @@ export default function StationsScreen() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [isDemo, setIsDemo] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [reviewStats, setReviewStats] = useState<Record<string, { average: number; total: number }>>({});
   const [stationPhotos, setStationPhotos] = useState<Record<string, string>>({});
   const [photoErrors, setPhotoErrors] = useState<Record<string, boolean>>({});
   const [sheetPhotoError, setSheetPhotoError] = useState(false);
@@ -195,32 +193,6 @@ export default function StationsScreen() {
     };
     load();
   }, [userLocation?.latitude, userLocation?.longitude]);
-
-  useEffect(() => {
-    const loadRatings = async () => {
-      if (!stations.length) return;
-      try {
-        const token = await getToken();
-        const entries = await Promise.all(
-          stations.map(async (station) => {
-            try {
-              const response = await fetch(`${API_URL}/reviews?type=station&id=${station.id}`, {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-              });
-              const data = (await response.json()) as { average_rating?: number; total?: number };
-              return [station.id, { average: data.average_rating ?? 0, total: data.total ?? 0 }] as const;
-            } catch {
-              return [station.id, { average: 0, total: 0 }] as const;
-            }
-          }),
-        );
-        setReviewStats(Object.fromEntries(entries));
-      } catch {
-        setReviewStats({});
-      }
-    };
-    loadRatings();
-  }, [stations]);
 
   const fetchStationPhoto = async (station: Station) => {
     try {
@@ -871,25 +843,6 @@ export default function StationsScreen() {
             ))}
           </View>
 
-          <View style={styles.reviewRow}>
-            <Text style={styles.reviewText}>
-              Nota média: {(selectedStation ? reviewStats[selectedStation.id]?.average : 0)?.toFixed(1) ?? '0.0'}
-            </Text>
-            <TouchableOpacity
-              onPress={() =>
-                selectedStation &&
-                router.push({
-                  pathname: '/reviews',
-                  params: { type: 'station', id: selectedStation.id, name: selectedStation.name },
-                })
-              }
-            >
-              <Text style={styles.reviewLink}>
-                Ver avaliações ({selectedStation ? reviewStats[selectedStation.id]?.total ?? 0 : 0})
-              </Text>
-            </TouchableOpacity>
-          </View>
-
           <View style={styles.buttonsRow}>
             <TouchableOpacity
               style={styles.primaryBtn}
@@ -985,9 +938,6 @@ const styles = StyleSheet.create({
   lineChipText: { color: '#1E1D1D', fontSize: 11, fontWeight: '600' },
   lineChipBottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5 },
   nextText: { color: '#22c55e', fontSize: 12, marginTop: 6, fontWeight: '600' },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6 },
-  ratingStars: { color: '#F59E0B', fontSize: 12 },
-  ratingValue: { color: '#666666', fontSize: 12, fontWeight: '600' },
   cardRight: { alignItems: 'flex-end', marginLeft: 8 },
   favoriteBtn: { marginTop: 10 },
   modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
@@ -1028,9 +978,6 @@ const styles = StyleSheet.create({
   scheduleGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 },
   scheduleCell: { width: '23%', backgroundColor: '#F5F5F5', borderRadius: 8, paddingVertical: 8, margin: 4, alignItems: 'center' },
   scheduleCellText: { color: '#1E1D1D', fontSize: 13 },
-  reviewRow: { marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  reviewText: { color: '#1E1D1D', fontSize: 14, fontWeight: '600' },
-  reviewLink: { color: '#0057A8', fontSize: 13, fontWeight: '700' },
   buttonsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14 },
   primaryBtn: { flex: 1, height: 52, borderRadius: 40, backgroundColor: '#0057A8', alignItems: 'center', justifyContent: 'center' },
   primaryBtnText: { color: '#FFFFFF', fontWeight: '700' },
