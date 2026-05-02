@@ -1,6 +1,2 @@
-import { Redirect } from 'expo-router';
-
-/** Rota raiz `/`: envia para a splash; cadastro em `/register`. */
-export default function Index() {
-  return <Redirect href="/splash" />;
-}
+/** Rota raiz `/` = primeira tela do app (animação + depois login ou home). */
+export { default } from './splash';

@@ -26,25 +26,9 @@ type MeResponse = {
   accompanied?: string;
   phone?: string;
   birth_date?: string;
-  transport_preferences?: string[] | string;
 };
 
 type FontSizeKey = 'A' | 'AA' | 'AAA';
-
-const TRANSPORT_KEYS = ['bus', 'metro', 'walk'] as const;
-
-function parseTransportPrefs(raw: MeResponse['transport_preferences']): string[] {
-  if (Array.isArray(raw)) return raw.filter((x) => typeof x === 'string');
-  if (typeof raw === 'string') {
-    try {
-      const p = JSON.parse(raw) as unknown;
-      return Array.isArray(p) ? p.filter((x): x is string => typeof x === 'string') : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
-}
 
 function initialsFromName(name?: string) {
   const source = (name || 'U').trim();
@@ -80,11 +64,10 @@ export default function ProfileInfoScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ section?: string | string[] }>();
-  const startSection =
-    (Array.isArray(params.section) ? params.section[0] : params.section) === 'accessibility'
-      ? 'accessibility'
-      : 'info';
-  const [activeSection, setActiveSection] = useState<'info' | 'accessibility'>(startSection);
+  const sectionParam = useMemo<'info' | 'accessibility'>(() => {
+    const raw = Array.isArray(params.section) ? params.section[0] : params.section;
+    return raw === 'accessibility' ? 'accessibility' : 'info';
+  }, [params.section]);
   const [loading, setLoading] = useState(false);
   const [savingData, setSavingData] = useState(false);
   const [savingPrefs, setSavingPrefs] = useState(false);
@@ -92,7 +75,6 @@ export default function ProfileInfoScreen() {
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [pickerDate, setPickerDate] = useState<Date>(() => parseYmd(undefined) ?? new Date(1990, 0, 1));
-  const [transportSelected, setTransportSelected] = useState<string[]>([]);
   const [voiceRead, setVoiceRead] = useState(false);
   const [highContrast, setHighContrast] = useState(false);
   const [fontSize, setFontSize] = useState<FontSizeKey>('A');
@@ -116,7 +98,6 @@ export default function ProfileInfoScreen() {
         const data = (await meRes.json()) as MeResponse;
         if (cancelled) return;
         setForm(data);
-        setTransportSelected(parseTransportPrefs(data.transport_preferences));
         const bd = parseYmd(data.birth_date);
         if (bd) setPickerDate(bd);
       } finally {
@@ -131,12 +112,6 @@ export default function ProfileInfoScreen() {
   const initials = useMemo(() => initialsFromName(form.name), [form.name]);
 
   const canSaveData = useMemo(() => (form.name ?? '').trim().length >= 2, [form.name]);
-
-  const toggleTransport = useCallback((key: string) => {
-    setTransportSelected((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
-    );
-  }, []);
 
   const pickAvatar = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -219,7 +194,6 @@ export default function ProfileInfoScreen() {
         },
         body: JSON.stringify({
           disability_type: form.disability_type,
-          transport_preferences: transportSelected,
         }),
       });
       if (!response.ok) {
@@ -228,7 +202,6 @@ export default function ProfileInfoScreen() {
       }
       const data = (await response.json()) as MeResponse;
       setForm((prev) => ({ ...prev, ...data }));
-      setTransportSelected(parseTransportPrefs(data.transport_preferences));
       Alert.alert('Sucesso', 'Preferências salvas.');
     } catch {
       Alert.alert('Erro', 'Não foi possível salvar as preferências.');
@@ -258,12 +231,6 @@ export default function ProfileInfoScreen() {
     },
   ];
 
-  const transportCards = [
-    { key: 'bus' as const, icon: 'bus' as const, label: 'Ônibus' },
-    { key: 'metro' as const, icon: 'subway-variant' as const, label: 'Metrô' },
-    { key: 'walk' as const, icon: 'walk' as const, label: 'A pé' },
-  ];
-
   return (
     <SafeAreaView style={styles.root} edges={['left', 'right', 'bottom']}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -273,45 +240,15 @@ export default function ProfileInfoScreen() {
             <MaterialCommunityIcons name="arrow-left" size={22} color="#1E1D1D" />
           </TouchableOpacity>
           <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>Minhas informações</Text>
+            <Text style={styles.headerTitle}>
+              {sectionParam === 'accessibility' ? 'Acessibilidade' : 'Minhas informações'}
+            </Text>
           </View>
           <View style={styles.headerSide} />
         </View>
       </View>
 
-      <View style={styles.tabsRow}>
-        <TouchableOpacity
-          style={styles.tabHit}
-          onPress={() => setActiveSection('info')}
-          activeOpacity={0.85}
-        >
-          <Text style={[styles.tabText, activeSection === 'info' ? styles.tabTextActive : styles.tabTextInactive]}>
-            Dados
-          </Text>
-          {activeSection === 'info' ? <View style={styles.tabUnderline} /> : <View style={styles.tabUnderlinePlaceholder} />}
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.tabHit}
-          onPress={() => setActiveSection('accessibility')}
-          activeOpacity={0.85}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              activeSection === 'accessibility' ? styles.tabTextActive : styles.tabTextInactive,
-            ]}
-          >
-            Acessibilidade
-          </Text>
-          {activeSection === 'accessibility' ? (
-            <View style={styles.tabUnderline} />
-          ) : (
-            <View style={styles.tabUnderlinePlaceholder} />
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {activeSection === 'info' ? (
+      {sectionParam === 'info' ? (
         <ScrollView
           contentContainerStyle={styles.scrollData}
           keyboardShouldPersistTaps="handled"
@@ -418,11 +355,7 @@ export default function ProfileInfoScreen() {
           </TouchableOpacity>
         </ScrollView>
       ) : (
-        <ScrollView
-          contentContainerStyle={styles.scrollA11y}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
+        <View style={styles.a11yFixed}>
           <View style={styles.cardBlock}>
             <Text style={styles.cardTitle}>Tipo de deficiência</Text>
             <Text style={styles.cardSubtitle}>Selecione o que melhor descreve você</Text>
@@ -450,28 +383,6 @@ export default function ProfileInfoScreen() {
                 </TouchableOpacity>
               );
             })}
-          </View>
-
-          <View style={styles.cardBlock}>
-            <Text style={styles.cardTitle}>Meios de transporte</Text>
-            <Text style={styles.cardSubtitle}>Selecione todos que usa</Text>
-            <View style={styles.transportRow}>
-              {transportCards.map((t) => {
-                const selected = transportSelected.includes(t.key);
-                return (
-                  <TouchableOpacity
-                    key={t.key}
-                    style={[styles.transportCell, selected && styles.transportCellSelected]}
-                    onPress={() => toggleTransport(t.key)}
-                    activeOpacity={0.88}
-                  >
-                    {selected ? <View style={styles.transportDot} /> : <View style={styles.transportDotHidden} />}
-                    <MaterialCommunityIcons name={t.icon} size={28} color="#0057A8" />
-                    <Text style={styles.transportLabel}>{t.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
           </View>
 
           <View style={styles.cardBlock}>
@@ -529,13 +440,17 @@ export default function ProfileInfoScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.primaryBtn, (savingPrefs || loading) && styles.primaryBtnDisabled]}
+            style={[
+              styles.primaryBtn,
+              styles.a11ySaveBtn,
+              (savingPrefs || loading) && styles.primaryBtnDisabled,
+            ]}
             disabled={savingPrefs || loading}
             onPress={handleSavePreferences}
           >
             <Text style={styles.primaryBtnText}>{savingPrefs ? 'Salvando...' : 'Salvar preferências'}</Text>
           </TouchableOpacity>
-        </ScrollView>
+        </View>
       )}
     </SafeAreaView>
   );
@@ -572,48 +487,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  tabsRow: {
-    flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
-  },
-  tabHit: {
-    paddingVertical: 12,
-    paddingHorizontal: 4,
-    marginRight: 24,
-  },
-  tabText: {
-    fontSize: 14,
-  },
-  tabTextActive: {
-    color: '#0057A8',
-    fontWeight: '700',
-  },
-  tabTextInactive: {
-    color: '#999999',
-  },
-  tabUnderline: {
-    height: 2,
-    backgroundColor: '#0057A8',
-    marginTop: 8,
-    borderRadius: 1,
-  },
-  tabUnderlinePlaceholder: {
-    height: 2,
-    marginTop: 8,
-    opacity: 0,
-  },
   scrollData: {
     paddingHorizontal: 16,
     paddingTop: 20,
     paddingBottom: 40,
   },
-  scrollA11y: {
+  /** Acessibilidade: layout fixo, sem scroll */
+  a11yFixed: {
+    flex: 1,
     paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 40,
+    paddingTop: 16,
+    paddingBottom: 16,
+  },
+  a11ySaveBtn: {
+    marginTop: 10,
   },
   avatarBlock: {
     alignItems: 'center',
@@ -777,49 +664,6 @@ const styles = StyleSheet.create({
     color: '#999999',
     fontSize: 12,
     marginTop: 2,
-  },
-  transportRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  transportCell: {
-    flex: 1,
-    backgroundColor: '#F5F7FA',
-    borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-    marginHorizontal: 4,
-    gap: 6,
-    position: 'relative',
-    paddingTop: 18,
-  },
-  transportCellSelected: {
-    backgroundColor: '#EBF3FF',
-    borderWidth: 1.5,
-    borderColor: '#0057A8',
-  },
-  transportDot: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#0057A8',
-  },
-  transportDotHidden: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 8,
-    height: 8,
-    opacity: 0,
-  },
-  transportLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#1E1D1D',
-    textAlign: 'center',
   },
   settingsItem: {
     flexDirection: 'row',

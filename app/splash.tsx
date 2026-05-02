@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Image, StyleSheet, View } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
-import { isDevSkipLogin } from '../constants/dev';
 
 export default function SplashScreen() {
   const router = useRouter();
@@ -79,7 +78,7 @@ export default function SplashScreen() {
       ]),
     ]).start(() => {
       setTimeout(() => {
-        router.replace(isDevSkipLogin() ? '/home' : '/login');
+        router.replace('/login');
       }, 500);
     });
   }, []);

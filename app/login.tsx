@@ -26,8 +26,9 @@ import {
   signInWithGoogleNative,
 } from '../services/google-auth.service';
 import {
+  clearAllMobilityStorage,
   getRememberMe,
-  getToken,
+  getStoredTokenOnly,
   saveRememberMe,
   saveToken,
   saveUserInfo,
@@ -76,9 +77,11 @@ function LoginScreenInner() {
       if (cancelled) return;
       setRememberMe(remember);
       if (!remember) return;
-      const token = await getToken();
+      // Só JWT guardado — getToken() em dev devolve placeholder e redirecionava sem login real.
+      const token = await getStoredTokenOnly();
       if (cancelled) return;
       if (token) {
+        if (__DEV__) console.log('[login] Auto-redirect /home: token já existia no dispositivo');
         router.replace('/home');
       }
     })();
@@ -111,12 +114,23 @@ function LoginScreenInner() {
 
     try {
       setLoading(true);
-      const loginData = await login(emailTrimmed, password); // ← chama o backend
+      if (__DEV__) {
+        console.log('[login/email] Antes da API', { email: emailTrimmed, apiUrl: API_URL });
+      }
+      const loginData = await login(emailTrimmed, password);
+      if (__DEV__) {
+        console.log('[login/email] Resposta OK do auth.login', {
+          user_id: loginData.user_id,
+          has_token: !!loginData.access_token,
+        });
+      }
       await saveRememberMe(rememberMe);
-      await saveToken(loginData.access_token); // ← salva o token no dispositivo
+      await saveToken(loginData.access_token);
       await saveUserInfo(loginData.user_id, loginData.name, emailTrimmed.toLowerCase());
-      router.replace('/home'); // ← vai pra tela principal
+      if (__DEV__) console.log('[login/email] Token e sessão gravados; navegando /home');
+      router.replace('/home');
     } catch (error) {
+      if (__DEV__) console.log('[login/email] Falha', error);
       const message =
         error instanceof Error ? error.message : 'Não foi possível entrar. Tente de novo.';
       Alert.alert('Erro', message);
@@ -318,6 +332,19 @@ function LoginScreenInner() {
               <Text style={styles.termsText}>
                 Ao entrar, você concorda com os termos{'\n'}e condições.
               </Text>
+
+              {__DEV__ ? (
+                <TouchableOpacity
+                  style={styles.devClearBtn}
+                  onPress={async () => {
+                    await clearAllMobilityStorage();
+                    if (__DEV__) console.log('[login/dev] SecureStore + AsyncStorage limpos');
+                    Alert.alert('Dev', 'Armazenamento limpo. Tente entrar de novo.');
+                  }}
+                >
+                  <Text style={styles.devClearText}>Limpar dados (dev)</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         </ScrollView>
@@ -529,5 +556,16 @@ const styles = StyleSheet.create({
   },
   title: {
     display: 'none',
+  },
+  devClearBtn: {
+    marginTop: 12,
+    alignSelf: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  devClearText: {
+    fontSize: 12,
+    color: '#888',
+    textDecorationLine: 'underline',
   },
 });

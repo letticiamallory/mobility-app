@@ -1,6 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
-import type { ComponentProps } from 'react';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,6 +20,7 @@ import { HOME_FAVORITE_SHORTCUTS } from '../mocks/home';
 import type { Station } from '../mocks/stations';
 import { MOCK_STATIONS } from '../mocks/stations';
 import { getToken } from '../services/token.service';
+import { inferPlaceIcon } from '../utils/place-icon';
 
 const PRIMARY = '#0057A8';
 const BG = '#F5F5F5';
@@ -161,18 +161,23 @@ function TitleWithHighlight({ text, query }: { text: string; query: string }) {
   );
 }
 
-function placeRowIcon(description: string): ComponentProps<typeof MaterialCommunityIcons>['name'] {
-  const d = description.toLowerCase();
-  if (d.includes('shop') || d.includes('mall') || d.includes('shopping')) return 'shopping-outline';
-  if (d.includes('parque') || d.includes('park')) return 'pine-tree';
-  if (d.includes('cine') || d.includes('cinema')) return 'filmstrip';
-  return 'map-marker-outline';
-}
-
 const FAVORITES_HOME_WORK = HOME_FAVORITE_SHORTCUTS.filter((x) => x.id === 'home' || x.id === 'work');
+
+function paramOne(v: string | string[] | undefined): string {
+  if (v == null) return '';
+  return Array.isArray(v) ? (v[0] ?? '') : v;
+}
 
 export default function SearchDestinationScreen() {
   const router = useRouter();
+  const navParams = useLocalSearchParams<{
+    favoriteFlow?: string;
+    favoriteId?: string;
+    favoriteAction?: string;
+    presetIcon?: string;
+    screenTitle?: string;
+  }>();
+  const isFavoriteFlow = navParams.favoriteFlow === '1' || navParams.favoriteFlow === 'true';
   const [query, setQuery] = useState('');
   const [recentRoutes, setRecentRoutes] = useState<RecentRoute[]>([]);
   const [loadingRecents, setLoadingRecents] = useState(true);
@@ -200,14 +205,67 @@ export default function SearchDestinationScreen() {
 
   const goToRoutePlan = useCallback(
     (p: { destination: string; destLat?: number; destLng?: number }) => {
-      const navParams: Record<string, string> = { destination: p.destination.trim() };
+      const rp: Record<string, string> = { destination: p.destination.trim() };
       if (p.destLat != null && p.destLng != null && Number.isFinite(p.destLat) && Number.isFinite(p.destLng)) {
-        navParams.destLat = String(p.destLat);
-        navParams.destLng = String(p.destLng);
+        rp.destLat = String(p.destLat);
+        rp.destLng = String(p.destLng);
       }
-      router.push({ pathname: '/route-plan', params: navParams });
+      router.push({ pathname: '/route-plan', params: rp });
     },
     [router],
+  );
+
+  const goFavoriteConfirm = useCallback(
+    (p: { address: string; lat: number; lng: number; inferredIcon?: string }) => {
+      router.push({
+        pathname: '/favorite-location-confirm',
+        params: {
+          address: p.address,
+          lat: String(p.lat),
+          lng: String(p.lng),
+          favoriteId: paramOne(navParams.favoriteId),
+          favoriteAction: paramOne(navParams.favoriteAction),
+          presetIcon: paramOne(navParams.presetIcon),
+          screenTitle: paramOne(navParams.screenTitle),
+          inferredIcon: p.inferredIcon ?? inferPlaceIcon(p.address),
+        },
+      });
+    },
+    [router, navParams.favoriteId, navParams.favoriteAction, navParams.presetIcon, navParams.screenTitle],
+  );
+
+  const openPlaceForFlow = useCallback(
+    async (item: PlaceSuggestionRow) => {
+      if (isFavoriteFlow) {
+        let la = item.destLat;
+        let ln = item.destLng;
+        if (la == null || ln == null) {
+          const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
+          if (key) {
+            const g = await fetchPlaceGeometry(item.placeId, key);
+            if (g) {
+              la = g.lat;
+              ln = g.lng;
+            }
+          }
+        }
+        if (la != null && ln != null && Number.isFinite(la) && Number.isFinite(ln)) {
+          goFavoriteConfirm({
+            address: item.fullDescription,
+            lat: la,
+            lng: ln,
+            inferredIcon: inferPlaceIcon(item.fullDescription) as string,
+          });
+          return;
+        }
+      }
+      goToRoutePlan({
+        destination: item.fullDescription,
+        destLat: item.destLat,
+        destLng: item.destLng,
+      });
+    },
+    [goFavoriteConfirm, goToRoutePlan, isFavoriteFlow],
   );
 
   useEffect(() => {
@@ -433,29 +491,33 @@ export default function SearchDestinationScreen() {
                 <Text style={styles.linkBlue}>Procure uma linha</Text>
               </TouchableOpacity>
 
-              <View style={styles.sectionHead}>
-                <Text style={styles.sectionTitleMuted}>Favoritos</Text>
-                <TouchableOpacity activeOpacity={0.75}>
-                  <Text style={styles.linkBlue}>+ Adicionar</Text>
-                </TouchableOpacity>
-              </View>
-              {FAVORITES_HOME_WORK.map((item, index) => (
-                <View key={item.id}>
-                  <TouchableOpacity
-                    style={styles.rowPad}
-                    onPress={() => goToResults(item.destination)}
-                    activeOpacity={0.75}
-                  >
-                    <MaterialCommunityIcons name={item.icon} size={24} color="#4B5563" />
-                    <View style={styles.rowBody}>
-                      <Text style={styles.rowTitle}>{item.label}</Text>
-                      <Text style={styles.tapEdit}>Toque para editar</Text>
+              {!isFavoriteFlow ? (
+                <>
+                  <View style={styles.sectionHead}>
+                    <Text style={styles.sectionTitleMuted}>Favoritos</Text>
+                    <TouchableOpacity activeOpacity={0.75}>
+                      <Text style={styles.linkBlue}>+ Adicionar</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {FAVORITES_HOME_WORK.map((item, index) => (
+                    <View key={item.id}>
+                      <TouchableOpacity
+                        style={styles.rowPad}
+                        onPress={() => goToResults(item.destination)}
+                        activeOpacity={0.75}
+                      >
+                        <MaterialCommunityIcons name={item.icon} size={24} color="#4B5563" />
+                        <View style={styles.rowBody}>
+                          <Text style={styles.rowTitle}>{item.label}</Text>
+                          <Text style={styles.tapEdit}>Toque para editar</Text>
+                        </View>
+                        <MaterialCommunityIcons name="chevron-right" size={22} color="#9CA3AF" />
+                      </TouchableOpacity>
+                      {index < FAVORITES_HOME_WORK.length - 1 ? <View style={styles.divider} /> : null}
                     </View>
-                    <MaterialCommunityIcons name="chevron-right" size={22} color="#9CA3AF" />
-                  </TouchableOpacity>
-                  {index < FAVORITES_HOME_WORK.length - 1 ? <View style={styles.divider} /> : null}
-                </View>
-              ))}
+                  ))}
+                </>
+              ) : null}
 
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitleMuted}>Recentes</Text>
@@ -513,18 +575,12 @@ export default function SearchDestinationScreen() {
                   <View key={item.placeId}>
                     <TouchableOpacity
                       style={styles.rowPad}
-                      onPress={() =>
-                        goToRoutePlan({
-                          destination: item.fullDescription,
-                          destLat: item.destLat,
-                          destLng: item.destLng,
-                        })
-                      }
+                      onPress={() => void openPlaceForFlow(item)}
                       activeOpacity={0.75}
                     >
                       <View style={styles.rowLeftCol}>
                         <MaterialCommunityIcons
-                          name={placeRowIcon(item.fullDescription)}
+                          name={inferPlaceIcon(item.fullDescription)}
                           size={22}
                           color="#9CA3AF"
                         />
@@ -556,13 +612,24 @@ export default function SearchDestinationScreen() {
                   <View key={station.id}>
                     <TouchableOpacity
                       style={styles.rowPad}
-                      onPress={() =>
+                      onPress={() => {
+                        const dest = `${station.name} — ${station.address}`;
+                        if (isFavoriteFlow) {
+                          goFavoriteConfirm({
+                            address: dest,
+                            lat: station.lat,
+                            lng: station.lng,
+                            inferredIcon:
+                              station.type === 'subway' ? 'subway-variant' : 'bus',
+                          });
+                          return;
+                        }
                         goToRoutePlan({
-                          destination: `${station.name} — ${station.address}`,
+                          destination: dest,
                           destLat: station.lat,
                           destLng: station.lng,
-                        })
-                      }
+                        });
+                      }}
                       activeOpacity={0.75}
                     >
                       <View style={styles.rowLeftCol}>

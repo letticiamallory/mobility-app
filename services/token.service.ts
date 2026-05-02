@@ -66,6 +66,11 @@ export async function saveToken(token: string) {
   await secureSet(TOKEN_KEY, token);
 }
 
+/** Token JWT realmente guardado (nunca o placeholder de dev). Usar p.ex. no auto-login da tela de login. */
+export async function getStoredTokenOnly() {
+  return secureGet(TOKEN_KEY);
+}
+
 export async function getToken() {
   const stored = await secureGet(TOKEN_KEY);
   if (stored) return stored;
@@ -133,4 +138,18 @@ export async function saveUserAvatar(avatarUri?: string) {
 
 export async function getUserAvatar() {
   return secureGet(USER_AVATAR_KEY);
+}
+
+/** Limpa chaves de auth no SecureStore/localStorage e AsyncStorage (favoritos/recents). Só para diagnóstico em dev. */
+export async function clearAllMobilityStorage() {
+  await secureDelete(TOKEN_KEY);
+  await secureDelete(USER_ID_KEY);
+  await secureDelete(USER_NAME_KEY);
+  await secureDelete(USER_EMAIL_KEY);
+  await secureDelete(REMEMBER_ME_KEY);
+  await secureDelete(USER_AVATAR_KEY);
+  if (!isWeb) {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+    await AsyncStorage.clear();
+  }
 }

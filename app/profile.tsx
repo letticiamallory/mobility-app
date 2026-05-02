@@ -13,14 +13,6 @@ type MeResponse = {
   accompanied?: string;
 };
 
-type ReviewResponseItem = {
-  id?: number | string;
-  place_name?: string;
-  rating?: number;
-  comment?: string;
-  created_at?: string;
-};
-
 function initialsFromName(name?: string) {
   const source = (name || 'U').trim();
   return source
@@ -34,7 +26,6 @@ function initialsFromName(name?: string) {
 export default function ProfileScreen() {
   const router = useRouter();
   const [profile, setProfile] = useState<MeResponse>({});
-  const [reviews, setReviews] = useState<ReviewResponseItem[]>([]);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,24 +49,6 @@ export default function ProfileScreen() {
       } catch {
         setProfile({});
       }
-
-      try {
-        const reviewsResponse = await fetch(`${API_URL}/reviews/my`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!reviewsResponse.ok) {
-          setReviews([]);
-          return;
-        }
-        const data = (await reviewsResponse.json()) as unknown;
-        if (Array.isArray(data)) {
-          setReviews(data as ReviewResponseItem[]);
-        } else {
-          setReviews([]);
-        }
-      } catch {
-        setReviews([]);
-      }
     };
 
     loadData();
@@ -89,15 +62,11 @@ export default function ProfileScreen() {
   };
 
   const openProfileInfo = () => {
-    router.push('/profile-info');
+    router.push({ pathname: '/profile-info', params: { section: 'info' } });
   };
 
   const openAccessibilitySettings = () => {
     router.push({ pathname: '/profile-info', params: { section: 'accessibility' } });
-  };
-
-  const openMyReviews = () => {
-    router.push('/profile-reviews');
   };
 
   const openFavorites = () => {
@@ -173,18 +142,6 @@ export default function ProfileScreen() {
         <View style={styles.groupDivider} />
 
         <View style={styles.listGroup}>
-          <TouchableOpacity style={styles.listItem} onPress={openMyReviews}>
-            <View style={styles.listItemLeft}>
-              <MaterialCommunityIcons name="star-outline" size={22} color="#0057A8" />
-              <Text style={styles.listItemText}>Minhas avaliações</Text>
-              {reviews.length > 0 ? (
-                <View style={styles.countBadge}>
-                  <Text style={styles.countBadgeText}>{reviews.length}</Text>
-                </View>
-              ) : null}
-            </View>
-            <MaterialCommunityIcons name="chevron-right" size={20} color="#CCCCCC" />
-          </TouchableOpacity>
           <TouchableOpacity style={styles.listItem} onPress={openFavorites}>
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="heart-outline" size={22} color="#0057A8" />
@@ -336,20 +293,6 @@ const styles = StyleSheet.create({
   logoutItemText: {
     color: '#EF4444',
     fontSize: 15,
-  },
-  countBadge: {
-    backgroundColor: '#EBF3FF',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 6,
-  },
-  countBadgeText: {
-    color: '#0057A8',
-    fontSize: 11,
-    fontWeight: '700',
   },
   groupDivider: {
     height: 8,

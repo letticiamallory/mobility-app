@@ -1,8 +1,9 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import * as Location from 'expo-location';
 import {
+  Alert,
   ImageBackground,
   Linking,
   ScrollView,
@@ -15,8 +16,20 @@ import {
 import { Text as PaperText } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
+import {
+  getHomeFavorites,
+  PRESET_FAVORITE_IDS,
+  removeHomeFavorite,
+  type HomeFavoriteRow,
+} from '../services/home-favorites.service';
 import { getToken, getUserInfo } from '../services/token.service';
-import { HOME_FAVORITE_SHORTCUTS } from '../mocks/home';
+
+const FAVORITE_EDIT_TITLES: Record<string, string> = {
+  home: 'Definir endereço residencial',
+  work: 'Definir endereço do trabalho',
+  hospital: 'Definir endereço do hospital',
+  school: 'Definir endereço da escola',
+};
 
 type RecentRoute = {
   id: string;
@@ -32,6 +45,17 @@ export default function HomeScreen() {
   const [recentRoutes, setRecentRoutes] = useState<RecentRoute[]>([]);
   const [loadingRecents, setLoadingRecents] = useState(true);
   const [userLocation, setUserLocation] = useState<Location.LocationObjectCoords | null>(null);
+  const [favorites, setFavorites] = useState<HomeFavoriteRow[]>([]);
+
+  const reloadFavorites = useCallback(async () => {
+    setFavorites(await getHomeFavorites());
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void reloadFavorites();
+    }, [reloadFavorites]),
+  );
 
   useEffect(() => {
     const loadData = async () => {
@@ -85,9 +109,20 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
-    Location.getCurrentPositionAsync({}).then((loc) => {
-      setUserLocation(loc.coords);
-    });
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (cancelled || status !== Location.PermissionStatus.GRANTED) return;
+        const loc = await Location.getCurrentPositionAsync({});
+        if (!cancelled) setUserLocation(loc.coords);
+      } catch {
+        /* permissão negada, serviços desligados ou erro — home funciona sem GPS */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const goToDirections = (dest: string, origin?: string) => {
@@ -116,6 +151,55 @@ export default function HomeScreen() {
   };
 
   const hasRecents = recentRoutes.length > 0;
+
+  const openFavoriteEditor = (item: HomeFavoriteRow) => {
+    const screenTitle = PRESET_FAVORITE_IDS.has(String(item.id).trim())
+      ? FAVORITE_EDIT_TITLES[item.id] ?? `Definir ${item.label}`
+      : 'Editar favorito';
+    router.push({
+      pathname: '/search-destination',
+      params: {
+        favoriteFlow: '1',
+        favoriteId: item.id,
+        presetIcon: item.icon,
+        screenTitle,
+      },
+    });
+  };
+
+  const openAddFavorite = () => {
+    router.push({
+      pathname: '/search-destination',
+      params: {
+        favoriteFlow: '1',
+        favoriteAction: 'add',
+        screenTitle: 'Adicionar aos favoritos',
+      },
+    });
+  };
+
+  const confirmRemoveFavorite = (item: HomeFavoriteRow) => {
+    const title = 'Confirmar exclusão';
+    const message = `Tem certeza de que deseja excluir “${item.label}” dos favoritos? Você pode adicionar de novo depois em Adicionar.`;
+    Alert.alert(title, message, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Sim, excluir',
+        style: 'destructive',
+        onPress: () => {
+          const idToRemove = item.id;
+          void (async () => {
+            try {
+              const next = await removeHomeFavorite(idToRemove);
+              setFavorites(next);
+            } catch {
+              await reloadFavorites();
+            }
+          })();
+        },
+      },
+    ]);
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['left', 'right', 'bottom']}>
@@ -153,7 +237,7 @@ export default function HomeScreen() {
 
         <View style={styles.sectionHeader}>
           <PaperText style={styles.sectionTitle}>Favoritos</PaperText>
-          <TouchableOpacity>
+          <TouchableOpacity onPress={openAddFavorite} activeOpacity={0.75}>
             <PaperText style={styles.sectionLink}>Adicionar</PaperText>
           </TouchableOpacity>
         </View>
@@ -164,19 +248,37 @@ export default function HomeScreen() {
           style={styles.favoritesScroll}
           contentContainerStyle={styles.favoritesContent}
         >
-          {HOME_FAVORITE_SHORTCUTS.map((item) => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.favoriteCard}
-              onPress={() => goToDirections(item.destination)}
-              activeOpacity={0.85}
-            >
-              <MaterialCommunityIcons name={item.icon} size={26} color="#0057A8" />
-              <PaperText style={styles.favoriteLabel}>{item.label}</PaperText>
-              {item.subtitle ? (
-                <PaperText style={styles.favoriteSubLabel}>{item.subtitle}</PaperText>
-              ) : null}
-            </TouchableOpacity>
+          {favorites.map((item) => (
+            <View key={item.id} style={styles.favoriteCardWrap}>
+              <TouchableOpacity
+                style={styles.favoriteCard}
+                onPress={() => openFavoriteEditor(item)}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons
+                  name={item.icon as keyof typeof MaterialCommunityIcons.glyphMap}
+                  size={26}
+                  color="#1E1D1D"
+                />
+                <PaperText style={styles.favoriteLabel} numberOfLines={2}>
+                  {item.label}
+                </PaperText>
+                <PaperText style={styles.favoriteSubLabel} numberOfLines={2}>
+                  {item.subtitle ||
+                    (item.address.length > 36 ? `${item.address.slice(0, 36)}…` : item.address)}
+                </PaperText>
+              </TouchableOpacity>
+              {/* Por cima do card para o toque no X não abrir o editor */}
+              <TouchableOpacity
+                style={styles.favoriteDelete}
+                onPress={() => confirmRemoveFavorite(item)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel="Excluir favorito"
+              >
+                <MaterialCommunityIcons name="close" size={16} color="#C5C5C5" />
+              </TouchableOpacity>
+            </View>
           ))}
         </ScrollView>
 
@@ -204,7 +306,7 @@ export default function HomeScreen() {
             <View style={styles.emptyWrap}>
               <MaterialCommunityIcons name="map-search-outline" size={40} color="#CCCCCC" />
               <PaperText style={styles.emptyText}>Nenhuma viagem recente</PaperText>
-              <TouchableOpacity style={styles.emptyButton} onPress={() => goToDirections('Destino')}>
+              <TouchableOpacity style={styles.emptyButton} onPress={() => router.push('/search-destination')}>
                 <PaperText style={styles.emptyButtonText}>Buscar rota agora</PaperText>
               </TouchableOpacity>
             </View>
@@ -339,13 +441,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingRight: 4,
   },
-  favoriteCard: {
+  favoriteCardWrap: {
     width: 170,
+    marginRight: 12,
+    position: 'relative',
+  },
+  favoriteDelete: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    zIndex: 10,
+    elevation: 10,
+    padding: 2,
+    opacity: 0.85,
+  },
+  favoriteCard: {
+    width: '100%',
     height: 135,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    marginRight: 12,
     padding: 14,
+    paddingTop: 28,
     justifyContent: 'flex-start',
     alignItems: 'flex-start',
   },
@@ -354,14 +470,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 8,
     fontFamily: 'Agrandir-Regular',
-    textAlign: 'center',
+    textAlign: 'left',
+    alignSelf: 'stretch',
   },
   favoriteSubLabel: {
     color: '#999999',
     fontSize: 10,
     marginTop: 2,
     fontFamily: 'Agrandir-Regular',
-    textAlign: 'center',
+    textAlign: 'left',
+    alignSelf: 'stretch',
   },
   sectionBlock: {
     marginHorizontal: 16,
