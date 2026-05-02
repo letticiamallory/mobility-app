@@ -3,7 +3,10 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Modal,
   Platform,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -13,8 +16,9 @@ import {
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
+import { API_URL } from '../constants/api';
 import { fetchDiverseRoutes } from '../services/fetch-diverse-routes';
-import { getUserInfo } from '../services/token.service';
+import { getToken, getUserInfo } from '../services/token.service';
 
 const PRIMARY = '#0057A8';
 const BG = '#F5F5F5';
@@ -90,6 +94,13 @@ export default function RoutePlanScreen() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [findRoutesLoading, setFindRoutesLoading] = useState(false);
+  const [accessibilityPoints, setAccessibilityPoints] = useState<any[]>([]);
+  const [googleReviews, setGoogleReviews] = useState<any[]>([]);
+  const [selectedPoint, setSelectedPoint] = useState<any>(null);
+  const [placeReviews, setPlaceReviews] = useState<any[]>([]);
+  const [userReviews, setUserReviews] = useState<any[]>([]);
+  const [placeDetails, setPlaceDetails] = useState<any>(null);
+  const [loadingReviews, setLoadingReviews] = useState(false);
 
   const fitBoth = useCallback(() => {
     const o = originCoord;
@@ -205,20 +216,47 @@ export default function RoutePlanScreen() {
     setTimeout(() => fitBoth(), 320);
   }, [originLabel, destLabel, originCoord, destCoord, fitBoth]);
 
+  const goEditLocations = useCallback(() => {
+    const p: Record<string, string> = {
+      origin: originLabel.trim() || 'Local atual',
+      destination: destLabel.trim() || destinationParam,
+    };
+    if (originCoord) {
+      p.originCoordinate = JSON.stringify({
+        latitude: originCoord.latitude,
+        longitude: originCoord.longitude,
+      });
+    }
+    if (destCoord) {
+      p.destinationCoordinate = JSON.stringify({
+        latitude: destCoord.latitude,
+        longitude: destCoord.longitude,
+      });
+    }
+    router.push({ pathname: '/search-destination', params: p });
+  }, [router, originLabel, destLabel, destinationParam, originCoord, destCoord]);
+
   const goFindRoutes = useCallback(async () => {
     const dest = destLabel.trim() || destinationParam;
     const orig = originLabel.trim() || 'Local atual';
     if (!dest) return;
 
     setFindRoutesLoading(true);
-    let list: unknown[] = [];
+    let packagedRoutes: { alone: unknown[]; companied: unknown[] } = { alone: [], companied: [] };
     try {
       const { userId } = await getUserInfo();
       if (typeof userId === 'number' && !Number.isNaN(userId)) {
-        list = await fetchDiverseRoutes(orig, dest, userId, 'alone');
+        const [aloneResult, companiedResult] = await Promise.allSettled([
+          fetchDiverseRoutes(orig, dest, userId, 'alone'),
+          fetchDiverseRoutes(orig, dest, userId, 'companied'),
+        ]);
+        packagedRoutes = {
+          alone: aloneResult.status === 'fulfilled' ? (aloneResult.value as unknown[]) : [],
+          companied: companiedResult.status === 'fulfilled' ? (companiedResult.value as unknown[]) : [],
+        };
       }
     } catch {
-      list = [];
+      packagedRoutes = { alone: [], companied: [] };
     } finally {
       setFindRoutesLoading(false);
     }
@@ -226,7 +264,7 @@ export default function RoutePlanScreen() {
     const p: Record<string, string> = {
       origin: orig,
       destination: dest,
-      routes: encodeURIComponent(JSON.stringify(list)),
+      routes: encodeURIComponent(JSON.stringify(packagedRoutes)),
     };
     if (originCoord) {
       p.originCoordinate = JSON.stringify({
@@ -250,6 +288,105 @@ export default function RoutePlanScreen() {
           { latitude: destCoord.latitude, longitude: destCoord.longitude },
         ]
       : [];
+  const route = useMemo(() => {
+    if (!originCoord || !destCoord) return null;
+    return {
+      stages: [
+        {
+          points: [
+            {
+              latitude: (originCoord.latitude + destCoord.latitude) / 2,
+              longitude: (originCoord.longitude + destCoord.longitude) / 2,
+            },
+          ],
+        },
+      ],
+    };
+  }, [originCoord, destCoord]);
+
+  useEffect(() => {
+    if (!route) return;
+    const mid = route.stages?.[Math.floor((route.stages?.length ?? 0) / 2)];
+    const coord = mid?.points?.[0];
+    if (!coord) return;
+
+    (async () => {
+      const token = await getToken();
+      fetch(`${API_URL}/accessibility/nearby?lat=${coord.latitude}&lng=${coord.longitude}`, {
+        headers: { Authorization: `Bearer ${token ?? ''}` },
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          const list = Array.isArray(data)
+            ? data
+            : Array.isArray((data as { data?: unknown })?.data)
+              ? ((data as { data: unknown[] }).data)
+              : [];
+          setAccessibilityPoints(list);
+        })
+        .catch(() => {});
+
+      const googleUrl = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${coord.latitude},${coord.longitude}&radius=500&keyword=acessivel+rampa+cadeirante&key=${process.env.EXPO_PUBLIC_GOOGLE_API_KEY}`;
+      fetch(googleUrl)
+        .then((r) => r.json())
+        .then((data) => {
+          const rawResults = Array.isArray((data as { results?: unknown })?.results)
+            ? ((data as { results: unknown[] }).results)
+            : [];
+          const places = rawResults
+            .filter((p: any) => p.wheelchair_accessible_entrance === true || p.rating >= 4)
+            .map((p: any) => ({
+              id: p.place_id,
+              name: p.name,
+              lat: p.geometry.location.lat,
+              lng: p.geometry.location.lng,
+              rating: p.rating,
+              source: 'google',
+              wheelchair: p.wheelchair_accessible_entrance ? 'yes' : 'unknown',
+            }));
+          setGoogleReviews(places);
+        })
+        .catch(() => {});
+    })();
+  }, [route]);
+
+  const handleSelectPoint = async (point: any) => {
+    setSelectedPoint(point);
+    setLoadingReviews(true);
+    setPlaceReviews([]);
+    setUserReviews([]);
+    setPlaceDetails(null);
+
+    try {
+      if (point.id) {
+        const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${point.id}&fields=name,rating,reviews,wheelchair_accessible_entrance,photos&language=pt-BR&key=${process.env.EXPO_PUBLIC_GOOGLE_API_KEY}`;
+        const detailsRes = await fetch(detailsUrl);
+        const detailsData = await detailsRes.json();
+        const result = detailsData.result;
+
+        setPlaceDetails(result);
+
+        const accessibilityKeywords = ['rampa', 'cadeirante', 'acessível', 'acessibilidade', 'deficiente', 'bengala', 'elevador', 'degrau', 'calçada', 'wheelchair'];
+        const filtered = (result?.reviews ?? []).filter((r: any) =>
+          accessibilityKeywords.some((k) => r.text?.toLowerCase().includes(k)),
+        );
+        setPlaceReviews(
+          filtered.length > 0 ? filtered : (result?.reviews ?? []).slice(0, 3),
+        );
+      }
+
+      const token = await getToken();
+      const userRes = await fetch(`${API_URL}/reviews?type=station&id=${point.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const userData = await userRes.json();
+      setUserReviews(userData?.reviews ?? []);
+    } catch {
+      // silencioso
+    } finally {
+      setLoadingReviews(false);
+    }
+  };
 
   const originDisplay = originLabel.trim() || 'Local atual';
   const destDisplay = destLabel.trim() || destinationParam;
@@ -277,18 +414,19 @@ export default function RoutePlanScreen() {
             <MaterialCommunityIcons name="map-marker" size={22} color={PRIMARY} />
           </View>
           <View style={styles.odTexts}>
-            <Text style={styles.odPrimary} numberOfLines={1} ellipsizeMode="tail">
-              {originDisplay}
-            </Text>
+            <TouchableOpacity onPress={goEditLocations} activeOpacity={0.75}>
+              <Text style={styles.odPrimary} numberOfLines={1} ellipsizeMode="tail">
+                {originDisplay}
+              </Text>
+            </TouchableOpacity>
             <View style={styles.odDivider} />
-            <Text style={styles.odPrimary} numberOfLines={1} ellipsizeMode="tail">
-              {destDisplay}
-            </Text>
+            <TouchableOpacity onPress={goEditLocations} activeOpacity={0.75}>
+              <Text style={styles.odPrimary} numberOfLines={1} ellipsizeMode="tail">
+                {destDisplay}
+              </Text>
+            </TouchableOpacity>
           </View>
           <View style={styles.rightActions}>
-            <TouchableOpacity style={styles.iconGhost} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <MaterialCommunityIcons name="tune-variant" size={22} color={MUTED} />
-            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.swapCircle, !canSwapCoords && styles.swapDisabled]}
               onPress={canSwapCoords ? handleSwap : undefined}
@@ -296,9 +434,6 @@ export default function RoutePlanScreen() {
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <MaterialCommunityIcons name="swap-vertical" size={22} color={PRIMARY} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iconGhost} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <MaterialCommunityIcons name="plus" size={22} color={MUTED} />
             </TouchableOpacity>
           </View>
         </View>
@@ -346,6 +481,46 @@ export default function RoutePlanScreen() {
             <Marker coordinate={destCoord} anchor={{ x: 0.5, y: 1 }}>
               <MaterialCommunityIcons name="map-marker" size={36} color={PRIMARY} />
             </Marker>
+            {accessibilityPoints.map((point: any) => (
+              <Marker
+                key={`w_${point.id}`}
+                coordinate={{ latitude: point.lat, longitude: point.lng }}
+                onPress={() => {
+                  void handleSelectPoint({ ...point, source: 'user' });
+                }}
+              >
+                <View
+                  style={{
+                    width: 28, height: 28, borderRadius: 14,
+                    backgroundColor: point.wheelchair === 'yes' ? '#22c55e' : point.wheelchair === 'limited' ? '#F59E0B' : '#EF4444',
+                    alignItems: 'center', justifyContent: 'center',
+                    borderWidth: 2, borderColor: 'white',
+                  }}
+                >
+                  <MaterialCommunityIcons name="wheelchair-accessibility" size={14} color="white" />
+                </View>
+              </Marker>
+            ))}
+            {googleReviews.map((point: any) => (
+              <Marker
+                key={`g_${point.id}`}
+                coordinate={{ latitude: point.lat, longitude: point.lng }}
+                onPress={() => {
+                  void handleSelectPoint({ ...point, source: 'google' });
+                }}
+              >
+                <View
+                  style={{
+                    width: 28, height: 28, borderRadius: 14,
+                    backgroundColor: '#0057A8',
+                    alignItems: 'center', justifyContent: 'center',
+                    borderWidth: 2, borderColor: 'white',
+                  }}
+                >
+                  <MaterialCommunityIcons name="google" size={14} color="white" />
+                </View>
+              </Marker>
+            ))}
             {lineCoords.length === 2 ? (
               <Polyline coordinates={lineCoords} strokeColor={LINE} strokeWidth={4} />
             ) : null}
@@ -363,6 +538,204 @@ export default function RoutePlanScreen() {
           <MaterialCommunityIcons name="crosshairs-gps" size={22} color={PRIMARY} />
         </TouchableOpacity>
       </View>
+      <Modal
+        visible={!!selectedPoint}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedPoint(null)}
+      >
+        <View style={{ flex: 1 }}>
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            onPress={() => setSelectedPoint(null)}
+          />
+          <View style={{
+            backgroundColor: '#FFFFFF',
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            maxHeight: '80%',
+            shadowColor: '#000',
+            shadowOpacity: 0.2,
+            shadowRadius: 16,
+            elevation: 10,
+          }}>
+            <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 8 }}>
+              <View style={{ width: 36, height: 4, backgroundColor: '#E0E0E0', borderRadius: 2 }} />
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
+                <View style={{ flex: 1, marginRight: 12 }}>
+                  <Text style={{ fontSize: 18, fontWeight: '700', color: '#1E1D1D' }} numberOfLines={2}>
+                    {selectedPoint?.name}
+                  </Text>
+                  {selectedPoint?.category && (
+                    <Text style={{ fontSize: 13, color: '#999999', marginTop: 3 }}>{selectedPoint.category}</Text>
+                  )}
+                </View>
+                <TouchableOpacity
+                  onPress={() => setSelectedPoint(null)}
+                  style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#F5F5F5', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <MaterialCommunityIcons name="close" size={16} color="#666666" />
+                </TouchableOpacity>
+              </View>
+              {placeDetails?.rating && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                  <Text style={{ fontSize: 28, fontWeight: '800', color: '#1E1D1D' }}>{placeDetails.rating.toFixed(1)}</Text>
+                  <View>
+                    <View style={{ flexDirection: 'row', gap: 3 }}>
+                      {[1,2,3,4,5].map(i => (
+                        <MaterialCommunityIcons
+                          key={i}
+                          name={i <= Math.round(placeDetails.rating) ? 'star' : 'star-outline'}
+                          size={16}
+                          color="#F59E0B"
+                        />
+                      ))}
+                    </View>
+                    <Text style={{ fontSize: 11, color: '#999999', marginTop: 2 }}>Google Maps</Text>
+                  </View>
+                </View>
+              )}
+              <View style={{ backgroundColor: '#F5F7FA', borderRadius: 14, padding: 14, marginBottom: 20 }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#666666', letterSpacing: 0.5, marginBottom: 10 }}>
+                  ACESSIBILIDADE
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  <View style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 6,
+                    backgroundColor: selectedPoint?.wheelchair === 'yes' ? '#DCFCE7' : selectedPoint?.wheelchair === 'limited' ? '#FEF3C7' : '#FEE2E2',
+                    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6,
+                  }}>
+                    <MaterialCommunityIcons
+                      name="wheelchair-accessibility"
+                      size={14}
+                      color={selectedPoint?.wheelchair === 'yes' ? '#16A34A' : selectedPoint?.wheelchair === 'limited' ? '#F59E0B' : '#EF4444'}
+                    />
+                    <Text style={{
+                      fontSize: 12, fontWeight: '600',
+                      color: selectedPoint?.wheelchair === 'yes' ? '#166534' : selectedPoint?.wheelchair === 'limited' ? '#92400E' : '#991B1B'
+                    }}>
+                      {selectedPoint?.wheelchair === 'yes' ? 'Entrada acessível' : selectedPoint?.wheelchair === 'limited' ? 'Acesso parcial' : 'Não acessível'}
+                    </Text>
+                  </View>
+                  {placeDetails?.wheelchair_accessible_entrance !== undefined && (
+                    <View style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 6,
+                      backgroundColor: placeDetails.wheelchair_accessible_entrance ? '#DCFCE7' : '#FEE2E2',
+                      borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6,
+                    }}>
+                      <MaterialCommunityIcons name="google" size={12} color={placeDetails.wheelchair_accessible_entrance ? '#16A34A' : '#EF4444'} />
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: placeDetails.wheelchair_accessible_entrance ? '#166534' : '#991B1B' }}>
+                        {placeDetails.wheelchair_accessible_entrance ? 'Google: acessível' : 'Google: não acessível'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+              {loadingReviews ? (
+                <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+                  <ActivityIndicator color="#0057A8" />
+                  <Text style={{ color: '#999999', fontSize: 13, marginTop: 8 }}>Carregando avaliações...</Text>
+                </View>
+              ) : (
+                <>
+                  {placeReviews.length > 0 && (
+                    <View style={{ marginBottom: 20 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                        <MaterialCommunityIcons name="google" size={16} color="#0057A8" />
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#1E1D1D' }}>Avaliações do Google</Text>
+                      </View>
+                      {placeReviews.map((review: any, i: number) => (
+                        <View key={i} style={{ backgroundColor: '#F9F9F9', borderRadius: 12, padding: 12, marginBottom: 8 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#EBF3FF', alignItems: 'center', justifyContent: 'center' }}>
+                              <Text style={{ color: '#0057A8', fontSize: 12, fontWeight: '700' }}>
+                                {review.author_name?.charAt(0)?.toUpperCase() ?? 'U'}
+                              </Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E1D1D' }} numberOfLines={1}>{review.author_name}</Text>
+                              <View style={{ flexDirection: 'row', gap: 2, marginTop: 2 }}>
+                                {[1,2,3,4,5].map(s => (
+                                  <MaterialCommunityIcons key={s} name={s <= review.rating ? 'star' : 'star-outline'} size={11} color="#F59E0B" />
+                                ))}
+                              </View>
+                            </View>
+                            <Text style={{ fontSize: 11, color: '#AAAAAA' }}>{review.relative_time_description}</Text>
+                          </View>
+                          <Text style={{ fontSize: 13, color: '#666666', lineHeight: 18 }} numberOfLines={4}>{review.text}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                  <View style={{ marginBottom: 20 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <MaterialCommunityIcons name="wheelchair-accessibility" size={16} color="#0057A8" />
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#1E1D1D' }}>Avaliações de acessibilidade</Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#999999' }}>{userReviews.length} avaliações</Text>
+                    </View>
+
+                    {userReviews.length === 0 ? (
+                      <View style={{ alignItems: 'center', paddingVertical: 16, backgroundColor: '#F9F9F9', borderRadius: 12 }}>
+                        <MaterialCommunityIcons name="star-outline" size={32} color="#CCCCCC" />
+                        <Text style={{ color: '#999999', fontSize: 13, marginTop: 8 }}>Nenhuma avaliação ainda</Text>
+                        <Text style={{ color: '#AAAAAA', fontSize: 12, marginTop: 4 }}>Seja o primeiro a avaliar!</Text>
+                      </View>
+                    ) : (
+                      userReviews.map((review: any, i: number) => (
+                        <View key={i} style={{ backgroundColor: '#F9F9F9', borderRadius: 12, padding: 12, marginBottom: 8 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#EBF3FF', alignItems: 'center', justifyContent: 'center' }}>
+                              <Text style={{ color: '#0057A8', fontSize: 12, fontWeight: '700' }}>
+                                {review.user?.name?.charAt(0)?.toUpperCase() ?? 'U'}
+                              </Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E1D1D' }}>{review.user?.name ?? 'Usuário'}</Text>
+                              <View style={{ flexDirection: 'row', gap: 2, marginTop: 2 }}>
+                                {[1,2,3,4,5].map(s => (
+                                  <MaterialCommunityIcons key={s} name={s <= review.rating ? 'star' : 'star-outline'} size={11} color="#F59E0B" />
+                                ))}
+                              </View>
+                            </View>
+                            <Text style={{ fontSize: 11, color: '#AAAAAA' }}>
+                              {new Date(review.created_at).toLocaleDateString('pt-BR')}
+                            </Text>
+                          </View>
+                          {review.tags?.length > 0 && (
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginBottom: 6 }}>
+                              {review.tags.map((tag: string, t: number) => (
+                                <View key={t} style={{ backgroundColor: '#EBF3FF', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
+                                  <Text style={{ fontSize: 10, color: '#0057A8', fontWeight: '500' }}>{tag.replace(/_/g, ' ')}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          )}
+                          {review.comment && (
+                            <Text style={{ fontSize: 13, color: '#666666', lineHeight: 18 }}>{review.comment}</Text>
+                          )}
+                        </View>
+                      ))
+                    )}
+                  </View>
+                </>
+              )}
+              <TouchableOpacity
+                onPress={() => {
+                  setSelectedPoint(null);
+                  router.push({ pathname: '/write-review', params: { type: 'station', id: selectedPoint?.id, name: selectedPoint?.name } });
+                }}
+                style={{ backgroundColor: '#0057A8', borderRadius: 40, height: 50, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Escrever avaliação de acessibilidade</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -498,7 +871,7 @@ const styles = StyleSheet.create({
   recenter: {
     position: 'absolute',
     right: 16,
-    bottom: 24,
+    bottom: 40,
     width: 48,
     height: 48,
     borderRadius: 24,

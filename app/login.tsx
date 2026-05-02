@@ -1,4 +1,6 @@
-import { useRouter } from 'expo-router';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
+import { Stack, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -6,7 +8,6 @@ import {
   Image,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,8 +15,16 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { login } from '../services/auth.service';
+import { API_URL } from '../constants/api';
+import {
+  GOOGLE_WEB_CLIENT_ID,
+  googlePayloadFromIdToken,
+  isExpoGo,
+  signInWithGoogleNative,
+} from '../services/google-auth.service';
 import {
   getRememberMe,
   getToken,
@@ -24,7 +33,18 @@ import {
   saveUserInfo,
 } from '../services/token.service';
 
+WebBrowser.maybeCompleteAuthSession();
+
 export default function LoginScreen() {
+  return (
+    <>
+      <Stack.Screen options={{ headerShown: false }} />
+      <LoginScreenInner />
+    </>
+  );
+}
+
+function LoginScreenInner() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -34,6 +54,20 @@ export default function LoginScreen() {
   const dot1 = useRef(new Animated.Value(0.3)).current;
   const dot2 = useRef(new Animated.Value(0.3)).current;
   const dot3 = useRef(new Animated.Value(0.3)).current;
+
+  const [googleRequest, , googlePromptAsync] = Google.useIdTokenAuthRequest({
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    clientId: GOOGLE_WEB_CLIENT_ID,
+  });
+
+  useEffect(() => {
+    if (__DEV__ && googleRequest && isExpoGo()) {
+      console.log(
+        '[Google / Expo Go] Cadastre esta URL em Google Cloud → OAuth Web client → Authorized redirect URIs:',
+        googleRequest.redirectUri
+      );
+    }
+  }, [googleRequest]);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,8 +125,75 @@ export default function LoginScreen() {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    try {
+      setLoading(true);
+      let googleData: {
+        email: string;
+        name: string;
+        googleId: string;
+        token: string;
+      };
+
+      if (isExpoGo()) {
+        if (!googleRequest) {
+          throw new Error('Login Google ainda não está pronto. Tente de novo em um instante.');
+        }
+        const result = await googlePromptAsync();
+        if (result.type === 'cancel' || result.type === 'dismiss') return;
+        if (result.type !== 'success') {
+          const err =
+            result.type === 'error'
+              ? String(result.params?.error_description ?? result.error ?? 'Falha no login Google')
+              : 'Falha no login Google';
+          throw new Error(err);
+        }
+        const idToken =
+          result.params.id_token ?? result.authentication?.idToken ?? '';
+        if (!idToken) {
+          throw new Error(
+            'Não foi possível obter o token do Google. Verifique o redirect URI no Google Cloud Console (veja o log [Google / Expo Go]).'
+          );
+        }
+        googleData = googlePayloadFromIdToken(idToken);
+      } else {
+        googleData = await signInWithGoogleNative();
+      }
+
+      if (!googleData.email || !googleData.googleId || !googleData.token) {
+        throw new Error('Não foi possível obter os dados da conta Google.');
+      }
+
+      const response = await fetch(`${API_URL}/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(googleData),
+      });
+
+      const data = (await response.json()) as {
+        access_token?: string;
+        user_id?: number;
+        name?: string;
+        message?: string;
+      };
+      if (!response.ok) throw new Error(data.message ?? 'Falha no login com Google');
+      if (!data.access_token || !data.user_id || !data.name) {
+        throw new Error('Resposta inválida no login com Google.');
+      }
+
+      await saveRememberMe(true);
+      await saveToken(data.access_token);
+      await saveUserInfo(data.user_id, data.name, googleData.email);
+      router.replace('/home');
+    } catch (error: any) {
+      Alert.alert('Erro', error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -112,7 +213,7 @@ export default function LoginScreen() {
               style={styles.logo}
               resizeMode="contain"
             />
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: -35, marginBottom: 24, gap: 6 }}>
+            <View style={styles.routeDotsRow}>
               <Animated.View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#0057A8', opacity: dot1 }} />
               <View style={{ width: 36, height: 2, backgroundColor: '#E0E0E0', borderRadius: 1 }} />
               <Animated.View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#0057A8', opacity: dot2 }} />
@@ -125,6 +226,7 @@ export default function LoginScreen() {
             <View style={styles.formWrap}>
               <Text style={styles.fieldLabel}>Email</Text>
               <TextInput
+                testID="input-email"
                 style={styles.input}
                 placeholder="Insira seu email"
                 placeholderTextColor="#AAAAAA"
@@ -137,6 +239,7 @@ export default function LoginScreen() {
               <Text style={styles.fieldLabel}>Senha</Text>
               <View style={styles.passwordInputWrap}>
                 <TextInput
+                  testID="input-senha"
                   style={styles.passwordInput}
                   placeholder="Insira sua senha"
                   placeholderTextColor="#AAAAAA"
@@ -179,7 +282,7 @@ export default function LoginScreen() {
                 <Text style={styles.buttonText}>{loading ? 'Entrando...' : 'Entrar'}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.signupRow} onPress={() => router.push('/')} activeOpacity={0.8}>
+              <TouchableOpacity style={styles.signupRow} onPress={() => router.push('/register')} activeOpacity={0.8}>
                 <Text style={styles.signupText}>
                   Não tem conta? <Text style={styles.signupLink}>Registre-se</Text>
                 </Text>
@@ -193,25 +296,24 @@ export default function LoginScreen() {
                 <View style={styles.dividerLine} />
               </View>
 
-              <View style={styles.socialRow}>
-                <TouchableOpacity activeOpacity={0.85} style={[styles.socialIconOnly, styles.socialGoogle]}>
-                  <Image
-                    source={{ uri: 'https://www.gstatic.com/images/branding/product/1x/googleg_48dp.png' }}
-                    style={styles.socialLogoImage}
-                    resizeMode="contain"
-                  />
-                </TouchableOpacity>
-                <TouchableOpacity activeOpacity={0.85} style={[styles.socialIconOnly, styles.socialApple]}>
-                  <MaterialCommunityIcons name="apple" size={28} color="#111827" />
-                </TouchableOpacity>
-                <TouchableOpacity activeOpacity={0.85} style={[styles.socialIconOnly, styles.socialEmail]}>
-                  <Image
-                    source={{ uri: 'https://www.gstatic.com/images/branding/product/1x/gmail_2020q4_48dp.png' }}
-                    style={styles.socialLogoImage}
-                    resizeMode="contain"
-                  />
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[
+                  styles.googleSignInButton,
+                  (loading || (isExpoGo() && !googleRequest)) && styles.googleSignInButtonDisabled,
+                ]}
+                onPress={handleGoogleLogin}
+                disabled={loading || (isExpoGo() && !googleRequest)}
+                accessibilityRole="button"
+                accessibilityLabel="Conectar-se com o Google"
+              >
+                <Image
+                  source={{ uri: 'https://www.gstatic.com/images/branding/product/1x/googleg_48dp.png' }}
+                  style={styles.googleSignInIcon}
+                  resizeMode="contain"
+                />
+                <Text style={styles.googleSignInLabel}>Conectar-se com o Google</Text>
+              </TouchableOpacity>
 
               <Text style={styles.termsText}>
                 Ao entrar, você concorda com os termos{'\n'}e condições.
@@ -235,7 +337,8 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 14,
-    paddingVertical: 18,
+    paddingTop: 12,
+    paddingBottom: 28,
     alignItems: 'center',
     justifyContent: 'flex-start',
   },
@@ -244,18 +347,25 @@ const styles = StyleSheet.create({
     maxWidth: 430,
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
-    height: 796,
-    marginTop: -30,
-    paddingTop: 34,
+    marginTop: 8,
+    paddingTop: 28,
     paddingBottom: 24,
     paddingHorizontal: 20,
+  },
+  routeDotsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -18,
+    marginBottom: 24,
+    gap: 6,
   },
   logo: {
     width: 120,
     height: 120,
     alignSelf: 'center',
-    marginTop: 22,
-    marginBottom: 36,
+    marginTop: 8,
+    marginBottom: 28,
   },
   formWrap: {
     width: '100%',
@@ -380,33 +490,34 @@ const styles = StyleSheet.create({
     marginHorizontal: 10,
   },
   withText: { color: '#1E1D1D', fontSize: 20 * 0.6 },
-  socialRow: {
+  /** Padrão alinhado às diretrizes “Sign in with Google” (fundo claro, G colorido, texto localizado). */
+  googleSignInButton: {
+    width: '100%',
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 26,
-    marginBottom: 24,
-  },
-  socialIconOnly: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    minHeight: 52,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: '#747775',
+    backgroundColor: '#FFFFFF',
+    marginBottom: 24,
+    gap: 12,
   },
-  socialGoogle: { backgroundColor: '#FFFDFD' },
-  socialApple: { backgroundColor: '#F9FAFB' },
-  socialEmail: { backgroundColor: '#F8FBFF' },
-  socialLogoImage: {
-    width: 28,
-    height: 28,
+  googleSignInButtonDisabled: {
+    opacity: 0.55,
+  },
+  googleSignInIcon: {
+    width: 20,
+    height: 20,
+  },
+  googleSignInLabel: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#1F1F1F',
+    letterSpacing: 0.15,
   },
   termsText: {
     color: '#1E1D1D',

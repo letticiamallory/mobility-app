@@ -17,6 +17,7 @@
       }
     },
     "android": {
+      "package": "com.mobility.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -45,7 +46,8 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "@react-native-google-signin/google-signin"
     ],
     "fonts": [
       {
@@ -64,6 +66,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "d903bffc-1d46-4de5-89c3-739f4b7e1617"
+      }
     }
   }
 }

@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ForgotPasswordSvg from '../assets/images/undraw_forgot-password_nttj (1).svg';
-import { forgotPassword, verifyResetCode } from '../services/auth.service';
+import { API_URL } from '../constants/api';
 
 export default function EmailConfirmationScreen() {
   const router = useRouter();
@@ -23,18 +23,12 @@ export default function EmailConfirmationScreen() {
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [resending, setResending] = useState(false);
-  const [resendLeftSeconds, setResendLeftSeconds] = useState(60);
+  const [resendLeftSeconds, setResendLeftSeconds] = useState(0);
   const inputsRef = useRef<Array<TextInput | null>>([]);
 
   useEffect(() => {
     setUserEmail((emailParam ?? '').trim());
   }, [emailParam]);
-
-  useEffect(() => {
-    if (resendLeftSeconds <= 0) return;
-    const timer = setTimeout(() => setResendLeftSeconds((prev) => prev - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [resendLeftSeconds]);
 
   const handleDigitChange = (text: string, index: number) => {
     const char = text.slice(-1);
@@ -57,24 +51,23 @@ export default function EmailConfirmationScreen() {
   };
 
   const handleConfirm = async () => {
-    if (!userEmail) {
-      Alert.alert('Atenção', 'Email inválido para confirmação.');
-      return;
-    }
+    const email = userEmail.trim();
     const code = digits.join('');
-    if (code.length < 6) {
-      Alert.alert('Atenção', 'Digite o código completo de 6 dígitos.');
-      return;
-    }
+    if (!email) return Alert.alert('Atenção', 'Email inválido para confirmação.');
+    if (code.length < 6) return Alert.alert('Atenção', 'Digite o código completo');
+
     try {
       setConfirming(true);
-      const result = await verifyResetCode(userEmail, code);
-      router.replace({
-        pathname: '/reset-password',
-        params: { email: userEmail, resetToken: result.reset_token },
+      const response = await fetch(`${API_URL}/auth/verify-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code }),
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Código inválido.';
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.message === 'string' ? data.message : 'Falha ao verificar');
+      router.replace('/success');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Erro ao verificar.';
       Alert.alert('Erro', message);
     } finally {
       setConfirming(false);
@@ -82,16 +75,33 @@ export default function EmailConfirmationScreen() {
   };
 
   const handleResend = async () => {
-    if (resending || resendLeftSeconds > 0 || !userEmail) return;
+    if (resendLeftSeconds > 0) return; // evita clique duplo durante cooldown
+
     try {
       setResending(true);
-      const result = await forgotPassword(userEmail);
-      const next = Number((result as { resend_after_seconds?: unknown }).resend_after_seconds);
-      setResendLeftSeconds(Number.isFinite(next) && next > 0 ? next : 60);
-      Alert.alert('Pronto', 'Enviamos um novo código para seu email.');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Não foi possível reenviar o código.';
-      Alert.alert('Erro', message);
+      const response = await fetch(`${API_URL}/auth/resend-verification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: userEmail.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message);
+
+      Alert.alert('Código reenviado!', 'Verifique sua caixa de entrada.');
+
+      // Inicia cooldown de 60 segundos
+      setResendLeftSeconds(60);
+      const interval = setInterval(() => {
+        setResendLeftSeconds((prev) => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch (error: any) {
+      Alert.alert('Erro', error.message);
     } finally {
       setResending(false);
     }
@@ -139,15 +149,23 @@ export default function EmailConfirmationScreen() {
           <Text style={styles.confirmText}>{confirming ? 'Validando...' : 'Confirmar'}</Text>
         </TouchableOpacity>
 
-        <Text style={styles.resendText}>
-          Não recebeu?{' '}
-          <Text
-            style={[styles.resendHighlight, (resendLeftSeconds > 0 || resending) ? styles.resendDisabled : null]}
-            onPress={handleResend}
-          >
-            {resendLeftSeconds > 0 ? `Reenviar em ${resendLeftSeconds}s` : resending ? 'Reenviando...' : 'Reenviar código'}
-          </Text>
-        </Text>
+        <View style={styles.resendRow}>
+          <Text style={styles.resendText}>Não recebeu? </Text>
+          <TouchableOpacity onPress={handleResend} disabled={resendLeftSeconds > 0 || resending}>
+            <Text
+              style={{
+                color: resendLeftSeconds > 0 ? '#AAAAAA' : '#0057A8',
+                fontSize: 13,
+              }}
+            >
+              {resending
+                ? 'Enviando...'
+                : resendLeftSeconds > 0
+                  ? `Reenviar em ${resendLeftSeconds}s`
+                  : 'Reenviar código'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -229,18 +247,16 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: 'Agrandir-TextBold',
   },
+  resendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    marginTop: 16,
+  },
   resendText: {
     color: '#666666',
     fontSize: 13,
-    marginTop: 16,
     fontFamily: 'Agrandir-Regular',
-  },
-  resendHighlight: {
-    color: '#0057A8',
-    fontWeight: '600',
-    fontFamily: 'Agrandir-TextBold',
-  },
-  resendDisabled: {
-    color: '#9CA3AF',
   },
 });

@@ -23,6 +23,10 @@ export type RouteStage = {
   instruction: string;
   distance: string;
   duration: string;
+  departure_time?: string;
+  arrival_time?: string;
+  departureTime?: string;
+  arrivalTime?: string;
   departure_minutes?: number | string | Array<number | string>;
   accessible: boolean;
   warning?: string;
@@ -89,7 +93,17 @@ function getLineAccentColor(code: string): string {
 function toMinutes(duration: string): number {
   const h = duration.match(/(\d+)\s*h/i);
   const m = duration.match(/(\d+)\s*min/i);
-  return (h ? Number(h[1]) * 60 : 0) + (m ? Number(m[1]) : 0);
+  const fromLabel = (h ? Number(h[1]) * 60 : 0) + (m ? Number(m[1]) : 0);
+  if (fromLabel > 0) return fromLabel;
+  const onlyNumber = duration.match(/\d+/)?.[0];
+  return onlyNumber ? Number(onlyNumber) : 0;
+}
+
+function formatAsHoursMinutes(totalMinutes: number): string {
+  const safe = Math.max(0, Math.floor(totalMinutes));
+  const hours = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  return `${hours}h ${String(minutes).padStart(2, '0')}min`;
 }
 
 function stripEstimado(text: string): string {
@@ -100,7 +114,7 @@ function stripEstimado(text: string): string {
 function formatTotalTripMinutesLabel(totalTimeRaw: string): string {
   const cleaned = stripEstimado(totalTimeRaw);
   const mins = toMinutes(cleaned);
-  if (mins > 0) return `${mins} min`;
+  if (mins > 0) return formatAsHoursMinutes(mins);
   return '—';
 }
 
@@ -228,6 +242,27 @@ function formatClockFromNow(deltaMinutes: number): string {
   const d = new Date();
   d.setMinutes(d.getMinutes() + Math.max(0, deltaMinutes));
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function normalizeClockText(value: string): string | null {
+  const m = value.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(mm) || h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function minutesUntilClock(clock: string): number | null {
+  const normalized = normalizeClockText(clock);
+  if (!normalized) return null;
+  const [h, m] = normalized.split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  const now = new Date();
+  const target = new Date();
+  target.setHours(h, m, 0, 0);
+  if (target.getTime() < now.getTime()) target.setDate(target.getDate() + 1);
+  return Math.max(0, Math.round((target.getTime() - now.getTime()) / 60000));
 }
 
 /** Pontos para polyline (origem → pontos das etapas → destino). */
@@ -366,6 +401,10 @@ function parseRouteParam(raw: string | string[] | undefined): SerializedRouteDet
         instruction: String(st.instruction ?? ''),
         distance: String(st.distance ?? ''),
         duration: String(st.duration ?? ''),
+        departure_time: st.departure_time != null ? String(st.departure_time) : undefined,
+        arrival_time: st.arrival_time != null ? String(st.arrival_time) : undefined,
+        departureTime: st.departureTime != null ? String(st.departureTime) : undefined,
+        arrivalTime: st.arrivalTime != null ? String(st.arrivalTime) : undefined,
         departure_minutes:
           st.departure_minutes != null
             ? (st.departure_minutes as RouteStage['departure_minutes'])
@@ -424,10 +463,44 @@ const FALLBACK_WALK_STAGE: RouteStage = {
 export default function RouteDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ route?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    route?: string | string[];
+    routeList?: string | string[];
+    routeIndex?: string | string[];
+  }>();
   const mapRef = useRef<MapView>(null);
-
-  const route = useMemo(() => parseRouteParam(params.route), [params.route]);
+  const routeListParams = useMemo(() => {
+    const raw = Array.isArray(params.routeList) ? params.routeList[0] : params.routeList;
+    if (!raw || !raw.trim()) return [] as string[];
+    const parseAsList = (value: string): string[] => {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+    };
+    try {
+      return parseAsList(decodeURIComponent(raw));
+    } catch {
+      try {
+        return parseAsList(raw);
+      } catch {
+        return [] as string[];
+      }
+    }
+  }, [params.routeList]);
+  const initialRouteIndex = useMemo(() => {
+    const raw = Array.isArray(params.routeIndex) ? params.routeIndex[0] : params.routeIndex;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  }, [params.routeIndex]);
+  const [activeRouteIndex, setActiveRouteIndex] = useState(initialRouteIndex);
+  useEffect(() => {
+    setActiveRouteIndex(initialRouteIndex);
+  }, [initialRouteIndex, routeListParams.length]);
+  const clampedRouteIndex =
+    routeListParams.length > 0
+      ? Math.max(0, Math.min(activeRouteIndex, routeListParams.length - 1))
+      : 0;
+  const currentRouteParam = routeListParams.length > 0 ? routeListParams[clampedRouteIndex] : params.route;
+  const route = useMemo(() => parseRouteParam(currentRouteParam), [currentRouteParam]);
   const rainHint = useMemo(() => routeRainHint(route), [route]);
 
   const polylineCoords = useMemo(() => (route ? buildPolylineCoords(route) : []), [route]);
@@ -601,6 +674,15 @@ export default function RouteDetailScreen() {
     if (typeof apiMinutes === 'number') {
       return `${Math.max(0, apiMinutes - elapsedMinutes)}`;
     }
+    const explicitDeparture = `${stage.departure_time ?? stage.departureTime ?? ''}`.trim();
+    const fromClock = explicitDeparture ? minutesUntilClock(explicitDeparture) : null;
+    if (typeof fromClock === 'number') {
+      return `${Math.max(0, fromClock)}`;
+    }
+    const routeClockFallback = minutesUntilClock(departureTime);
+    if (typeof routeClockFallback === 'number') {
+      return `${Math.max(0, routeClockFallback)}`;
+    }
     const m = toMinutes(stage.duration);
     return m > 0 ? `${Math.max(0, m - elapsedMinutes)}` : '—';
   };
@@ -612,6 +694,8 @@ export default function RouteDetailScreen() {
   const stageCount = orderedStages.length;
   const railStages = orderedStages.length > 0 ? orderedStages : [FALLBACK_WALK_STAGE];
   const showRailUnderline = hasRepeatedTransitSequence(railStages);
+  const canGoBefore = routeListParams.length > 0 && clampedRouteIndex > 0;
+  const canGoAfter = routeListParams.length > 0 && clampedRouteIndex < routeListParams.length - 1;
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
@@ -671,12 +755,23 @@ export default function RouteDetailScreen() {
               <MaterialCommunityIcons name="car-outline" size={18} color="#FFFFFF" />
               <Text style={styles.pillTrafficText}>Mostrar trânsito</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.pillStart} activeOpacity={0.85} onPress={handleStartNavigation}>
-              <MaterialCommunityIcons name="navigation-variant" size={18} color="#FFFFFF" />
-              <Text style={styles.pillStartText}>Começar</Text>
-            </TouchableOpacity>
           </View>
         </View>
+
+        <Animated.View
+          style={[
+            styles.movingStartWrap,
+            {
+              top: Animated.add(sheetTopAnim, -58),
+            },
+          ]}
+          pointerEvents="box-none"
+        >
+          <TouchableOpacity style={styles.pillStart} activeOpacity={0.85} onPress={handleStartNavigation}>
+            <MaterialCommunityIcons name="navigation-variant" size={18} color="#FFFFFF" />
+            <Text style={styles.pillStartText}>Iniciar</Text>
+          </TouchableOpacity>
+        </Animated.View>
 
         <Animated.View
           style={[
@@ -698,7 +793,15 @@ export default function RouteDetailScreen() {
                 <View style={styles.summaryHeaderCenter}>
                   <View style={styles.summaryHeaderTextBlock}>
                     <Text style={styles.summaryHeaderPart}>
-                      {formatTotalTripMinutesLabel(route.totalTime ?? '')}
+                      {(() => {
+                        const fromTotal = toMinutes(stripEstimado(route.totalTime ?? ''));
+                        if (fromTotal > 0) return `${fromTotal} min`;
+                        const fromStages = route.stages.reduce(
+                          (acc, stage) => acc + toMinutes(String(stage.duration ?? '')),
+                          0,
+                        );
+                        return fromStages > 0 ? `${fromStages} min` : '—';
+                      })()}
                     </Text>
                     <Text style={styles.summaryHeaderSep}> | </Text>
                     <Text style={styles.summaryHeaderPart}>
@@ -774,27 +877,39 @@ export default function RouteDetailScreen() {
             </View>
 
             <View style={styles.timeWindowBar}>
-              <TouchableOpacity
-                style={[styles.timeWindowThird, styles.timeWindowLeft]}
-                activeOpacity={0.7}
-                accessibilityLabel="Ver horários anteriores"
-              >
-                <MaterialCommunityIcons name="chevron-left" size={20} color={COLORS.primary} />
-                <Text style={styles.timeWindowLabel}>Antes</Text>
-              </TouchableOpacity>
+              <View style={[styles.timeWindowThird, styles.timeWindowLeft]}>
+                {canGoBefore ? (
+                  <TouchableOpacity
+                    style={styles.timeWindowNavBtn}
+                    onPress={() => setActiveRouteIndex((v) => Math.max(0, v - 1))}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Ver rota anterior"
+                  >
+                    <MaterialCommunityIcons name="chevron-left" size={20} color={COLORS.primary} />
+                      <Text style={styles.timeWindowLabel}>Anterior</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
               <View style={[styles.timeWindowThird, styles.timeWindowCenter]}>
                 <Text style={styles.timeWindowRange} numberOfLines={1}>
                   {departureTime} - {arrivalTime}
                 </Text>
               </View>
-              <TouchableOpacity
-                style={[styles.timeWindowThird, styles.timeWindowRight]}
-                activeOpacity={0.7}
-                accessibilityLabel="Ver horários posteriores"
-              >
-                <Text style={styles.timeWindowLabel}>Depois</Text>
-                <MaterialCommunityIcons name="chevron-right" size={20} color={COLORS.primary} />
-              </TouchableOpacity>
+              <View style={[styles.timeWindowThird, styles.timeWindowRight]}>
+                {canGoAfter ? (
+                  <TouchableOpacity
+                    style={styles.timeWindowNavBtn}
+                    onPress={() =>
+                      setActiveRouteIndex((v) => Math.min(routeListParams.length - 1, v + 1))
+                    }
+                    activeOpacity={0.7}
+                    accessibilityLabel="Ver próxima rota"
+                  >
+                      <Text style={styles.timeWindowLabel}>Próximo</Text>
+                    <MaterialCommunityIcons name="chevron-right" size={20} color={COLORS.primary} />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
 
             <ScrollView
@@ -1013,9 +1128,14 @@ export default function RouteDetailScreen() {
                 const boardingPlace = extractBoardingPlace(stage.instruction);
                 const minutesToBus = transitEtaMinutes(stage);
                 const minutesNumeric = Number(minutesToBus);
+                const etaLabel = Number.isFinite(minutesNumeric)
+                  ? formatAsHoursMinutes(Math.max(0, minutesNumeric))
+                  : '—';
+                const explicitDeparture =
+                  normalizeClockText(`${stage.departure_time ?? stage.departureTime ?? ''}`) ?? null;
                 const busPassClock = Number.isFinite(minutesNumeric)
                   ? formatClockFromNow(minutesNumeric)
-                  : '--:--';
+                  : (explicitDeparture ?? departureTime);
 
                 return (
                   <View key={`s-${index}`}>
@@ -1101,11 +1221,10 @@ export default function RouteDetailScreen() {
                             )}
                             <View style={styles.etaBoxUnderThumb}>
                               <MaterialCommunityIcons name="wifi" size={14} color={COLORS.greenOnTime} />
-                              <Text style={styles.etaMin}>{transitEtaMinutes(stage)}</Text>
-                              <Text style={styles.etaMinSuffix}>min</Text>
+                              <Text style={styles.etaMin}>{etaLabel}</Text>
                             </View>
                             <Text style={styles.busPassText}>
-                              {`Passa em ${minutesToBus} min • ${busPassClock}`}
+                              {busPassClock}
                             </Text>
                           </View>
                         </View>
@@ -1334,6 +1453,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  timeWindowNavBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   timeWindowLeft: {
     justifyContent: 'flex-start',
     gap: 4,
@@ -1453,6 +1577,11 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     alignItems: 'center',
+  },
+  movingStartWrap: {
+    position: 'absolute',
+    right: 12,
+    zIndex: 15,
   },
   pillTraffic: {
     flexDirection: 'row',

@@ -1903,9 +1903,9 @@ const styles = StyleSheet.create({
   headerOriginDestBlock: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   headerIconsColumn: { width: 26, gap: 8 },
   headerLeadIconRow: { height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerFieldsColumn: { flex: 1, marginRight: 60, gap: 8, minWidth: 0 },
+  headerFieldsColumn: { flex: 1, marginRight: 8, gap: 8, minWidth: 0 },
   /** Com parada, afasta coluna do overlay de troca (swap ~78px da borda). */
-  headerFieldsColumnWithStop: { marginRight: 82 },
+  headerFieldsColumnWithStop: { marginRight: 14 },
   headerWaypointInput: {
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
     fontSize: 13,

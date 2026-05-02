@@ -395,6 +395,7 @@ export default function SearchDestinationScreen() {
             <MaterialCommunityIcons name="arrow-left" size={24} color={TITLE} />
           </TouchableOpacity>
           <TextInput
+            testID="input-destino"
             style={styles.searchInput}
             placeholder="Para onde você quer ir?"
             placeholderTextColor="#9CA3AF"
