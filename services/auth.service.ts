@@ -95,17 +95,15 @@ export async function register(
   email: string,
   password: string,
   disability_type: string,
-  _accompanied?: string,
+  accompanied?: string,
 ) {
   const body: Record<string, string> = {
     name,
     email: email.trim().toLowerCase(),
     password,
-    confirm_password: password,
     disability_type,
   };
-  // Não enviar `accompanied`: o DTO do backend (POST /users) não declara esse campo e
-  // o NestJS responde com erro do tipo "property accompanied should not exist".
+  if (accompanied) body.accompanied = accompanied;
 
   const url = `${API_URL}/users`;
   let response: Response;

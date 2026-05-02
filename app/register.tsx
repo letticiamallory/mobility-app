@@ -158,10 +158,9 @@ export default function RegisterScreen() {
     try {
       setLoading(true);
       await register(name, email, password, disabilityType);
-      router.push({
-        pathname: '/email-confirmation',
-        params: { email: email.trim().toLowerCase() },
-      });
+      Alert.alert('Cadastro concluido', 'Voce ja pode entrar com seu email e senha.', [
+        { text: 'OK', onPress: () => router.replace('/login') },
+      ]);
     } catch (error) {
       const message =
         error instanceof Error

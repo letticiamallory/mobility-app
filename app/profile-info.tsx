@@ -1,39 +1,101 @@
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Image,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
-import { getToken } from '../services/token.service';
+import { getToken, getUserAvatar, saveUserAvatar } from '../services/token.service';
 
 type MeResponse = {
   name?: string;
   email?: string;
   disability_type?: string;
   accompanied?: string;
+  phone?: string;
+  birth_date?: string;
+  transport_preferences?: string[] | string;
 };
 
-const disabilityOptions = [
-  { key: 'visual', label: 'Visual' },
-  { key: 'wheelchair', label: 'Cadeirante' },
-  { key: 'reduced_mobility', label: 'Mobilidade reduzida' },
-] as const;
+type FontSizeKey = 'A' | 'AA' | 'AAA';
 
-const accompaniedOptions = [
-  { key: 'alone', label: 'Sozinho' },
-  { key: 'companied', label: 'Acompanhado' },
-  { key: 'both', label: 'Ambos' },
-] as const;
+const TRANSPORT_KEYS = ['bus', 'metro', 'walk'] as const;
+
+function parseTransportPrefs(raw: MeResponse['transport_preferences']): string[] {
+  if (Array.isArray(raw)) return raw.filter((x) => typeof x === 'string');
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw) as unknown;
+      return Array.isArray(p) ? p.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function initialsFromName(name?: string) {
+  const source = (name || 'U').trim();
+  return source
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => (part[0] || '').toUpperCase())
+    .join('');
+}
+
+function toYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseYmd(s?: string): Date | null {
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function formatBr(s?: string) {
+  const d = parseYmd(s);
+  if (!d) return '';
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+}
 
 export default function ProfileInfoScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ section?: string | string[] }>();
-  const startSection = (Array.isArray(params.section) ? params.section[0] : params.section) === 'accessibility'
-    ? 'accessibility'
-    : 'info';
+  const startSection =
+    (Array.isArray(params.section) ? params.section[0] : params.section) === 'accessibility'
+      ? 'accessibility'
+      : 'info';
   const [activeSection, setActiveSection] = useState<'info' | 'accessibility'>(startSection);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [savingData, setSavingData] = useState(false);
+  const [savingPrefs, setSavingPrefs] = useState(false);
   const [form, setForm] = useState<MeResponse>({});
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [pickerDate, setPickerDate] = useState<Date>(() => parseYmd(undefined) ?? new Date(1990, 0, 1));
+  const [transportSelected, setTransportSelected] = useState<string[]>([]);
+  const [voiceRead, setVoiceRead] = useState(false);
+  const [highContrast, setHighContrast] = useState(false);
+  const [fontSize, setFontSize] = useState<FontSizeKey>('A');
 
   useEffect(() => {
     let cancelled = false;
@@ -45,12 +107,18 @@ export default function ProfileInfoScreen() {
           router.replace('/login');
           return;
         }
-        const response = await fetch(`${API_URL}/users/me`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!response.ok) return;
-        const data = (await response.json()) as MeResponse;
-        if (!cancelled) setForm(data);
+        const [meRes, avatar] = await Promise.all([
+          fetch(`${API_URL}/users/me`, { headers: { Authorization: `Bearer ${token}` } }),
+          getUserAvatar(),
+        ]);
+        if (!cancelled) setAvatarUri(avatar);
+        if (!meRes.ok) return;
+        const data = (await meRes.json()) as MeResponse;
+        if (cancelled) return;
+        setForm(data);
+        setTransportSelected(parseTransportPrefs(data.transport_preferences));
+        const bd = parseYmd(data.birth_date);
+        if (bd) setPickerDate(bd);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -60,15 +128,50 @@ export default function ProfileInfoScreen() {
     };
   }, [router]);
 
-  const canSave = useMemo(() => (form.name ?? '').trim().length >= 2, [form.name]);
+  const initials = useMemo(() => initialsFromName(form.name), [form.name]);
 
-  const handleSave = async () => {
-    if (!canSave) {
+  const canSaveData = useMemo(() => (form.name ?? '').trim().length >= 2, [form.name]);
+
+  const toggleTransport = useCallback((key: string) => {
+    setTransportSelected((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+  }, []);
+
+  const pickAvatar = useCallback(async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permissão', 'Precisamos de acesso à galeria para alterar a foto.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
+    });
+    if (result.canceled || !result.assets?.[0]?.uri) return;
+    const uri = result.assets[0].uri;
+    setAvatarUri(uri);
+    await saveUserAvatar(uri);
+  }, []);
+
+  const onDateChange = (event: DateTimePickerEvent, date?: Date) => {
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (event.type === 'dismissed') return;
+    if (date) {
+      setPickerDate(date);
+      setForm((prev) => ({ ...prev, birth_date: toYmd(date) }));
+    }
+  };
+
+  const handleSaveData = async () => {
+    if (!canSaveData) {
       Alert.alert('Atenção', 'Informe um nome com pelo menos 2 caracteres.');
       return;
     }
     try {
-      setSaving(true);
+      setSavingData(true);
       const token = await getToken();
       if (!token) {
         router.replace('/login');
@@ -82,8 +185,8 @@ export default function ProfileInfoScreen() {
         },
         body: JSON.stringify({
           name: form.name?.trim(),
-          disability_type: form.disability_type,
-          accompanied: form.accompanied,
+          phone: (form.phone ?? '').trim() || undefined,
+          birth_date: form.birth_date?.trim() || undefined,
         }),
       });
       if (!response.ok) {
@@ -91,186 +194,687 @@ export default function ProfileInfoScreen() {
         return;
       }
       const data = (await response.json()) as MeResponse;
-      setForm(data);
-      Alert.alert('Sucesso', 'Perfil atualizado.');
+      setForm((prev) => ({ ...prev, ...data }));
+      Alert.alert('Sucesso', 'Dados atualizados.');
     } catch {
       Alert.alert('Erro', 'Não foi possível salvar suas informações.');
     } finally {
-      setSaving(false);
+      setSavingData(false);
     }
   };
 
+  const handleSavePreferences = async () => {
+    try {
+      setSavingPrefs(true);
+      const token = await getToken();
+      if (!token) {
+        router.replace('/login');
+        return;
+      }
+      const response = await fetch(`${API_URL}/users/me`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          disability_type: form.disability_type,
+          transport_preferences: transportSelected,
+        }),
+      });
+      if (!response.ok) {
+        Alert.alert('Erro', 'Não foi possível salvar as preferências.');
+        return;
+      }
+      const data = (await response.json()) as MeResponse;
+      setForm((prev) => ({ ...prev, ...data }));
+      setTransportSelected(parseTransportPrefs(data.transport_preferences));
+      Alert.alert('Sucesso', 'Preferências salvas.');
+    } catch {
+      Alert.alert('Erro', 'Não foi possível salvar as preferências.');
+    } finally {
+      setSavingPrefs(false);
+    }
+  };
+
+  const disabilityCards = [
+    {
+      key: 'visual' as const,
+      icon: 'eye-outline' as const,
+      title: 'Visual',
+      desc: 'Deficiência visual ou baixa visão',
+    },
+    {
+      key: 'wheelchair' as const,
+      icon: 'wheelchair-accessibility' as const,
+      title: 'Cadeirante',
+      desc: 'Usuário de cadeira de rodas',
+    },
+    {
+      key: 'reduced_mobility' as const,
+      icon: 'walk' as const,
+      title: 'Mobilidade reduzida',
+      desc: 'Dificuldade de locomoção ou equilíbrio',
+    },
+  ];
+
+  const transportCards = [
+    { key: 'bus' as const, icon: 'bus' as const, label: 'Ônibus' },
+    { key: 'metro' as const, icon: 'subway-variant' as const, label: 'Metrô' },
+    { key: 'walk' as const, icon: 'walk' as const, label: 'A pé' },
+  ];
+
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.root} edges={['left', 'right', 'bottom']}>
       <Stack.Screen options={{ headerShown: false }} />
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
+      <View style={[styles.headerWrap, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.headerRow}>
+          <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={styles.headerSide}>
+            <MaterialCommunityIcons name="arrow-left" size={22} color="#1E1D1D" />
           </TouchableOpacity>
-          <Text style={styles.title}>Minhas informações</Text>
-          <View style={{ width: 24 }} />
+          <View style={styles.headerCenter}>
+            <Text style={styles.headerTitle}>Minhas informações</Text>
+          </View>
+          <View style={styles.headerSide} />
         </View>
+      </View>
 
-        <View style={styles.tabs}>
-          <TouchableOpacity style={styles.tabBtn} onPress={() => setActiveSection('info')}>
-            <Text style={[styles.tabText, activeSection === 'info' ? styles.tabTextActive : null]}>
-              Dados
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.tabBtn} onPress={() => setActiveSection('accessibility')}>
-            <Text style={[styles.tabText, activeSection === 'accessibility' ? styles.tabTextActive : null]}>
-              Acessibilidade
-            </Text>
-          </TouchableOpacity>
-        </View>
+      <View style={styles.tabsRow}>
+        <TouchableOpacity
+          style={styles.tabHit}
+          onPress={() => setActiveSection('info')}
+          activeOpacity={0.85}
+        >
+          <Text style={[styles.tabText, activeSection === 'info' ? styles.tabTextActive : styles.tabTextInactive]}>
+            Dados
+          </Text>
+          {activeSection === 'info' ? <View style={styles.tabUnderline} /> : <View style={styles.tabUnderlinePlaceholder} />}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.tabHit}
+          onPress={() => setActiveSection('accessibility')}
+          activeOpacity={0.85}
+        >
+          <Text
+            style={[
+              styles.tabText,
+              activeSection === 'accessibility' ? styles.tabTextActive : styles.tabTextInactive,
+            ]}
+          >
+            Acessibilidade
+          </Text>
+          {activeSection === 'accessibility' ? (
+            <View style={styles.tabUnderline} />
+          ) : (
+            <View style={styles.tabUnderlinePlaceholder} />
+          )}
+        </TouchableOpacity>
+      </View>
 
-        <View style={styles.card}>
-          {activeSection === 'info' ? (
-            <>
-              <Text style={styles.label}>Nome</Text>
+      {activeSection === 'info' ? (
+        <ScrollView
+          contentContainerStyle={styles.scrollData}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.avatarBlock}>
+            <View style={styles.avatarCircle}>
+              {avatarUri ? (
+                <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+              ) : (
+                <Text style={styles.avatarInitials}>{initials}</Text>
+              )}
+              <TouchableOpacity style={styles.cameraBtn} onPress={pickAvatar} activeOpacity={0.9}>
+                <MaterialCommunityIcons name="camera" size={14} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.changePhotoText}>Alterar foto</Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.fieldLabel}>Nome completo</Text>
+            <View style={styles.fieldRow}>
               <TextInput
-                style={styles.input}
+                style={styles.fieldInput}
                 value={form.name ?? ''}
-                onChangeText={(name) => setForm((prev) => ({ ...prev, name }))}
+                onChangeText={(name) => setForm((p) => ({ ...p, name }))}
                 placeholder="Seu nome"
                 placeholderTextColor="#9CA3AF"
               />
-              <Text style={styles.label}>Email</Text>
-              <View style={styles.readonlyInput}>
-                <Text style={styles.readonlyText}>{form.email ?? '-'}</Text>
-              </View>
-            </>
-          ) : (
-            <>
-              <Text style={styles.label}>Tipo de deficiência</Text>
-              <View style={styles.optionsWrap}>
-                {disabilityOptions.map((opt) => {
-                  const selected = form.disability_type === opt.key;
-                  return (
-                    <TouchableOpacity
-                      key={opt.key}
-                      style={[styles.optionChip, selected ? styles.optionChipActive : null]}
-                      onPress={() => setForm((prev) => ({ ...prev, disability_type: opt.key }))}
-                    >
-                      <Text style={[styles.optionChipText, selected ? styles.optionChipTextActive : null]}>
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              <Text style={styles.label}>Preferência de acompanhamento</Text>
-              <View style={styles.optionsWrap}>
-                {accompaniedOptions.map((opt) => {
-                  const selected = (form.accompanied ?? 'both') === opt.key;
-                  return (
-                    <TouchableOpacity
-                      key={opt.key}
-                      style={[styles.optionChip, selected ? styles.optionChipActive : null]}
-                      onPress={() => setForm((prev) => ({ ...prev, accompanied: opt.key }))}
-                    >
-                      <Text style={[styles.optionChipText, selected ? styles.optionChipTextActive : null]}>
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </>
-          )}
-        </View>
+              <MaterialCommunityIcons name="account-outline" size={18} color="#0057A8" />
+            </View>
+            <View style={styles.divider} />
 
-        <TouchableOpacity
-          style={[styles.saveBtn, (!canSave || saving || loading) ? styles.saveBtnDisabled : null]}
-          disabled={!canSave || saving || loading}
-          onPress={handleSave}
+            <Text style={styles.fieldLabel}>Email</Text>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => Alert.alert('Email', 'O email não pode ser alterado')}
+            >
+              <View style={styles.fieldRow}>
+                <TextInput
+                  style={[styles.fieldInput, styles.fieldInputReadonly]}
+                  value={form.email ?? ''}
+                  editable={false}
+                  placeholder="—"
+                  placeholderTextColor="#AAAAAA"
+                />
+                <MaterialCommunityIcons name="email-outline" size={18} color="#CCCCCC" />
+              </View>
+            </TouchableOpacity>
+            <View style={styles.divider} />
+
+            <Text style={styles.fieldLabel}>Telefone</Text>
+            <View style={styles.fieldRow}>
+              <TextInput
+                style={styles.fieldInput}
+                value={form.phone ?? ''}
+                onChangeText={(phone) => setForm((p) => ({ ...p, phone }))}
+                placeholder="(00) 00000-0000"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="phone-pad"
+              />
+              <MaterialCommunityIcons name="phone-outline" size={18} color="#0057A8" />
+            </View>
+            <View style={styles.divider} />
+
+            <Text style={styles.fieldLabel}>Data de nascimento</Text>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => {
+                setPickerDate(parseYmd(form.birth_date) ?? new Date(1990, 0, 1));
+                setShowDatePicker(true);
+              }}
+            >
+              <View style={styles.fieldRow}>
+                <Text style={styles.birthText}>
+                  {form.birth_date ? formatBr(form.birth_date) : 'Toque para selecionar'}
+                </Text>
+                <MaterialCommunityIcons name="calendar-outline" size={18} color="#0057A8" />
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          {showDatePicker ? (
+            <DateTimePicker
+              value={pickerDate}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              onChange={onDateChange}
+              maximumDate={new Date()}
+            />
+          ) : null}
+          {Platform.OS === 'ios' && showDatePicker ? (
+            <TouchableOpacity style={styles.iosDateClose} onPress={() => setShowDatePicker(false)}>
+              <Text style={styles.iosDateCloseText}>Fechar</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <TouchableOpacity
+            style={[styles.primaryBtn, (!canSaveData || savingData || loading) && styles.primaryBtnDisabled]}
+            disabled={!canSaveData || savingData || loading}
+            onPress={handleSaveData}
+          >
+            <Text style={styles.primaryBtnText}>{savingData ? 'Salvando...' : 'Salvar alterações'}</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.scrollA11y}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.saveBtnText}>{saving ? 'Salvando...' : 'Salvar alterações'}</Text>
-        </TouchableOpacity>
-      </ScrollView>
+          <View style={styles.cardBlock}>
+            <Text style={styles.cardTitle}>Tipo de deficiência</Text>
+            <Text style={styles.cardSubtitle}>Selecione o que melhor descreve você</Text>
+            {disabilityCards.map((item) => {
+              const selected = form.disability_type === item.key;
+              return (
+                <TouchableOpacity
+                  key={item.key}
+                  style={[styles.disabilityCard, selected && styles.disabilityCardSelected]}
+                  onPress={() => setForm((p) => ({ ...p, disability_type: item.key }))}
+                  activeOpacity={0.88}
+                >
+                  <View style={styles.disabilityIconWrap}>
+                    <MaterialCommunityIcons name={item.icon} size={22} color="#0057A8" />
+                  </View>
+                  <View style={styles.disabilityTextCol}>
+                    <Text style={styles.disabilityTitle}>{item.title}</Text>
+                    <Text style={styles.disabilityDesc}>{item.desc}</Text>
+                  </View>
+                  {selected ? (
+                    <MaterialCommunityIcons name="check-circle" size={20} color="#0057A8" />
+                  ) : (
+                    <View style={{ width: 20 }} />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={styles.cardBlock}>
+            <Text style={styles.cardTitle}>Meios de transporte</Text>
+            <Text style={styles.cardSubtitle}>Selecione todos que usa</Text>
+            <View style={styles.transportRow}>
+              {transportCards.map((t) => {
+                const selected = transportSelected.includes(t.key);
+                return (
+                  <TouchableOpacity
+                    key={t.key}
+                    style={[styles.transportCell, selected && styles.transportCellSelected]}
+                    onPress={() => toggleTransport(t.key)}
+                    activeOpacity={0.88}
+                  >
+                    {selected ? <View style={styles.transportDot} /> : <View style={styles.transportDotHidden} />}
+                    <MaterialCommunityIcons name={t.icon} size={28} color="#0057A8" />
+                    <Text style={styles.transportLabel}>{t.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.cardBlock}>
+            <Text style={styles.cardTitle}>Configurações de acessibilidade</Text>
+            <View style={styles.settingsItem}>
+              <View style={styles.settingsLeft}>
+                <MaterialCommunityIcons name="volume-high" size={22} color="#0057A8" />
+                <View style={styles.settingsTextCol}>
+                  <Text style={styles.settingsTitle}>Leitura por voz</Text>
+                  <Text style={styles.settingsSub}>Lê as instruções em voz alta</Text>
+                </View>
+              </View>
+              <Switch
+                value={voiceRead}
+                onValueChange={setVoiceRead}
+                trackColor={{ false: '#E5E7EB', true: '#0057A8' }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+            <View style={styles.settingsItem}>
+              <View style={styles.settingsLeft}>
+                <MaterialCommunityIcons name="contrast-circle" size={22} color="#0057A8" />
+                <View style={styles.settingsTextCol}>
+                  <Text style={styles.settingsTitle}>Alto contraste</Text>
+                  <Text style={styles.settingsSub}>Aumenta o contraste das cores</Text>
+                </View>
+              </View>
+              <Switch
+                value={highContrast}
+                onValueChange={setHighContrast}
+                trackColor={{ false: '#E5E7EB', true: '#0057A8' }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+            <View style={[styles.settingsItem, { borderBottomWidth: 0 }]}>
+              <View style={styles.settingsLeft}>
+                <MaterialCommunityIcons name="format-size" size={22} color="#0057A8" />
+                <View style={styles.settingsTextCol}>
+                  <Text style={styles.settingsTitle}>Tamanho da fonte</Text>
+                  <Text style={styles.settingsSub}>Ajuste o tamanho do texto</Text>
+                </View>
+              </View>
+              <View style={styles.fontRow}>
+                {(['A', 'AA', 'AAA'] as FontSizeKey[]).map((k) => (
+                  <TouchableOpacity
+                    key={k}
+                    style={[styles.fontChip, fontSize === k && styles.fontChipActive]}
+                    onPress={() => setFontSize(k)}
+                  >
+                    <Text style={[styles.fontChipText, fontSize === k && styles.fontChipTextActive]}>{k}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.primaryBtn, (savingPrefs || loading) && styles.primaryBtnDisabled]}
+            disabled={savingPrefs || loading}
+            onPress={handleSavePreferences}
+          >
+            <Text style={styles.primaryBtnText}>{savingPrefs ? 'Salvando...' : 'Salvar preferências'}</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F5F5F5' },
-  content: { paddingBottom: 30 },
-  header: {
+  root: {
+    flex: 1,
+    backgroundColor: '#F5F7FA',
+  },
+  headerWrap: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+  },
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
   },
-  title: { color: '#1E1D1D', fontSize: 18, fontWeight: '700' },
-  tabs: {
-    marginTop: 8,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    gap: 12,
-  },
-  tabBtn: { paddingVertical: 8 },
-  tabText: { color: '#6B7280', fontSize: 14, fontWeight: '600' },
-  tabTextActive: { color: '#0057A8' },
-  card: {
-    backgroundColor: '#FFFFFF',
-    marginTop: 8,
-    marginHorizontal: 16,
-    borderRadius: 14,
-    padding: 16,
-  },
-  label: { color: '#334155', fontSize: 13, fontWeight: '600', marginTop: 6, marginBottom: 6 },
-  input: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
-    height: 44,
-    paddingHorizontal: 12,
-    color: '#1E1D1D',
-    marginBottom: 8,
-  },
-  readonlyInput: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
-    minHeight: 44,
-    paddingHorizontal: 12,
+  headerSide: {
+    width: 40,
+    alignItems: 'flex-start',
     justifyContent: 'center',
   },
-  readonlyText: { color: '#6B7280', fontSize: 14 },
-  optionsWrap: {
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    color: '#1E1D1D',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  tabsRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+  },
+  tabHit: {
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    marginRight: 24,
+  },
+  tabText: {
+    fontSize: 14,
+  },
+  tabTextActive: {
+    color: '#0057A8',
+    fontWeight: '700',
+  },
+  tabTextInactive: {
+    color: '#999999',
+  },
+  tabUnderline: {
+    height: 2,
+    backgroundColor: '#0057A8',
+    marginTop: 8,
+    borderRadius: 1,
+  },
+  tabUnderlinePlaceholder: {
+    height: 2,
+    marginTop: 8,
+    opacity: 0,
+  },
+  scrollData: {
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    paddingBottom: 40,
+  },
+  scrollA11y: {
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    paddingBottom: 40,
+  },
+  avatarBlock: {
+    alignItems: 'center',
     marginBottom: 8,
   },
-  optionChip: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#FFFFFF',
-  },
-  optionChipActive: {
-    borderColor: '#0057A8',
+  avatarCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: '#EBF3FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    alignSelf: 'center',
   },
-  optionChipText: { color: '#334155', fontSize: 13, fontWeight: '600' },
-  optionChipTextActive: { color: '#0057A8' },
-  saveBtn: {
-    marginTop: 14,
-    marginHorizontal: 16,
-    height: 48,
-    borderRadius: 999,
+  avatarImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  avatarInitials: {
+    color: '#0057A8',
+    fontSize: 28,
+    fontWeight: '700',
+  },
+  cameraBtn: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#0057A8',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  saveBtnDisabled: { opacity: 0.5 },
-  saveBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  changePhotoText: {
+    color: '#0057A8',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 24,
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  fieldLabel: {
+    color: '#999999',
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 6,
+  },
+  fieldRow: {
+    backgroundColor: '#F5F7FA',
+    borderRadius: 10,
+    height: 48,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  fieldInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1E1D1D',
+    paddingVertical: 0,
+  },
+  fieldInputReadonly: {
+    color: '#AAAAAA',
+  },
+  birthText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1E1D1D',
+    ...Platform.select({
+      android: { textAlignVertical: 'center' },
+      ios: { lineHeight: 20 },
+    }),
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#F0F0F0',
+    marginVertical: 12,
+  },
+  primaryBtn: {
+    backgroundColor: '#0057A8',
+    borderRadius: 40,
+    height: 52,
+    marginTop: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryBtnDisabled: {
+    opacity: 0.5,
+  },
+  primaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  cardBlock: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cardTitle: {
+    color: '#1E1D1D',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  cardSubtitle: {
+    color: '#999999',
+    fontSize: 12,
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  disabilityCard: {
+    backgroundColor: '#F5F7FA',
+    borderRadius: 12,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 12,
+  },
+  disabilityCardSelected: {
+    backgroundColor: '#EBF3FF',
+    borderWidth: 1.5,
+    borderColor: '#0057A8',
+  },
+  disabilityIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  disabilityTextCol: {
+    flex: 1,
+  },
+  disabilityTitle: {
+    color: '#1E1D1D',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  disabilityDesc: {
+    color: '#999999',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  transportRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  transportCell: {
+    flex: 1,
+    backgroundColor: '#F5F7FA',
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+    marginHorizontal: 4,
+    gap: 6,
+    position: 'relative',
+    paddingTop: 18,
+  },
+  transportCellSelected: {
+    backgroundColor: '#EBF3FF',
+    borderWidth: 1.5,
+    borderColor: '#0057A8',
+  },
+  transportDot: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#0057A8',
+  },
+  transportDotHidden: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 8,
+    height: 8,
+    opacity: 0,
+  },
+  transportLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#1E1D1D',
+    textAlign: 'center',
+  },
+  settingsItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  settingsLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  settingsTextCol: {
+    flex: 1,
+  },
+  settingsTitle: {
+    color: '#1E1D1D',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  settingsSub: {
+    color: '#999999',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  fontRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  fontChip: {
+    backgroundColor: '#F0F0F0',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  fontChipActive: {
+    backgroundColor: '#0057A8',
+  },
+  fontChipText: {
+    color: '#666666',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  fontChipTextActive: {
+    color: '#FFFFFF',
+  },
+  iosDateClose: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  iosDateCloseText: {
+    color: '#0057A8',
+    fontWeight: '600',
+  },
 });
