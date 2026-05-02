@@ -1,7 +1,9 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { FlatList, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, SafeAreaView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { API_URL } from '../constants/api';
 import { getToken, getUserInfo } from '../services/token.service';
 
@@ -17,6 +19,7 @@ type HistoryItem = {
 
 export default function ProfileHistoryScreen() {
   const router = useRouter();
+  const sx = useAccessibilitySurfaces();
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -48,9 +51,9 @@ export default function ProfileHistoryScreen() {
   }, []);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={styles.header}>
+      <View style={[styles.header, sx.fillCard]}>
         <TouchableOpacity onPress={() => router.back()}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
         </TouchableOpacity>
@@ -71,7 +74,7 @@ export default function ProfileHistoryScreen() {
           </View>
         }
         renderItem={({ item }) => (
-          <View style={styles.card}>
+          <View style={[styles.card, sx.fillCard]}>
             <Text style={styles.routeText}>{item.origin || '-'} {'→'} {item.destination || '-'}</Text>
             <View style={styles.metaRow}>
               <Text style={styles.metaText}>Transporte: {item.transport_type || '-'}</Text>

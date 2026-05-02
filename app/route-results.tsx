@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { ACTIVE_MOCK_WEATHER } from '../mocks';
 import { fetchDiverseRoutes } from '../services/fetch-diverse-routes';
 import { getUserInfo } from '../services/token.service';
@@ -14,12 +14,13 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Stage = {
@@ -83,7 +84,9 @@ const TIME_FILTER_OPTIONS: TimeFilterOption[] = [
   { key: 'last_departures_today', label: 'Últimas partidas para hoje' },
 ];
 
-const ROUTE_PREFERENCE_OPTIONS: Array<{ key: RoutePreference; label: string; icon: string }> = [
+type MciName = ComponentProps<typeof MaterialCommunityIcons>['name'];
+
+const ROUTE_PREFERENCE_OPTIONS: Array<{ key: RoutePreference; label: string; icon: MciName }> = [
   { key: 'less_transfers', label: 'Menos trocas', icon: 'swap-horizontal' },
   { key: 'less_walking', label: 'Caminhar menos', icon: 'walk' },
 ];
@@ -605,6 +608,7 @@ function extractPlaceName(stage: Stage): string {
 export default function RouteResultsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const sx = useAccessibilitySurfaces();
   const params = useLocalSearchParams<{
     origin?: string | string[];
     destination?: string | string[];
@@ -1404,10 +1408,10 @@ export default function RouteResultsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView style={[styles.screen, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+      <View style={[styles.header, sx.fillCard, { paddingTop: insets.top + 16 }]}>
         <View style={styles.headerOriginDestWrap}>
           <View style={styles.headerOriginDestBlock}>
             <View style={styles.headerIconsColumn}>

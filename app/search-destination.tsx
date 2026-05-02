@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -8,17 +8,18 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import { useAccessibilityPreferences, useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import * as Location from 'expo-location';
 import { API_URL } from '../constants/api';
-import { HOME_FAVORITE_SHORTCUTS } from '../mocks/home';
 import type { Station } from '../mocks/stations';
 import { MOCK_STATIONS } from '../mocks/stations';
+import { getHomeFavorites, type HomeFavoriteRow } from '../services/home-favorites.service';
 import { getToken } from '../services/token.service';
 import { inferPlaceIcon } from '../utils/place-icon';
 
@@ -161,14 +162,14 @@ function TitleWithHighlight({ text, query }: { text: string; query: string }) {
   );
 }
 
-const FAVORITES_HOME_WORK = HOME_FAVORITE_SHORTCUTS.filter((x) => x.id === 'home' || x.id === 'work');
-
 function paramOne(v: string | string[] | undefined): string {
   if (v == null) return '';
   return Array.isArray(v) ? (v[0] ?? '') : v;
 }
 
 export default function SearchDestinationScreen() {
+  const { highContrast } = useAccessibilityPreferences();
+  const sx = useAccessibilitySurfaces();
   const router = useRouter();
   const navParams = useLocalSearchParams<{
     favoriteFlow?: string;
@@ -186,6 +187,8 @@ export default function SearchDestinationScreen() {
   const [loadingStations, setLoadingStations] = useState(true);
   const [placeRows, setPlaceRows] = useState<PlaceSuggestionRow[]>([]);
   const [loadingPlaces, setLoadingPlaces] = useState(false);
+  const [homeFavorites, setHomeFavorites] = useState<HomeFavoriteRow[]>([]);
+  const [loadingHomeFavorites, setLoadingHomeFavorites] = useState(true);
 
   const hasQuery = query.trim().length > 0;
   const qNorm = normalizeSearch(query);
@@ -201,6 +204,21 @@ export default function SearchDestinationScreen() {
       });
     },
     [router],
+  );
+
+  const reloadHomeFavorites = useCallback(async () => {
+    try {
+      setLoadingHomeFavorites(true);
+      setHomeFavorites(await getHomeFavorites());
+    } finally {
+      setLoadingHomeFavorites(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void reloadHomeFavorites();
+    }, [reloadHomeFavorites]),
   );
 
   const goToRoutePlan = useCallback(
@@ -436,15 +454,15 @@ export default function SearchDestinationScreen() {
   }, [allStations, hasQuery, qNorm, query, userCoords]);
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.safe, sx.fillScreen]} edges={['top', 'left', 'right']}>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={highContrast ? 'light-content' : 'dark-content'} />
       <KeyboardAvoidingView
-        style={styles.flex}
+        style={[styles.flex, sx.fillScreen]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
       >
-        <View style={styles.headerRow}>
+        <View style={[styles.headerRow, sx.fillScreen]}>
           <TouchableOpacity
             onPress={() => router.back()}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
@@ -454,7 +472,7 @@ export default function SearchDestinationScreen() {
           </TouchableOpacity>
           <TextInput
             testID="input-destino"
-            style={styles.searchInput}
+            style={[styles.searchInput, sx.fillCard, sx.outlineBorder]}
             placeholder="Para onde você quer ir?"
             placeholderTextColor="#9CA3AF"
             value={query}
@@ -495,27 +513,60 @@ export default function SearchDestinationScreen() {
                 <>
                   <View style={styles.sectionHead}>
                     <Text style={styles.sectionTitleMuted}>Favoritos</Text>
-                    <TouchableOpacity activeOpacity={0.75}>
+                    <TouchableOpacity
+                      activeOpacity={0.75}
+                      onPress={() => router.push('/home')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
                       <Text style={styles.linkBlue}>+ Adicionar</Text>
                     </TouchableOpacity>
                   </View>
-                  {FAVORITES_HOME_WORK.map((item, index) => (
-                    <View key={item.id}>
-                      <TouchableOpacity
-                        style={styles.rowPad}
-                        onPress={() => goToResults(item.destination)}
-                        activeOpacity={0.75}
-                      >
-                        <MaterialCommunityIcons name={item.icon} size={24} color="#4B5563" />
-                        <View style={styles.rowBody}>
-                          <Text style={styles.rowTitle}>{item.label}</Text>
-                          <Text style={styles.tapEdit}>Toque para editar</Text>
-                        </View>
-                        <MaterialCommunityIcons name="chevron-right" size={22} color="#9CA3AF" />
-                      </TouchableOpacity>
-                      {index < FAVORITES_HOME_WORK.length - 1 ? <View style={styles.divider} /> : null}
-                    </View>
-                  ))}
+                  {loadingHomeFavorites ? (
+                    <Text style={styles.loadingRecents}>Carregando favoritos…</Text>
+                  ) : homeFavorites.length === 0 ? (
+                    <TouchableOpacity
+                      style={styles.emptyFavoritesWrap}
+                      onPress={() => router.push('/home')}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={styles.emptyFavoritesText}>
+                        Você ainda não tem favoritos na página inicial. Lá você pode tocar em{' '}
+                        <Text style={styles.emptyFavoritesEm}>Adicionar</Text> na seção Favoritos para cadastrar
+                        lugares. Toque aqui para ir à página inicial.
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    homeFavorites.map((item, index) => (
+                      <View key={item.id}>
+                        <TouchableOpacity
+                          style={styles.rowPad}
+                          onPress={() =>
+                            goToRoutePlan({
+                              destination: item.address,
+                              destLat: item.lat,
+                              destLng: item.lng,
+                            })
+                          }
+                          activeOpacity={0.75}
+                        >
+                          <MaterialCommunityIcons
+                            name={item.icon as keyof typeof MaterialCommunityIcons.glyphMap}
+                            size={24}
+                            color="#4B5563"
+                          />
+                          <View style={styles.rowBody}>
+                            <Text style={styles.rowTitle}>{item.label}</Text>
+                            <Text style={styles.rowSub} numberOfLines={2}>
+                              {item.subtitle ||
+                                (item.address.length > 48 ? `${item.address.slice(0, 48)}…` : item.address)}
+                            </Text>
+                          </View>
+                          <MaterialCommunityIcons name="chevron-right" size={22} color="#9CA3AF" />
+                        </TouchableOpacity>
+                        {index < homeFavorites.length - 1 ? <View style={styles.divider} /> : null}
+                      </View>
+                    ))
+                  )}
                 </>
               ) : null}
 
@@ -794,6 +845,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Agrandir-Regular',
     paddingVertical: 8,
+  },
+  emptyFavoritesWrap: {
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  emptyFavoritesText: {
+    color: MUTED,
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: 'Agrandir-Regular',
+  },
+  emptyFavoritesEm: {
+    color: PRIMARY,
+    fontFamily: 'Agrandir-TextBold',
   },
   hintMuted: {
     color: MUTED,

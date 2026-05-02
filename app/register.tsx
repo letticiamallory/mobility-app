@@ -12,12 +12,13 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { register } from '../services/auth.service';
 import WomanAvatarIllustration from '../assets/images/undraw_a-woman-avatar_ifsl.svg';
 
@@ -92,6 +93,7 @@ function computeMenuPlacement(
 
 export default function RegisterScreen() {
   const router = useRouter();
+  const sx = useAccessibilitySurfaces();
   const formScrollRef = useRef<ScrollView>(null);
   const groupRef = useRef<View>(null);
 
@@ -259,7 +261,7 @@ export default function RegisterScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+    <SafeAreaView style={[styles.container, sx.fillScreen]} edges={['top', 'left', 'right', 'bottom']}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}

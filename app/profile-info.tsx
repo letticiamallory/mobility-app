@@ -1,7 +1,7 @@
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -10,16 +10,19 @@ import {
   ScrollView,
   StyleSheet,
   Switch,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import { useAccessibilityPreferences, useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { API_URL } from '../constants/api';
-import { getToken, getUserAvatar, saveUserAvatar } from '../services/token.service';
+import type { FontSizeTier } from '../services/accessibility-prefs.service';
+import { getToken, getUserAvatar, saveUserAvatar, saveUserInfo } from '../services/token.service';
 
 type MeResponse = {
+  id?: number;
   name?: string;
   email?: string;
   disability_type?: string;
@@ -28,7 +31,21 @@ type MeResponse = {
   birth_date?: string;
 };
 
-type FontSizeKey = 'A' | 'AA' | 'AAA';
+async function readApiErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as {
+      message?: string | string[];
+      error?: string;
+    };
+    if (Array.isArray(body.message)) return body.message.filter(Boolean).join('\n');
+    if (typeof body.message === 'string' && body.message.trim()) return body.message;
+    if (typeof body.error === 'string' && body.error.trim()) return body.error;
+  } catch {
+    /* ignore */
+  }
+  if (response.status === 401) return 'Sessão expirada. Faça login novamente.';
+  return fallback;
+}
 
 function initialsFromName(name?: string) {
   const source = (name || 'U').trim();
@@ -63,6 +80,8 @@ function formatBr(s?: string) {
 export default function ProfileInfoScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const a11y = useAccessibilityPreferences();
+  const sx = useAccessibilitySurfaces();
   const params = useLocalSearchParams<{ section?: string | string[] }>();
   const sectionParam = useMemo<'info' | 'accessibility'>(() => {
     const raw = Array.isArray(params.section) ? params.section[0] : params.section;
@@ -77,7 +96,22 @@ export default function ProfileInfoScreen() {
   const [pickerDate, setPickerDate] = useState<Date>(() => parseYmd(undefined) ?? new Date(1990, 0, 1));
   const [voiceRead, setVoiceRead] = useState(false);
   const [highContrast, setHighContrast] = useState(false);
-  const [fontSize, setFontSize] = useState<FontSizeKey>('A');
+  const [fontSize, setFontSize] = useState<FontSizeTier>('A');
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!a11y.hydrated || sectionParam !== 'accessibility') return;
+      setVoiceRead(a11y.voiceRead);
+      setHighContrast(a11y.highContrast);
+      setFontSize(a11y.fontSize);
+    }, [
+      a11y.hydrated,
+      a11y.voiceRead,
+      a11y.highContrast,
+      a11y.fontSize,
+      sectionParam,
+    ]),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -165,11 +199,15 @@ export default function ProfileInfoScreen() {
         }),
       });
       if (!response.ok) {
-        Alert.alert('Erro', 'Não foi possível salvar suas informações.');
+        const msg = await readApiErrorMessage(response, 'Não foi possível salvar suas informações.');
+        Alert.alert('Erro', msg);
         return;
       }
       const data = (await response.json()) as MeResponse;
       setForm((prev) => ({ ...prev, ...data }));
+      if (data.id != null && data.name?.trim()) {
+        await saveUserInfo(data.id, data.name.trim(), data.email?.trim());
+      }
       Alert.alert('Sucesso', 'Dados atualizados.');
     } catch {
       Alert.alert('Erro', 'Não foi possível salvar suas informações.');
@@ -181,6 +219,11 @@ export default function ProfileInfoScreen() {
   const handleSavePreferences = async () => {
     try {
       setSavingPrefs(true);
+      await a11y.commitAccessibilityUiPrefs({
+        voiceRead,
+        highContrast,
+        fontSize,
+      });
       const token = await getToken();
       if (!token) {
         router.replace('/login');
@@ -197,12 +240,14 @@ export default function ProfileInfoScreen() {
         }),
       });
       if (!response.ok) {
-        Alert.alert('Erro', 'Não foi possível salvar as preferências.');
+        const msg = await readApiErrorMessage(response, 'Não foi possível salvar as preferências.');
+        Alert.alert('Erro', msg);
         return;
       }
       const data = (await response.json()) as MeResponse;
       setForm((prev) => ({ ...prev, ...data }));
       Alert.alert('Sucesso', 'Preferências salvas.');
+      a11y.speakIfEnabled('Preferências salvas.', { voiceReadOverride: voiceRead });
     } catch {
       Alert.alert('Erro', 'Não foi possível salvar as preferências.');
     } finally {
@@ -232,9 +277,9 @@ export default function ProfileInfoScreen() {
   ];
 
   return (
-    <SafeAreaView style={styles.root} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={[styles.root, sx.fillScreen]} edges={['left', 'right', 'bottom']}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={[styles.headerWrap, { paddingTop: insets.top + 8 }]}>
+      <View style={[styles.headerWrap, sx.fillCard, sx.hairlineBottom, { paddingTop: insets.top + 8 }]}>
         <View style={styles.headerRow}>
           <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={styles.headerSide}>
             <MaterialCommunityIcons name="arrow-left" size={22} color="#1E1D1D" />
@@ -268,7 +313,7 @@ export default function ProfileInfoScreen() {
             <Text style={styles.changePhotoText}>Alterar foto</Text>
           </View>
 
-          <View style={styles.card}>
+          <View style={[styles.card, sx.fillCard]}>
             <Text style={styles.fieldLabel}>Nome completo</Text>
             <View style={styles.fieldRow}>
               <TextInput
@@ -355,8 +400,13 @@ export default function ProfileInfoScreen() {
           </TouchableOpacity>
         </ScrollView>
       ) : (
-        <View style={styles.a11yFixed}>
-          <View style={styles.cardBlock}>
+        <ScrollView
+          style={styles.a11yScroll}
+          contentContainerStyle={styles.a11yScrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={[styles.cardBlock, sx.fillCard]}>
             <Text style={styles.cardTitle}>Tipo de deficiência</Text>
             <Text style={styles.cardSubtitle}>Selecione o que melhor descreve você</Text>
             {disabilityCards.map((item) => {
@@ -385,7 +435,7 @@ export default function ProfileInfoScreen() {
             })}
           </View>
 
-          <View style={styles.cardBlock}>
+          <View style={[styles.cardBlock, sx.fillCard]}>
             <Text style={styles.cardTitle}>Configurações de acessibilidade</Text>
             <View style={styles.settingsItem}>
               <View style={styles.settingsLeft}>
@@ -426,7 +476,7 @@ export default function ProfileInfoScreen() {
                 </View>
               </View>
               <View style={styles.fontRow}>
-                {(['A', 'AA', 'AAA'] as FontSizeKey[]).map((k) => (
+                {(['A', 'AA', 'AAA'] as FontSizeTier[]).map((k) => (
                   <TouchableOpacity
                     key={k}
                     style={[styles.fontChip, fontSize === k && styles.fontChipActive]}
@@ -450,7 +500,7 @@ export default function ProfileInfoScreen() {
           >
             <Text style={styles.primaryBtnText}>{savingPrefs ? 'Salvando...' : 'Salvar preferências'}</Text>
           </TouchableOpacity>
-        </View>
+        </ScrollView>
       )}
     </SafeAreaView>
   );
@@ -492,15 +542,17 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     paddingBottom: 40,
   },
-  /** Acessibilidade: layout fixo, sem scroll */
-  a11yFixed: {
+  a11yScroll: {
     flex: 1,
+  },
+  a11yScrollContent: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 16,
+    paddingBottom: 32,
   },
   a11ySaveBtn: {
     marginTop: 10,
+    marginBottom: 8,
   },
   avatarBlock: {
     alignItems: 'center',

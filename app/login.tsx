@@ -10,12 +10,16 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import {
+  useAccessibilityPreferences,
+  useAccessibilitySurfaces,
+} from '@/contexts/accessibility-preferences';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { login } from '../services/auth.service';
 import { API_URL } from '../constants/api';
@@ -46,6 +50,8 @@ export default function LoginScreen() {
 }
 
 function LoginScreenInner() {
+  const { highContrast, colors } = useAccessibilityPreferences();
+  const sx = useAccessibilitySurfaces();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -206,10 +212,12 @@ function LoginScreenInner() {
     }
   };
 
+  const loginScreenBg = highContrast ? { backgroundColor: colors.screenBackground } : null;
+
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+    <SafeAreaView style={[styles.container, loginScreenBg]} edges={['top', 'left', 'right', 'bottom']}>
       <KeyboardAvoidingView
-        style={styles.container}
+        style={[styles.container, loginScreenBg]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
       >
@@ -221,7 +229,7 @@ function LoginScreenInner() {
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          <View style={styles.card}>
+          <View style={[styles.card, sx.fillCard]}>
             <Image
               source={require('../assets/images/mobility_m_blue.png')}
               style={styles.logo}

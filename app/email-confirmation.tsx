@@ -5,17 +5,19 @@ import {
   Alert,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import ForgotPasswordSvg from '../assets/images/undraw_forgot-password_nttj (1).svg';
 import { API_URL } from '../constants/api';
 
 export default function EmailConfirmationScreen() {
   const router = useRouter();
+  const sx = useAccessibilitySurfaces();
   const params = useLocalSearchParams<{ email?: string | string[] }>();
   const emailParam = Array.isArray(params.email) ? params.email[0] : params.email;
   const [userEmail, setUserEmail] = useState((emailParam ?? '').trim());
@@ -108,7 +110,7 @@ export default function EmailConfirmationScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>

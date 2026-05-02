@@ -1,12 +1,12 @@
 import {
   ActivityIndicator,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
   ViewStyle,
   TextStyle,
 } from 'react-native';
+import { ScaledText as Text } from '@/components/ScaledText';
 
 type Props = {
   loading: boolean;

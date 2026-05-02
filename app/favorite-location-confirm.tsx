@@ -6,12 +6,13 @@ import {
   ActivityIndicator,
   Platform,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   generateCustomFavoriteId,
@@ -45,6 +46,7 @@ function shortLabelFromAddress(full: string): string {
 export default function FavoriteLocationConfirmScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const sx = useAccessibilitySurfaces();
   const mapRef = useRef<MapView>(null);
   const params = useLocalSearchParams<{
     address?: string | string[];
@@ -157,7 +159,7 @@ export default function FavoriteLocationConfirmScreen() {
 
   if (!coordOk) {
     return (
-      <SafeAreaView style={[styles.root, styles.centered]} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={[styles.root, styles.centered, sx.fillScreen]} edges={['top', 'left', 'right']}>
         <Stack.Screen options={{ headerShown: false }} />
         <Text style={styles.errText}>Localização inválida. Volte e escolha outro endereço.</Text>
         <TouchableOpacity style={styles.primaryBtn} onPress={() => router.back()}>
@@ -168,9 +170,9 @@ export default function FavoriteLocationConfirmScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.root} edges={['left', 'right']}>
+    <SafeAreaView style={[styles.root, sx.fillScreen]} edges={['left', 'right']}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+      <View style={[styles.header, sx.fillCard, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
           <MaterialCommunityIcons name="arrow-left" size={24} color={TITLE} />
         </TouchableOpacity>

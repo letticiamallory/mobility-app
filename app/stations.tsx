@@ -1,27 +1,28 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
-  SectionList,
   Image,
   Modal,
   SafeAreaView,
+  SectionList,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Location from 'expo-location';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from '../constants/api';
 import { MOCK_LINES } from '../mocks/lines';
 import type { Station } from '../mocks/stations';
 import { MOCK_STATIONS } from '../mocks/stations';
+import { normalizeNextBusFromApi } from '../utils/schedule-time';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MAP_CENTER = { latitude: -16.7167, longitude: -43.8647 };
@@ -64,7 +65,11 @@ const calculateDistanceNum = (lat1: number, lng1: number, lat2: number, lng2: nu
 
 const getWalkTime = (distanceNum: number): string => {
   const minutes = Math.round(distanceNum / 80);
-  return minutes < 1 ? '1 min a pé' : `${minutes} min a pé`;
+  if (minutes < 1) return '1 min a pé';
+  if (minutes < 60) return `${minutes} min a pé`;
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining === 0 ? `${hours}h a pé` : `${hours}h ${remaining}min a pé`;
 };
 
 const getMinutesUntil = (time: string): number => {
@@ -121,7 +126,7 @@ function parseStations(data: unknown): Station[] {
       distanceNum: Number(row.distanceNum ?? row.distance ?? 0) || 0,
       accessible: Boolean(row.accessible),
       lines: Array.isArray(row.lines) ? row.lines.map((line) => String(line)) : [],
-      nextBus: row.nextBus ? String(row.nextBus) : null,
+      nextBus: normalizeNextBusFromApi(row.nextBus ?? row.next_bus),
       lat: typeof row.lat === 'number' ? row.lat : typeof row.latitude === 'number' ? row.latitude : MAP_CENTER.latitude,
       lng: typeof row.lng === 'number' ? row.lng : typeof row.longitude === 'number' ? row.longitude : MAP_CENTER.longitude,
     };
@@ -135,11 +140,12 @@ export default function StationsScreen() {
     ? 'favorites'
     : 'all';
   const insets = useSafeAreaInsets();
+  const sx = useAccessibilitySurfaces();
   const mapRef = useRef<MapView | null>(null);
   const sheetAnim = useRef(new Animated.Value(0)).current;
 
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+
   const [stations, setStations] = useState<Station[]>([]);
   const [filtered, setFiltered] = useState<Station[]>([]);
   const [selectedTab, setSelectedTab] = useState<'all' | 'favorites'>(initialTab);
@@ -150,6 +156,8 @@ export default function StationsScreen() {
   const [stationPhotos, setStationPhotos] = useState<Record<string, string>>({});
   const [photoErrors, setPhotoErrors] = useState<Record<string, boolean>>({});
   const [sheetPhotoError, setSheetPhotoError] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastAnim = useRef(new Animated.Value(0)).current;
 
   const sheetTranslateY = sheetAnim.interpolate({
     inputRange: [0, 1],
@@ -224,13 +232,6 @@ export default function StationsScreen() {
 
   useEffect(() => {
     let next = [...stations];
-    if (search.trim()) {
-      const s = search.trim().toLowerCase();
-      next = next.filter(
-        (station) =>
-          station.name.toLowerCase().includes(s) || station.address.toLowerCase().includes(s),
-      );
-    }
     if (selectedTab === 'favorites') {
       next = next.filter((station) => favorites.includes(station.id));
     }
@@ -251,12 +252,23 @@ export default function StationsScreen() {
       });
     }
     setFiltered(next);
-  }, [stations, search, selectedTab, favorites, userLocation]);
+  }, [stations, selectedTab, favorites, userLocation]);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    Animated.sequence([
+      Animated.timing(toastAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.delay(2000),
+      Animated.timing(toastAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+    ]).start(() => setToast(null));
+  };
 
   const toggleFavorite = async (id: string) => {
-    const newFavs = favorites.includes(id) ? favorites.filter((f) => f !== id) : [...favorites, id];
+    const isAdding = !favorites.includes(id);
+    const newFavs = isAdding ? [...favorites, id] : favorites.filter((f) => f !== id);
     setFavorites(newFavs);
     await AsyncStorage.setItem('favorite_stations', JSON.stringify(newFavs));
+    showToast(isAdding ? 'Estação adicionada aos favoritos ⭐' : 'Estação removida dos favoritos');
   };
 
   const openSheet = (station: Station) => {
@@ -314,10 +326,10 @@ export default function StationsScreen() {
   }, [stations, userLocation]);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+      <View style={[styles.header, sx.fillCard, { paddingTop: insets.top + 12 }]}>
         <View style={styles.headerTop}>
           <Text style={styles.title}>Estações</Text>
           {isDemo ? (
@@ -326,21 +338,10 @@ export default function StationsScreen() {
             </View>
           ) : null}
         </View>
-        <View style={styles.searchBar}>
+        <TouchableOpacity style={[styles.searchBar, sx.searchInset]} onPress={() => router.push('/search-destination')} activeOpacity={0.7}>
           <MaterialCommunityIcons name="magnify" size={20} color="#AAAAAA" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Buscar estação..."
-            placeholderTextColor="#AAAAAA"
-            value={search}
-            onChangeText={setSearch}
-          />
-          {search.length > 0 ? (
-            <TouchableOpacity onPress={() => setSearch('')}>
-              <MaterialCommunityIcons name="close" size={20} color="#AAAAAA" />
-            </TouchableOpacity>
-          ) : null}
-        </View>
+          <Text style={[styles.searchInput, { color: '#AAAAAA', paddingTop: 2 }]}>Buscar estação...</Text>
+        </TouchableOpacity>
       </View>
 
       <MapView
@@ -375,7 +376,7 @@ export default function StationsScreen() {
         ))}
       </MapView>
 
-      <View style={styles.tabsRow}>
+      <View style={[styles.tabsRow, sx.fillCard, sx.hairlineBottom]}>
         <TouchableOpacity style={styles.tabButton} onPress={() => setSelectedTab('all')}>
           <Text style={[styles.tabText, selectedTab === 'all' && styles.tabTextActive]}>Todos</Text>
           <View style={[styles.tabLine, selectedTab === 'all' && styles.tabLineActive]} />
@@ -392,26 +393,28 @@ export default function StationsScreen() {
         </View>
       ) : (
         <SectionList
-          ListHeaderComponent={
+          ListHeaderComponent={selectedTab !== 'all' ? null : (
             <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
               {nearestAccessibleStation
                 .slice(0, 1)
                 .map((station) => (
                 <View
                   key={station.id}
-                  style={{
-                    backgroundColor: '#FFFFFF',
-                    marginBottom: 8,
-                    marginTop: 4,
-                    borderRadius: 16,
-                    overflow: 'hidden',
-                    shadowColor: '#000',
-                    shadowOpacity: 0.08,
-                    shadowRadius: 8,
-                    elevation: 3,
-                    borderWidth: 1.5,
-                    borderColor: station.accessible ? '#22c55e' : '#CCCCCC',
-                  }}
+                  style={[
+                    {
+                      marginBottom: 8,
+                      marginTop: 4,
+                      borderRadius: 16,
+                      overflow: 'hidden',
+                      shadowColor: '#000',
+                      shadowOpacity: 0.08,
+                      shadowRadius: 8,
+                      elevation: 3,
+                      borderWidth: 1.5,
+                      borderColor: station.accessible ? '#22c55e' : '#CCCCCC',
+                    },
+                    sx.fillCard,
+                  ]}
                 >
                   <View
                     style={{
@@ -520,12 +523,21 @@ export default function StationsScreen() {
 
                         return (
                           <View key={`nearest-arrival-${lineCode}`} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <View style={{ backgroundColor: '#FFFFFF', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, overflow: 'hidden', minWidth: 60, alignItems: 'center' }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                <MaterialCommunityIcons name="bus" size={11} color="#1E1D1D" />
-                                <Text style={{ color: '#1E1D1D', fontSize: 12, fontWeight: '700' }}>{lineCode}</Text>
+                            <View style={styles.stationLineCodeBadge}>
+                              <View style={styles.stationLineCodeRow}>
+                                <MaterialCommunityIcons
+                                  name={station.type === 'subway' ? 'subway-variant' : 'bus'}
+                                  size={11}
+                                  color="#1E1D1D"
+                                />
+                                <Text style={styles.stationLineCodeText}>{lineCode}</Text>
                               </View>
-                              <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5, backgroundColor: getLineColor(lineCode) }} />
+                              <View
+                                style={[
+                                  styles.stationLineCodeBottomBar,
+                                  { backgroundColor: getLineColor(lineCode) },
+                                ]}
+                              />
                             </View>
 
                             <Text style={{ flex: 1, color: '#666666', fontSize: 12, marginHorizontal: 10 }} numberOfLines={1}>
@@ -536,8 +548,7 @@ export default function StationsScreen() {
                               <View style={{ alignItems: 'flex-end' }}>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
                                   <MaterialCommunityIcons name="wifi" size={12} color="#22c55e" />
-                                  <Text style={{ color: '#22c55e', fontSize: 15, fontWeight: '800' }}>{lineMinutes}</Text>
-                                  <Text style={{ color: '#22c55e', fontSize: 11, marginTop: 1 }}>min</Text>
+                                  <Text style={{ color: '#22c55e', fontSize: 15, fontWeight: '800' }}>{formatArrivalTime(lineMinutes)}</Text>
                                 </View>
                                 <Text style={{ color: '#999999', fontSize: 10 }}>{lineTime}</Text>
                               </View>
@@ -552,7 +563,7 @@ export default function StationsScreen() {
                 </View>
               ))}
             </View>
-          }
+          )}
           sections={[
             {
               title: 'Metrô',
@@ -571,20 +582,21 @@ export default function StationsScreen() {
           contentContainerStyle={styles.listContent}
           renderSectionHeader={({ section }) => (
             <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                paddingHorizontal: 16,
-                paddingVertical: 12,
-                backgroundColor: '#FFFFFF',
-                borderTopWidth: 1,
-                borderTopColor: '#EEEEEE',
-                borderBottomWidth: 1,
-                borderBottomColor: '#EEEEEE',
-                marginTop: 8,
-                width: '100%',
-                alignSelf: 'stretch',
-              }}
+              style={[
+                {
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  marginTop: 8,
+                  width: '100%',
+                  alignSelf: 'stretch',
+                  borderTopWidth: 1,
+                  borderBottomWidth: 1,
+                },
+                sx.fillCard,
+                sx.hairlineTopBottom,
+              ]}
             >
               <MaterialCommunityIcons
                 name={section.type === 'metro' ? 'subway-variant' : 'bus'}
@@ -610,6 +622,7 @@ export default function StationsScreen() {
             <TouchableOpacity
               style={[
                 styles.card,
+                sx.fillCard,
                 section.type === 'bus' && index === 0 ? { marginTop: 8 } : null,
               ]}
               onPress={() => openSheet(item)}
@@ -705,12 +718,21 @@ export default function StationsScreen() {
 
                       return (
                         <View key={`card-arrival-${item.id}-${lineCode}`} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, overflow: 'hidden', minWidth: 60, alignItems: 'center' }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                              <MaterialCommunityIcons name="bus" size={11} color="#1E1D1D" />
-                              <Text style={{ color: '#1E1D1D', fontSize: 12, fontWeight: '700' }}>{lineCode}</Text>
+                          <View style={styles.stationLineCodeBadge}>
+                            <View style={styles.stationLineCodeRow}>
+                              <MaterialCommunityIcons
+                                name={item.type === 'subway' ? 'subway-variant' : 'bus'}
+                                size={11}
+                                color="#1E1D1D"
+                              />
+                              <Text style={styles.stationLineCodeText}>{lineCode}</Text>
                             </View>
-                            <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2.5, backgroundColor: getLineColor(lineCode) }} />
+                            <View
+                              style={[
+                                styles.stationLineCodeBottomBar,
+                                { backgroundColor: getLineColor(lineCode) },
+                              ]}
+                            />
                           </View>
 
                           <Text style={{ flex: 1, color: '#666666', fontSize: 12, marginHorizontal: 10 }} numberOfLines={1}>
@@ -721,8 +743,7 @@ export default function StationsScreen() {
                             <View style={{ alignItems: 'flex-end' }}>
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
                                 <MaterialCommunityIcons name="wifi" size={12} color="#22c55e" />
-                                <Text style={{ color: '#22c55e', fontSize: 15, fontWeight: '800' }}>{lineMinutes}</Text>
-                                <Text style={{ color: '#22c55e', fontSize: 11, marginTop: 1 }}>min</Text>
+                                <Text style={{ color: '#22c55e', fontSize: 15, fontWeight: '800' }}>{formatArrivalTime(lineMinutes)}</Text>
                               </View>
                               <Text style={{ color: '#999999', fontSize: 10 }}>{lineTime}</Text>
                             </View>
@@ -742,7 +763,7 @@ export default function StationsScreen() {
 
       <Modal visible={!!selectedStation} transparent animationType="slide" onRequestClose={closeSheet}>
         <TouchableOpacity style={styles.modalOverlay} onPress={closeSheet} activeOpacity={1} />
-        <Animated.View style={[styles.sheet, { transform: [{ translateY: sheetTranslateY }] }]}>
+        <Animated.View style={[styles.sheet, sx.fillCard, { transform: [{ translateY: sheetTranslateY }] }]}>
           <View style={styles.handle} />
           <Text style={styles.sheetTitle}>{selectedStation?.name}</Text>
           <Text style={styles.sheetAddress}>{selectedStation?.address}</Text>
@@ -801,7 +822,11 @@ export default function StationsScreen() {
                 <View style={styles.arrivalRow}>
                   <View style={styles.arrivalBadge}>
                     <View style={styles.arrivalBadgeRow}>
-                      <MaterialCommunityIcons name="bus" size={13} color="#1E1D1D" />
+                      <MaterialCommunityIcons
+                        name={selectedStation.type === 'subway' ? 'subway-variant' : 'bus'}
+                        size={11}
+                        color="#1E1D1D"
+                      />
                       <Text style={styles.arrivalBadgeText}>{lineCode}</Text>
                     </View>
                     <View
@@ -845,6 +870,14 @@ export default function StationsScreen() {
 
           <View style={styles.buttonsRow}>
             <TouchableOpacity
+              style={styles.secondaryBtn}
+              onPress={() => selectedStation && toggleFavorite(selectedStation.id)}
+            >
+              <Text style={styles.secondaryBtnText}>
+                {selectedStation && favorites.includes(selectedStation.id) ? 'Desfavoritar' : 'Favoritar'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
               style={styles.primaryBtn}
               onPress={() => {
                 if (!selectedStation) return;
@@ -854,13 +887,36 @@ export default function StationsScreen() {
             >
               <Text style={styles.primaryBtnText}>Como chegar</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.secondaryBtn}
-              onPress={() => selectedStation && toggleFavorite(selectedStation.id)}
-            >
-              <Text style={styles.secondaryBtnText}>Favoritar</Text>
-            </TouchableOpacity>
           </View>
+
+          {toast ? (
+            <Animated.View
+              style={{
+                position: 'absolute',
+                top: 16,
+                left: 24,
+                right: 24,
+                backgroundColor: '#0057A8',
+                borderRadius: 14,
+                paddingVertical: 12,
+                paddingHorizontal: 20,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                opacity: toastAnim,
+                transform: [{ translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] }) }],
+                shadowColor: '#0057A8',
+                shadowOpacity: 0.3,
+                shadowRadius: 8,
+                elevation: 10,
+                zIndex: 999,
+              }}
+            >
+              <MaterialCommunityIcons name="check-circle" size={16} color="#FFFFFF" />
+              <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '600' }}>{toast}</Text>
+            </Animated.View>
+          ) : null}
         </Animated.View>
       </Modal>
     </SafeAreaView>
@@ -951,6 +1007,22 @@ const styles = StyleSheet.create({
   sheetLineChipText: { color: '#1E1D1D', fontSize: 13, fontWeight: '700' },
   sheetLineChipBottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 3 },
   arrivalsTitle: { color: '#1E1D1D', fontSize: 15, fontWeight: '700', marginTop: 14 },
+  stationLineCodeBadge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 8,
+    paddingTop: 3,
+    paddingBottom: 5,
+    overflow: 'hidden',
+    minWidth: 60,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  stationLineCodeRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  stationLineCodeText: { color: '#1E1D1D', fontSize: 11, fontWeight: '700' },
+  stationLineCodeBottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 3 },
   arrivalWrap: { marginTop: 6 },
   arrivalRow: {
     flexDirection: 'row',
@@ -963,12 +1035,16 @@ const styles = StyleSheet.create({
   arrivalBadge: {
     backgroundColor: '#FFFFFF',
     borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 8,
+    paddingTop: 3,
+    paddingBottom: 5,
     overflow: 'hidden',
+    position: 'relative',
   },
-  arrivalBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  arrivalBadgeText: { color: '#1E1D1D', fontSize: 13, fontWeight: '700' },
+  arrivalBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  arrivalBadgeText: { color: '#1E1D1D', fontSize: 11, fontWeight: '700' },
   arrivalBadgeBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 3 },
   arrivalLineName: { flex: 1, color: '#1E1D1D', fontSize: 13, marginHorizontal: 12 },
   arrivalRight: { alignItems: 'flex-end' },
@@ -981,6 +1057,6 @@ const styles = StyleSheet.create({
   buttonsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14 },
   primaryBtn: { flex: 1, height: 52, borderRadius: 40, backgroundColor: '#0057A8', alignItems: 'center', justifyContent: 'center' },
   primaryBtnText: { color: '#FFFFFF', fontWeight: '700' },
-  secondaryBtn: { flex: 1, height: 52, marginLeft: 12, borderRadius: 40, borderWidth: 1, borderColor: '#0057A8', alignItems: 'center', justifyContent: 'center' },
+  secondaryBtn: { flex: 1, height: 52, marginRight: 12, borderRadius: 40, borderWidth: 1, borderColor: '#0057A8', alignItems: 'center', justifyContent: 'center' },
   secondaryBtnText: { color: '#0057A8', fontWeight: '700' },
 });

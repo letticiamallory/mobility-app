@@ -1,4 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -9,27 +11,28 @@ import {
   ScrollView,
   SectionList,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Location from 'expo-location';
 import { API_URL } from '../constants/api';
-import { getToken } from '../services/token.service';
 import type { LineItem } from '../mocks/lines';
 import { MOCK_LINES, MOCK_LINE_STOPS } from '../mocks/lines';
+import { getToken } from '../services/token.service';
+import { nextScheduleToday, normalizeSchedulesFromApi } from '../utils/schedule-time';
 
-const TABS = ['todos', 'favoritos', 'recentes', 'acessiveis'] as const;
+const TABS = ['todos', 'favoritos'] as const;
 const TAB_LABELS: Record<(typeof TABS)[number], string> = {
   todos: 'Todos',
   favoritos: 'Favoritos',
-  recentes: 'Recentes',
-  acessiveis: 'Acessíveis',
 };
+
+const RECENT_LINES_KEY = 'recent_lines';
+const MAX_RECENTS = 5;
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -43,18 +46,6 @@ const getLineColor = (code: string): string => {
   const hash = code.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
   return colors[hash % colors.length];
 };
-
-function nextSchedule(schedules: string[]) {
-  if (!schedules.length) return null;
-  const now = new Date();
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  for (const value of schedules) {
-    const [h, m] = value.split(':').map(Number);
-    const total = h * 60 + m;
-    if (total >= nowMinutes) return value;
-  }
-  return schedules[0];
-}
 
 function lineCoordinates(code: string) {
   const baseLat = -16.7167;
@@ -86,7 +77,11 @@ const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: numbe
 
 const getWalkTime = (distanceNum: number): string => {
   const minutes = Math.round(distanceNum / 80);
-  return minutes < 1 ? '1 min a pé' : `${minutes} min a pé`;
+  if (minutes < 1) return '1 min a pé';
+  if (minutes < 60) return `${minutes} min a pé`;
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining === 0 ? `${hours}h a pé` : `${hours}h ${remaining}min a pé`;
 };
 
 const getMinutesUntil = (time: string): number => {
@@ -97,6 +92,15 @@ const getMinutesUntil = (time: string): number => {
   target.setHours(h, m, 0, 0);
   if (target.getTime() < now.getTime()) target.setDate(target.getDate() + 1);
   return Math.max(0, (target.getTime() - now.getTime()) / 60000);
+};
+
+const formatArrivalTime = (minutesRaw: number): string => {
+  const minutes = Math.max(0, Math.round(minutesRaw));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (remainingMinutes === 0) return `${hours}h`;
+  return `${hours}h ${remainingMinutes}min`;
 };
 
 const getLineRoute = (line: LineItem | null) => {
@@ -119,13 +123,81 @@ function normalizeLine(raw: Record<string, unknown>, index: number): LineItem {
     accessible: Boolean(raw.accessible),
     operator: String(raw.operator ?? 'MOC BUS'),
     color: String(raw.color ?? '#0057A8'),
-    schedules: Array.isArray(raw.schedules) ? raw.schedules.map((v) => String(v)) : [],
+    schedules: normalizeSchedulesFromApi(raw.schedules),
   };
+}
+
+function LineRow({ item, onPress }: { item: LineItem; onPress: () => void }) {
+  const sx = useAccessibilitySurfaces();
+  const itemNext = nextScheduleToday(item.schedules);
+  const modeIcon = item.type === 'metro' ? ('subway-variant' as const) : ('bus' as const);
+  return (
+    <TouchableOpacity style={[styles.lineItem, sx.fillCard, sx.listSeparator]} onPress={onPress}>
+      <View style={[styles.lineCodeBadge, sx.fillCard, sx.outlineBorder]}>
+        <View style={styles.lineCodeRow}>
+          <MaterialCommunityIcons name={modeIcon} size={11} color="#1E1D1D" />
+          <Text style={styles.lineCodeText}>{item.code}</Text>
+        </View>
+        <View style={[styles.lineCodeBottomBar, { backgroundColor: getLineColor(item.code) }]} />
+      </View>
+      <View style={styles.lineMain}>
+        <View style={styles.lineTitleRow}>
+          <Text style={styles.lineName} numberOfLines={1}>
+            {item.name}
+          </Text>
+          {item.alert ? (
+            <View
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor:
+                  item.alert === 'red' ? '#EF4444' : item.alert === 'yellow' ? '#F59E0B' : '#22c55e',
+                marginLeft: 6,
+              }}
+            />
+          ) : null}
+          {item.accessible ? (
+            <MaterialCommunityIcons name="wheelchair-accessibility" size={14} color="#16A34A" />
+          ) : (
+            <MaterialCommunityIcons name="wheelchair-accessibility" size={14} color="#EF4444" />
+          )}
+        </View>
+        {item.via ? <Text style={styles.lineVia}>Via {item.via}</Text> : null}
+        {itemNext ? (
+          <Text style={styles.nextBusText}>Próximo: {itemNext}</Text>
+        ) : (
+          <Text style={styles.noScheduleText}>Sem horários cadastrados</Text>
+        )}
+      </View>
+      <MaterialCommunityIcons name="chevron-right" size={18} color="#CCCCCC" />
+    </TouchableOpacity>
+  );
+}
+
+function RecentLinesRow({
+  recents,
+  onSelect,
+}: {
+  recents: LineItem[];
+  onSelect: (line: LineItem) => void;
+}) {
+  const sx = useAccessibilitySurfaces();
+  if (recents.length === 0) return null;
+  return (
+    <View style={[recentStyles.wrapper, sx.fillCard, sx.hairlineBottom]}>
+      <Text style={recentStyles.title}>Recentes</Text>
+      {recents.map((line) => (
+        <LineRow key={line.id} item={line} onPress={() => onSelect(line)} />
+      ))}
+    </View>
+  );
 }
 
 export default function LinesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const sx = useAccessibilitySurfaces();
   const sheetAnim = useRef(new Animated.Value(0)).current;
 
   const [loading, setLoading] = useState(true);
@@ -134,19 +206,21 @@ export default function LinesScreen() {
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<(typeof TABS)[number]>('todos');
   const [selectedLine, setSelectedLine] = useState<LineItem | null>(null);
-  const [recentLines, setRecentLines] = useState<string[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
+  // FIX 2: estado de recentes
+  const [recentIds, setRecentIds] = useState<string[]>([]);
   const [isDemo, setIsDemo] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
 
   useEffect(() => {
-    Promise.all([AsyncStorage.getItem('recent_lines'), AsyncStorage.getItem('favorite_lines')]).then(
-      ([recents, favs]) => {
-        if (recents) setRecentLines(JSON.parse(recents) as string[]);
-        if (favs) setFavorites(JSON.parse(favs) as string[]);
-      },
-    );
+    AsyncStorage.getItem('favorite_lines').then((favs) => {
+      if (favs) setFavorites(JSON.parse(favs) as string[]);
+    });
+    // Carregar recentes
+    AsyncStorage.getItem(RECENT_LINES_KEY).then((recents) => {
+      if (recents) setRecentIds(JSON.parse(recents) as string[]);
+    });
   }, []);
 
   useEffect(() => {
@@ -201,12 +275,27 @@ export default function LinesScreen() {
       );
     }
     if (activeFilter === 'favoritos') result = result.filter((l) => favorites.includes(l.id));
-    if (activeFilter === 'recentes') result = result.filter((l) => recentLines.includes(l.id));
-    if (activeFilter === 'acessiveis') result = result.filter((l) => l.accessible);
     setFiltered(result);
-  }, [search, activeFilter, lines, favorites, recentLines]);
+  }, [search, activeFilter, lines, favorites]);
+
+  // FIX 2: linhas recentes resolvidas a partir dos IDs
+  const recentLines = useMemo(
+    () =>
+      recentIds
+        .map((id) => lines.find((l) => l.id === id))
+        .filter((l): l is LineItem => Boolean(l)),
+    [recentIds, lines],
+  );
+
+  // FIX 2: salva linha visitada nos recentes
+  const saveRecent = async (line: LineItem) => {
+    const updated = [line.id, ...recentIds.filter((id) => id !== line.id)].slice(0, MAX_RECENTS);
+    setRecentIds(updated);
+    await AsyncStorage.setItem(RECENT_LINES_KEY, JSON.stringify(updated));
+  };
 
   const handleSelectLine = async (line: LineItem) => {
+    await saveRecent(line); // FIX 2: registra como recente
     setSelectedLine(line);
     setModalVisible(true);
     Animated.spring(sheetAnim, {
@@ -215,9 +304,6 @@ export default function LinesScreen() {
       friction: 8,
       tension: 70,
     }).start();
-    const newRecents = [line.id, ...recentLines.filter((id) => id !== line.id)].slice(0, 5);
-    setRecentLines(newRecents);
-    await AsyncStorage.setItem('recent_lines', JSON.stringify(newRecents));
   };
 
   const toggleFavorite = async (id: string) => {
@@ -236,25 +322,20 @@ export default function LinesScreen() {
     }).start(() => setModalVisible(false));
   };
 
-  const recentsData = useMemo(
-    () => recentLines.map((id) => lines.find((line) => line.id === id)).filter(Boolean) as LineItem[],
-    [recentLines, lines],
-  );
-
   const sections = useMemo(
     () => [
       {
         title: 'Metrô',
         subtitle: 'Metrô',
         icon: 'subway-variant' as const,
-          type: 'metro' as const,
+        type: 'metro' as const,
         data: filtered.filter((l) => l.type === 'metro'),
       },
       {
         title: 'MOC BUS',
         subtitle: 'Ônibus',
         icon: 'bus' as const,
-          type: 'bus' as const,
+        type: 'bus' as const,
         data: filtered.filter((l) => l.type === 'bus'),
       },
     ],
@@ -262,8 +343,8 @@ export default function LinesScreen() {
   );
 
   const selectedIsFavorite = selectedLine ? favorites.includes(selectedLine.id) : false;
-  const selectedNext = selectedLine ? nextSchedule(selectedLine.schedules) : null;
-  const selectedCoords = selectedLine ? lineCoordinates(selectedLine.code) : null;
+  // FIX 1: calcular next uma única vez e reusar
+  const selectedNext = selectedLine ? nextScheduleToday(selectedLine.schedules) : null;
   const selectedRoute = useMemo(() => getLineRoute(selectedLine), [selectedLine]);
   const selectedStops = useMemo(
     () => (selectedLine ? MOCK_LINE_STOPS.filter((s) => s.lines.includes(selectedLine.code)) : []),
@@ -286,10 +367,10 @@ export default function LinesScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+      <View style={[styles.header, sx.fillCard, { paddingTop: insets.top + 12 }]}>
         <View style={styles.headerTop}>
           <Text style={styles.title}>Linhas</Text>
           {isDemo ? (
@@ -298,7 +379,7 @@ export default function LinesScreen() {
             </View>
           ) : null}
         </View>
-        <View style={styles.searchBar}>
+        <View style={[styles.searchBar, sx.searchInset]}>
           <MaterialCommunityIcons name="magnify" size={20} color="#AAAAAA" />
           <TextInput
             style={styles.searchInput}
@@ -315,7 +396,7 @@ export default function LinesScreen() {
         </View>
       </View>
 
-      <View style={styles.tabsRow}>
+      <View style={[styles.tabsRow, sx.fillCard, sx.hairlineBottom]}>
         {TABS.map((tab) => {
           const active = activeFilter === tab;
           return (
@@ -327,26 +408,6 @@ export default function LinesScreen() {
         })}
       </View>
 
-      {(activeFilter === 'todos' || activeFilter === 'recentes') && recentsData.length > 0 ? (
-        <View style={styles.recentsWrap}>
-          <Text style={styles.recentsTitle}>Recentes</Text>
-          {recentsData.map((item) => (
-            <TouchableOpacity
-              key={`recent-${item.id}`}
-              style={styles.recentItem}
-              onPress={() => handleSelectLine(item)}
-            >
-              <View style={styles.recentIconCircle}>
-                <MaterialCommunityIcons name="bus" size={18} color="#FFFFFF" />
-              </View>
-              <Text style={styles.recentText}>
-                {item.code} - {item.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      ) : null}
-
       {loading ? (
         <View style={styles.centerWrap}>
           <Text style={styles.emptyText}>Carregando linhas...</Text>
@@ -355,22 +416,29 @@ export default function LinesScreen() {
         <SectionList
           sections={sections}
           keyExtractor={(item) => item.id}
+          // FIX 2: Recentes aparecem no topo, apenas na aba "todos" e sem busca ativa
+          ListHeaderComponent={
+            activeFilter === 'todos' && !search ? (
+              <RecentLinesRow recents={recentLines} onSelect={handleSelectLine} />
+            ) : null
+          }
           renderSectionHeader={({ section }) => (
             <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                backgroundColor: '#FFFFFF',
-                borderTopWidth: 1,
-                borderTopColor: '#EEEEEE',
-                borderBottomWidth: 1,
-                borderBottomColor: '#EEEEEE',
-                marginTop: 8,
-                width: '100%',
-                alignSelf: 'stretch',
-              }}
+              style={[
+                {
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  marginTop: 8,
+                  width: '100%',
+                  alignSelf: 'stretch',
+                  borderTopWidth: 1,
+                  borderBottomWidth: 1,
+                },
+                sx.fillCard,
+                sx.hairlineTopBottom,
+              ]}
             >
               <MaterialCommunityIcons
                 name={section.type === 'metro' ? 'subway-variant' : 'bus'}
@@ -393,52 +461,7 @@ export default function LinesScreen() {
             ) : null
           }
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.lineItem} onPress={() => handleSelectLine(item)}>
-              <View style={styles.lineCodeBadge}>
-                <View style={styles.lineCodeRow}>
-                  <MaterialCommunityIcons name="bus" size={13} color="#1E1D1D" />
-                  <Text style={styles.lineCodeText}>{item.code}</Text>
-                </View>
-                <View style={[styles.lineCodeBottomBar, { backgroundColor: getLineColor(item.code) }]} />
-              </View>
-              <View style={styles.lineMain}>
-                <View style={styles.lineTitleRow}>
-                  <Text style={styles.lineName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  {item.alert ? (
-                    <View
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 4,
-                        backgroundColor:
-                          item.alert === 'red' ? '#EF4444' : item.alert === 'yellow' ? '#F59E0B' : '#22c55e',
-                        marginLeft: 6,
-                      }}
-                    />
-                  ) : null}
-                  {item.accessible ? (
-                    <MaterialCommunityIcons
-                      name="wheelchair-accessibility"
-                      size={14}
-                      color="#16A34A"
-                    />
-                  ) : (
-                    <MaterialCommunityIcons
-                      name="wheelchair-accessibility"
-                      size={14}
-                      color="#EF4444"
-                    />
-                  )}
-                </View>
-                {item.via ? <Text style={styles.lineVia}>Via {item.via}</Text> : null}
-                {nextSchedule(item.schedules) ? (
-                  <Text style={styles.nextBusText}>Próximo: {nextSchedule(item.schedules)}</Text>
-                ) : null}
-              </View>
-              <MaterialCommunityIcons name="chevron-right" size={18} color="#CCCCCC" />
-            </TouchableOpacity>
+            <LineRow item={item} onPress={() => handleSelectLine(item)} />
           )}
           contentContainerStyle={styles.sectionContent}
           stickySectionHeadersEnabled={false}
@@ -447,11 +470,21 @@ export default function LinesScreen() {
 
       <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={closeModal}>
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={closeModal} />
-        <Animated.View style={[styles.sheet, { transform: [{ translateY: sheetTranslateY }] }]}>
+        <Animated.View style={[styles.sheet, sx.fillCard, { transform: [{ translateY: sheetTranslateY }] }]}>
           <View style={styles.handle} />
           <View style={styles.sheetTop}>
-            <View style={[styles.sheetCodeBadge, { backgroundColor: getLineColor(selectedLine?.code || '0') }]}>
-              <Text style={styles.sheetCodeText}>{selectedLine?.code}</Text>
+            <View style={[styles.sheetCodeBadge, sx.fillCard, sx.outlineBorder]}>
+              <View style={styles.sheetCodeBadgeRow}>
+                <MaterialCommunityIcons
+                  name={selectedLine?.type === 'metro' ? 'subway-variant' : 'bus'}
+                  size={11}
+                  color="#1E1D1D"
+                />
+                <Text style={styles.sheetCodeText}>{selectedLine?.code}</Text>
+              </View>
+              <View
+                style={[styles.sheetCodeBottomBar, { backgroundColor: getLineColor(selectedLine?.code || '0') }]}
+              />
             </View>
             <TouchableOpacity onPress={() => selectedLine && toggleFavorite(selectedLine.id)}>
               <MaterialCommunityIcons
@@ -462,165 +495,205 @@ export default function LinesScreen() {
             </TouchableOpacity>
           </View>
 
-          <Text style={[styles.sheetName, { color: getLineColor(selectedLine?.code || '0') }]}>
-            {selectedLine?.name}
-          </Text>
-          <View style={styles.routeRow}>
-            <MaterialCommunityIcons name="map-marker" size={16} color="#0057A8" />
-            <Text style={styles.routeText}>{selectedLine?.origin}</Text>
-            <MaterialCommunityIcons name="arrow-right" size={16} color="#AAAAAA" />
-            <Text style={styles.routeText}>{selectedLine?.destination}</Text>
-          </View>
-          {selectedLine?.via ? (
-            <View style={styles.viaRow}>
-              <MaterialCommunityIcons name="road-variant" size={14} color="#AAAAAA" />
-              <Text style={styles.viaText}>Via {selectedLine.via}</Text>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 24 }}
+            bounces={false}
+          >
+            <Text style={[styles.sheetName, { color: getLineColor(selectedLine?.code || '0') }]}>
+              {selectedLine?.name}
+            </Text>
+            <View style={styles.routeRow}>
+              <MaterialCommunityIcons name="map-marker" size={16} color="#0057A8" />
+              <Text style={styles.routeText}>{selectedLine?.origin}</Text>
+              <MaterialCommunityIcons name="arrow-right" size={16} color="#AAAAAA" />
+              <Text style={styles.routeText}>{selectedLine?.destination}</Text>
             </View>
-          ) : null}
-
-          <View style={styles.badgesRow}>
-            <View style={selectedLine?.accessible ? styles.badgeOk : styles.badgeNo}>
-              <Text style={selectedLine?.accessible ? styles.badgeOkText : styles.badgeNoText}>
-                {selectedLine?.accessible ? 'Acessível' : 'Não acessível'}
-              </Text>
-            </View>
-            <View style={styles.badgeOperator}>
-              <Text style={styles.badgeOperatorText}>MOC BUS</Text>
-            </View>
-            {selectedNext ? (
-              <View style={styles.badgeNext}>
-                <Text style={styles.badgeNextText}>Próximo: {selectedNext}</Text>
+            {selectedLine?.via ? (
+              <View style={styles.viaRow}>
+                <MaterialCommunityIcons name="road-variant" size={14} color="#AAAAAA" />
+                <Text style={styles.viaText}>Via {selectedLine.via}</Text>
               </View>
             ) : null}
-            {selectedLine?.alert ? (
+
+            <View style={styles.badgesRow}>
+              <View style={selectedLine?.accessible ? styles.badgeOk : styles.badgeNo}>
+                <Text style={selectedLine?.accessible ? styles.badgeOkText : styles.badgeNoText}>
+                  {selectedLine?.accessible ? 'Acessível' : 'Não acessível'}
+                </Text>
+              </View>
               <View style={styles.badgeOperator}>
-                <Text style={styles.badgeOperatorText}>
-                  {selectedLine.alertText ?? (selectedLine.alert === 'red'
-                    ? 'Sem serviço'
-                    : selectedLine.alert === 'yellow'
-                      ? 'Mudança moderada'
-                      : 'Serviço normal')}
-                </Text>
+                <Text style={styles.badgeOperatorText}>MOC BUS</Text>
+              </View>
+              {/* FIX 1: mostra horário ou aviso explícito */}
+              {selectedNext ? (
+                <View style={styles.badgeNext}>
+                  <Text style={styles.badgeNextText}>Próximo: {selectedNext}</Text>
+                </View>
+              ) : (
+                <View style={styles.badgeNoSchedule}>
+                  <Text style={styles.badgeNoScheduleText}>Sem horários</Text>
+                </View>
+              )}
+              {selectedLine?.alert ? (
+                <View style={styles.badgeOperator}>
+                  <Text style={styles.badgeOperatorText}>
+                    {selectedLine.alertText ?? (selectedLine.alert === 'red'
+                      ? 'Sem serviço'
+                      : selectedLine.alert === 'yellow'
+                        ? 'Mudança moderada'
+                        : 'Serviço normal')}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            {selectedLine ? (
+              <MapView
+                style={{ height: 160, borderRadius: 12, marginBottom: 16, marginTop: 12 }}
+                initialRegion={{
+                  latitude: -16.7167,
+                  longitude: -43.8647,
+                  latitudeDelta: 0.08,
+                  longitudeDelta: 0.08,
+                }}
+                scrollEnabled={false}
+              >
+                {selectedRoute.map((coord, i) => (
+                  <Marker key={i} coordinate={coord}>
+                    <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: getLineColor(selectedLine.code), borderWidth: 2, borderColor: 'white' }} />
+                  </Marker>
+                ))}
+                {selectedRoute.length >= 2 ? (
+                  <Polyline
+                    coordinates={selectedRoute}
+                    strokeColor={getLineColor(selectedLine.code)}
+                    strokeWidth={3}
+                  />
+                ) : null}
+              </MapView>
+            ) : null}
+
+            {nearestStop && userLocation ? (
+              <View style={{ backgroundColor: '#F5F5F5', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                <Text style={{ color: '#999999', fontSize: 12, fontWeight: '600' }}>PARADA MAIS PRÓXIMA</Text>
+                <Text style={{ color: '#1E1D1D', fontSize: 14, fontWeight: '700', marginTop: 4 }}>{nearestStop.name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                  <MaterialCommunityIcons name="walk" size={13} color="#0057A8" />
+                  <Text style={{ color: '#0057A8', fontSize: 12, fontWeight: '600' }}>
+                    {calculateDistance(userLocation.latitude, userLocation.longitude, nearestStop.lat, nearestStop.lng)}
+                    {' • '}
+                    {getWalkTime(calculateDistanceNum(userLocation.latitude, userLocation.longitude, nearestStop.lat, nearestStop.lng))}
+                  </Text>
+                  {nearestStop.nextBus ? (
+                    <>
+                      <Text style={{ color: '#CCCCCC' }}>•</Text>
+                      <MaterialCommunityIcons name="wifi" size={12} color="#22c55e" />
+                      <Text style={{ color: '#22c55e', fontSize: 12, fontWeight: '700' }}>
+                        {formatArrivalTime(getMinutesUntil(nearestStop.nextBus))}
+                      </Text>
+                    </>
+                  ) : null}
+                </View>
               </View>
             ) : null}
-          </View>
 
-          {selectedLine ? (
-            <MapView
-              style={{ height: 160, borderRadius: 12, marginBottom: 16, marginTop: 12 }}
-              initialRegion={{
-                latitude: -16.7167,
-                longitude: -43.8647,
-                latitudeDelta: 0.08,
-                longitudeDelta: 0.08,
-              }}
-              scrollEnabled={false}
-            >
-              {selectedRoute.map((coord, i) => (
-                <Marker key={i} coordinate={coord}>
-                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: getLineColor(selectedLine.code), borderWidth: 2, borderColor: 'white' }} />
-                </Marker>
-              ))}
-              {selectedRoute.length >= 2 ? (
-                <Polyline
-                  coordinates={selectedRoute}
-                  strokeColor={getLineColor(selectedLine.code)}
-                  strokeWidth={3}
-                />
-              ) : null}
-            </MapView>
-          ) : null}
-
-          {nearestStop && userLocation ? (
-            <View style={{ backgroundColor: '#F5F5F5', borderRadius: 12, padding: 14, marginBottom: 16 }}>
-              <Text style={{ color: '#999999', fontSize: 12, fontWeight: '600' }}>PARADA MAIS PRÓXIMA</Text>
-              <Text style={{ color: '#1E1D1D', fontSize: 14, fontWeight: '700', marginTop: 4 }}>{nearestStop.name}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                <MaterialCommunityIcons name="walk" size={13} color="#0057A8" />
-                <Text style={{ color: '#0057A8', fontSize: 12, fontWeight: '600' }}>
-                  {calculateDistance(userLocation.latitude, userLocation.longitude, nearestStop.lat, nearestStop.lng)}
-                  {' • '}
-                  {getWalkTime(calculateDistanceNum(userLocation.latitude, userLocation.longitude, nearestStop.lat, nearestStop.lng))}
-                </Text>
-                {nearestStop.nextBus ? (
-                  <>
-                    <Text style={{ color: '#CCCCCC' }}>•</Text>
-                    <MaterialCommunityIcons name="wifi" size={12} color="#22c55e" />
-                    <Text style={{ color: '#22c55e', fontSize: 12, fontWeight: '700' }}>
-                      {Math.round(getMinutesUntil(nearestStop.nextBus))} min
-                    </Text>
-                  </>
+            <Text style={{ color: '#1E1D1D', fontSize: 15, fontWeight: '700', marginBottom: 12 }}>
+              Todas as paradas ({selectedRoute.length})
+            </Text>
+            {selectedStops.map((stop, index) => (
+              <View key={stop.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}>
+                <View style={{ width: 20, alignItems: 'center', marginRight: 12 }}>
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: getLineColor(selectedLine?.code || '0'), borderWidth: 2, borderColor: 'white', zIndex: 1 }} />
+                  {index < selectedStops.length - 1 ? (
+                    <View style={{ width: 2, height: 30, backgroundColor: getLineColor(selectedLine?.code || '0'), opacity: 0.3, position: 'absolute', top: 10 }} />
+                  ) : null}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#1E1D1D', fontSize: 13, fontWeight: stop.id === nearestStop?.id ? '700' : '400' }}>
+                    {stop.name}
+                  </Text>
+                  {stop.id === nearestStop?.id ? (
+                    <Text style={{ color: '#0057A8', fontSize: 11, marginTop: 2 }}>Sua parada mais próxima</Text>
+                  ) : null}
+                </View>
+                {stop.nextBus ? (
+                  <Text style={{ color: '#22c55e', fontSize: 13, fontWeight: '700' }}>
+                    {formatArrivalTime(getMinutesUntil(stop.nextBus))}
+                  </Text>
                 ) : null}
-              </View>
-            </View>
-          ) : null}
-
-          <Text style={{ color: '#1E1D1D', fontSize: 15, fontWeight: '700', marginBottom: 12 }}>
-            Todas as paradas ({selectedRoute.length})
-          </Text>
-          {selectedStops.map((stop, index) => (
-            <View key={stop.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}>
-              <View style={{ width: 20, alignItems: 'center', marginRight: 12 }}>
-                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: getLineColor(selectedLine?.code || '0'), borderWidth: 2, borderColor: 'white', zIndex: 1 }} />
-                {index < selectedStops.length - 1 ? (
-                  <View style={{ width: 2, height: 30, backgroundColor: getLineColor(selectedLine?.code || '0'), opacity: 0.3, position: 'absolute', top: 10 }} />
-                ) : null}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: '#1E1D1D', fontSize: 13, fontWeight: stop.id === nearestStop?.id ? '700' : '400' }}>
-                  {stop.name}
-                </Text>
-                {stop.id === nearestStop?.id ? (
-                  <Text style={{ color: '#0057A8', fontSize: 11, marginTop: 2 }}>Sua parada mais próxima</Text>
-                ) : null}
-              </View>
-              {stop.nextBus ? (
-                <Text style={{ color: '#22c55e', fontSize: 13, fontWeight: '700' }}>
-                  {Math.round(getMinutesUntil(stop.nextBus))} min
-                </Text>
-              ) : null}
-            </View>
-          ))}
-
-          <Text style={styles.scheduleTitle}>Horários</Text>
-          <View style={styles.scheduleGrid}>
-            {(selectedLine?.schedules || []).map((time, idx) => (
-              <View
-                key={`${time}-${idx}`}
-                style={[styles.scheduleCell, selectedNext === time && styles.scheduleCellNext]}
-              >
-                <Text style={styles.scheduleCellText}>{time}</Text>
               </View>
             ))}
-          </View>
 
-          <View style={styles.buttonsRow}>
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              onPress={() => {
-                const destination = selectedLine?.destination || 'Destino';
-                closeModal();
-                router.push({ pathname: '/route-results', params: { destination } });
-              }}
-            >
-              <Text style={styles.primaryBtnText}>Traçar rota</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.secondaryBtn}
-              onPress={() => selectedLine && toggleFavorite(selectedLine.id)}
-            >
-              <MaterialCommunityIcons
-                name={selectedIsFavorite ? 'heart' : 'heart-outline'}
-                size={20}
-                color="#0057A8"
-              />
-            </TouchableOpacity>
-          </View>
+            <Text style={styles.scheduleTitle}>Horários</Text>
+            {/* FIX 1: feedback quando não há horários */}
+            {(selectedLine?.schedules ?? []).length === 0 ? (
+              <View style={styles.noScheduleWrap}>
+                <MaterialCommunityIcons name="clock-outline" size={24} color="#CCCCCC" />
+                <Text style={styles.noScheduleWrapText}>Nenhum horário cadastrado para esta linha</Text>
+              </View>
+            ) : (
+              <View style={styles.scheduleGrid}>
+                {(selectedLine?.schedules ?? []).map((time, idx) => (
+                  <View
+                    key={`sched-${idx}`}
+                    style={[styles.scheduleCell, selectedNext === time && styles.scheduleCellNext]}
+                  >
+                    <Text style={[styles.scheduleCellText, selectedNext === time && styles.scheduleCellNextText]}>
+                      {time}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            <View style={styles.buttonsRow}>
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={() => {
+                  const destination = selectedLine?.destination || 'Destino';
+                  closeModal();
+                  router.push({ pathname: '/route-results', params: { destination } });
+                }}
+              >
+                <Text style={styles.primaryBtnText}>Traçar rota</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryBtn}
+                onPress={() => selectedLine && toggleFavorite(selectedLine.id)}
+              >
+                <MaterialCommunityIcons
+                  name={selectedIsFavorite ? 'heart' : 'heart-outline'}
+                  size={20}
+                  color="#0057A8"
+                />
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
         </Animated.View>
       </Modal>
     </SafeAreaView>
   );
 }
+
+const recentStyles = StyleSheet.create({
+  wrapper: {
+    backgroundColor: '#FFFFFF',
+    paddingTop: 16,
+    paddingBottom: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+  },
+  title: {
+    color: '#999999',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    paddingHorizontal: 20,
+    marginBottom: 8,
+  },
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F5F5' },
@@ -637,54 +710,63 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#1E1D1D', fontWeight: '700' },
   tabIndicator: { marginTop: 10, width: 30, height: 3, borderRadius: 2, backgroundColor: 'transparent' },
   tabIndicatorActive: { backgroundColor: '#0057A8' },
-  recentsWrap: { backgroundColor: '#FFFFFF' },
-  recentsTitle: { color: '#999999', fontSize: 13, fontWeight: '600', marginBottom: 4, paddingHorizontal: 20, paddingTop: 8 },
-  recentItem: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
-  recentIconCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#0057A8', alignItems: 'center', justifyContent: 'center' },
-  recentText: { color: '#1E1D1D', fontSize: 14, marginLeft: 12 },
   centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { color: '#999999' },
   sectionContent: { paddingBottom: 24 },
-  sectionHeader: { backgroundColor: '#F5F5F5', paddingHorizontal: 20, paddingVertical: 8, flexDirection: 'row', justifyContent: 'space-between' },
-  sectionHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  sectionTitle: { color: '#666666', fontSize: 12, fontWeight: '600' },
-  sectionType: { color: '#999999', fontSize: 12 },
   metroEmptyWrap: { padding: 20, alignItems: 'center' },
   metroEmptyText: { color: '#999999', fontSize: 13, marginTop: 8, textAlign: 'center' },
   lineItem: { backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F5F5F5', flexDirection: 'row', alignItems: 'center' },
   lineCodeBadge: {
     backgroundColor: '#FFFFFF',
     borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 8,
+    paddingTop: 3,
+    paddingBottom: 5,
     alignItems: 'center',
     overflow: 'hidden',
     position: 'relative',
   },
-  lineCodeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  lineCodeBottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 3,
-  },
-  lineCodeText: { color: '#1E1D1D', fontSize: 13, fontWeight: '700' },
-  lineMain: { flex: 1, marginLeft: 12, paddingTop: 0 },
+  lineCodeRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  lineCodeBottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 3 },
+  lineCodeText: { color: '#1E1D1D', fontSize: 11, fontWeight: '700' },
+  lineMain: { flex: 1, marginLeft: 12 },
   lineTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 6 },
   lineName: { color: '#1E1D1D', fontSize: 14, fontWeight: '500' },
-  lineVia: { color: '#999999', fontSize: 12, marginTop: 0 },
+  lineVia: { color: '#999999', fontSize: 12 },
   nextBusText: { color: '#22c55e', fontSize: 12, marginTop: 1, fontWeight: '600' },
+  // FIX 1: novo estilo para sem horários
+  noScheduleText: { color: '#CCCCCC', fontSize: 12, marginTop: 1 },
   modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '88%', backgroundColor: '#FFFFFF', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, paddingBottom: 26 },
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '88%',
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    padding: 24,
+    paddingBottom: 0,
+  },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: '#E0E0E0', alignSelf: 'center', marginBottom: 20 },
   sheetTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  sheetCodeBadge: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
-  sheetCodeText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  sheetCodeBadge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 8,
+    paddingTop: 3,
+    paddingBottom: 5,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  sheetCodeBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  sheetCodeBottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 3 },
+  sheetCodeText: { color: '#1E1D1D', fontSize: 11, fontWeight: '700' },
   sheetName: { color: '#1E1D1D', fontSize: 20, fontWeight: '700', marginTop: 8 },
   routeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 6 },
   routeText: { color: '#666666', fontSize: 14 },
@@ -699,12 +781,18 @@ const styles = StyleSheet.create({
   badgeOperatorText: { color: '#666666', fontSize: 12 },
   badgeNext: { backgroundColor: '#EBF3FF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   badgeNextText: { color: '#0057A8', fontSize: 12, fontWeight: '600' },
-  miniMap: { height: 120, borderRadius: 12, marginTop: 12 },
+  // FIX 1: badge de sem horários
+  badgeNoSchedule: { backgroundColor: '#F5F5F5', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  badgeNoScheduleText: { color: '#AAAAAA', fontSize: 12 },
   scheduleTitle: { marginTop: 14, color: '#1E1D1D', fontSize: 15, fontWeight: '700' },
   scheduleGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
   scheduleCell: { width: '22%', backgroundColor: '#F5F5F5', borderRadius: 8, paddingVertical: 8, margin: 4, alignItems: 'center' },
   scheduleCellNext: { backgroundColor: '#EBF3FF' },
   scheduleCellText: { color: '#1E1D1D', fontSize: 13, textAlign: 'center' },
+  scheduleCellNextText: { color: '#0057A8', fontWeight: '700' },
+  // FIX 1: empty state de horários
+  noScheduleWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 16 },
+  noScheduleWrapText: { color: '#AAAAAA', fontSize: 13 },
   buttonsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14 },
   primaryBtn: { flex: 1, height: 52, borderRadius: 40, backgroundColor: '#0057A8', alignItems: 'center', justifyContent: 'center' },
   primaryBtnText: { color: '#FFFFFF', fontWeight: '700' },

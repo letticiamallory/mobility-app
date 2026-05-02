@@ -6,15 +6,17 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { resetPassword } from '../services/auth.service';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 
 export default function ResetPasswordScreen() {
   const router = useRouter();
+  const sx = useAccessibilitySurfaces();
   const params = useLocalSearchParams<{ email?: string | string[]; resetToken?: string | string[] }>();
   const email = (Array.isArray(params.email) ? params.email[0] : params.email) ?? '';
   const resetToken =
@@ -53,7 +55,7 @@ export default function ResetPasswordScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>

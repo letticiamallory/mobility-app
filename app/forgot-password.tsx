@@ -7,16 +7,18 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import MailIllustration from '../assets/images/mail.svg';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { forgotPassword } from '../services/auth.service';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
+  const sx = useAccessibilitySurfaces();
   const params = useLocalSearchParams<{ email?: string | string[] }>();
   const emailFromParams = useRef(
     Array.isArray(params.email) ? params.email[0] ?? '' : params.email ?? '',
@@ -81,7 +83,7 @@ export default function ForgotPasswordScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView style={[styles.screen, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>

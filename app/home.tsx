@@ -9,11 +9,12 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Text as PaperText } from 'react-native-paper';
+import { ScaledText as PaperText } from '@/components/ScaledText';
+import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
+import { useAccessibilityPreferences, useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
 import {
@@ -40,6 +41,8 @@ type RecentRoute = {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { highContrast } = useAccessibilityPreferences();
+  const sx = useAccessibilitySurfaces();
   const [name, setName] = useState('');
   const [destination, setDestination] = useState('');
   const [recentRoutes, setRecentRoutes] = useState<RecentRoute[]>([]);
@@ -202,11 +205,11 @@ export default function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={[styles.safeArea, sx.fillScreen]} edges={['left', 'right', 'bottom']}>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={highContrast ? 'light-content' : 'dark-content'} />
 
-      <ScrollView style={styles.safeArea} contentContainerStyle={styles.content}>
+      <ScrollView style={[styles.safeArea, sx.fillScreen]} contentContainerStyle={styles.content}>
         <ImageBackground source={require('../assets/images/city.jpg')} style={styles.header}>
           <View style={styles.headerOverlay} />
           <View style={styles.headerContent}>
@@ -251,7 +254,7 @@ export default function HomeScreen() {
           {favorites.map((item) => (
             <View key={item.id} style={styles.favoriteCardWrap}>
               <TouchableOpacity
-                style={styles.favoriteCard}
+                style={[styles.favoriteCard, sx.fillCard]}
                 onPress={() => openFavoriteEditor(item)}
                 activeOpacity={0.85}
               >
@@ -284,7 +287,7 @@ export default function HomeScreen() {
 
         <View style={styles.sectionBlock}>
           <PaperText style={styles.sectionMuted}>Táxi e transporte privado</PaperText>
-          <View style={styles.uberCard}>
+          <View style={[styles.uberCard, sx.fillCard]}>
             <View style={styles.uberLeft}>
               <View style={styles.uberLogo}>
                 <PaperText style={styles.uberLogoText}>U</PaperText>
@@ -303,7 +306,7 @@ export default function HomeScreen() {
         <View style={styles.recentSection}>
           <PaperText style={styles.sectionTitle}>Viagens recentes</PaperText>
           {!loadingRecents && !hasRecents ? (
-            <View style={styles.emptyWrap}>
+            <View style={[styles.emptyWrap, sx.fillCard]}>
               <MaterialCommunityIcons name="map-search-outline" size={40} color="#CCCCCC" />
               <PaperText style={styles.emptyText}>Nenhuma viagem recente</PaperText>
               <TouchableOpacity style={styles.emptyButton} onPress={() => router.push('/search-destination')}>
@@ -315,7 +318,7 @@ export default function HomeScreen() {
               {recentRoutes.map((route) => (
                 <TouchableOpacity
                   key={route.id}
-                  style={styles.recentCard}
+                  style={[styles.recentCard, sx.fillCard]}
                   onPress={() => goToDirections(route.destination, route.origin)}
                   activeOpacity={0.85}
                 >
@@ -332,7 +335,7 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
-      <View style={styles.bottomNav}>
+      <View style={[styles.bottomNav, sx.fillCard, sx.hairlineTop]}>
         <TouchableOpacity style={styles.navItem} onPress={() => router.push('/route-results')}>
           <MaterialCommunityIcons name="map-marker-path" size={23} color="#0057A8" />
           <PaperText style={styles.navActive}>Direções</PaperText>

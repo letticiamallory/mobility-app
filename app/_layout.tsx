@@ -2,8 +2,21 @@ import { Stack } from 'expo-router';
 import { useEffect } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
+import { AccessibilityPreferencesProvider, useAccessibilityPreferences } from '@/contexts/accessibility-preferences';
 
 SplashScreen.preventAutoHideAsync();
+
+function RootStack() {
+  const { colors } = useAccessibilityPreferences();
+  return (
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: colors.screenBackground },
+      }}
+    />
+  );
+}
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
@@ -19,10 +32,8 @@ export default function RootLayout() {
   if (!fontsLoaded) return null;
 
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-      }}
-    />
+    <AccessibilityPreferencesProvider>
+      <RootStack />
+    </AccessibilityPreferencesProvider>
   );
 }

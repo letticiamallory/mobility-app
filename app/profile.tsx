@@ -1,10 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { Alert, Image, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
-import { getToken, getUserAvatar, removeToken } from '../services/token.service';
+import { getToken, getUserAvatar, getUserInfo, removeToken } from '../services/token.service';
 
 type MeResponse = {
   name?: string;
@@ -12,6 +14,31 @@ type MeResponse = {
   disability_type?: string;
   accompanied?: string;
 };
+
+const DISABILITY_LABELS: Record<string, string> = {
+  visual: 'Baixa visão',
+  wheelchair: 'Cadeirante',
+  reduced_mobility: 'Mobilidade reduzida',
+};
+
+function formatDisabilityType(type?: string): string {
+  if (!type?.trim()) return '—';
+  const key = type.trim();
+  if (DISABILITY_LABELS[key]) return DISABILITY_LABELS[key];
+  const humanized = key.replace(/_/g, ' ');
+  return humanized.charAt(0).toUpperCase() + humanized.slice(1);
+}
+
+function normalizeMePayload(raw: unknown): MeResponse {
+  if (!raw || typeof raw !== 'object') return {};
+  const r = raw as Record<string, unknown>;
+  return {
+    name: typeof r.name === 'string' ? r.name : undefined,
+    email: typeof r.email === 'string' ? r.email : undefined,
+    disability_type: typeof r.disability_type === 'string' ? r.disability_type : undefined,
+    accompanied: typeof r.accompanied === 'string' ? r.accompanied : undefined,
+  };
+}
 
 function initialsFromName(name?: string) {
   const source = (name || 'U').trim();
@@ -25,40 +52,66 @@ function initialsFromName(name?: string) {
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const sx = useAccessibilitySurfaces();
   const [profile, setProfile] = useState<MeResponse>({});
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
-  useEffect(() => {
-    const loadData = async () => {
-      const token = await getToken();
-      if (!token) {
-        router.replace('/login');
-        return;
-      }
-
-      try {
-        const savedAvatar = await getUserAvatar();
-        setAvatarUri(savedAvatar);
-        const meResponse = await fetch(`${API_URL}/users/me`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (meResponse.ok) {
-          const meData = (await meResponse.json()) as MeResponse;
-          setProfile(meData);
-        }
-      } catch {
-        setProfile({});
-      }
+  const mergeWithLocalInfo = useCallback(async (base: MeResponse): Promise<MeResponse> => {
+    const local = await getUserInfo();
+    return {
+      ...base,
+      name: base.name?.trim() || local.name?.trim() || undefined,
+      email: base.email?.trim() || local.email?.trim() || undefined,
     };
+  }, []);
 
-    loadData();
-  }, [router]);
+  const loadProfile = useCallback(async () => {
+    const token = await getToken();
+    if (!token) {
+      router.replace('/login');
+      return;
+    }
+
+    try {
+      const savedAvatar = await getUserAvatar();
+      setAvatarUri(savedAvatar);
+      const meResponse = await fetch(`${API_URL}/users/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (meResponse.ok) {
+        const raw = await meResponse.json();
+        const meData = normalizeMePayload(raw);
+        setProfile(await mergeWithLocalInfo(meData));
+      } else {
+        setProfile(await mergeWithLocalInfo({}));
+      }
+    } catch {
+      setProfile(await mergeWithLocalInfo({}));
+    }
+  }, [router, mergeWithLocalInfo]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadProfile();
+    }, [loadProfile]),
+  );
 
   const initials = useMemo(() => initialsFromName(profile.name), [profile.name]);
 
-  const handleLogout = async () => {
-    await removeToken();
-    router.replace('/login');
+  const handleLogout = () => {
+    Alert.alert('Sair', 'Deseja realmente encerrar sua sessão?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Sair',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            await removeToken();
+            router.replace('/login');
+          })();
+        },
+      },
+    ]);
   };
 
   const openProfileInfo = () => {
@@ -70,7 +123,7 @@ export default function ProfileScreen() {
   };
 
   const openFavorites = () => {
-    router.push({ pathname: '/stations', params: { tab: 'favorites' } });
+    router.push('/home');
   };
 
   const openTripHistory = () => {
@@ -86,10 +139,10 @@ export default function ProfileScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.header}>
+        <View style={[styles.header, sx.fillCard]}>
           <View style={styles.headerTopRow}>
             <TouchableOpacity
               style={styles.backButton}
@@ -112,9 +165,15 @@ export default function ProfileScreen() {
               )}
             </View>
             <View style={styles.headerInfoWrap}>
-              <Text style={styles.userName}>{profile.name || '-'}</Text>
-              <Text style={styles.userEmail}>{profile.email || '-'}</Text>
-              <Text style={styles.disabilityType}>{profile.disability_type || '-'}</Text>
+              <Text style={styles.userName} numberOfLines={2}>
+                {profile.name || '—'}
+              </Text>
+              <Text style={styles.userEmail} numberOfLines={2}>
+                {profile.email || '—'}
+              </Text>
+              <Text style={styles.disabilityType} numberOfLines={2}>
+                {formatDisabilityType(profile.disability_type)}
+              </Text>
             </View>
             <TouchableOpacity style={styles.editButton} onPress={openProfileInfo}>
               <Text style={styles.editButtonText}>Editar</Text>
@@ -122,7 +181,7 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <View style={styles.listGroup}>
+        <View style={[styles.listGroup, sx.fillCard]}>
           <TouchableOpacity style={styles.listItem} onPress={openProfileInfo}>
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="account-edit" size={22} color="#0057A8" />
@@ -141,7 +200,7 @@ export default function ProfileScreen() {
 
         <View style={styles.groupDivider} />
 
-        <View style={styles.listGroup}>
+        <View style={[styles.listGroup, sx.fillCard]}>
           <TouchableOpacity style={styles.listItem} onPress={openFavorites}>
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="heart-outline" size={22} color="#0057A8" />
@@ -160,7 +219,7 @@ export default function ProfileScreen() {
 
         <View style={styles.groupDivider} />
 
-        <View style={styles.listGroup}>
+        <View style={[styles.listGroup, sx.fillCard]}>
           <TouchableOpacity style={styles.listItem} onPress={openChangePassword}>
             <View style={styles.listItemLeft}>
               <MaterialCommunityIcons name="lock-outline" size={22} color="#0057A8" />
@@ -238,7 +297,9 @@ const styles = StyleSheet.create({
   },
   headerInfoWrap: {
     flex: 1,
+    minWidth: 0,
     marginLeft: 16,
+    marginRight: 8,
   },
   userName: {
     color: '#1E1D1D',

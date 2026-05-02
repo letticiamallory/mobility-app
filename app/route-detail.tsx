@@ -11,11 +11,12 @@ import {
   PanResponder,
   ScrollView,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { useAccessibilityPreferences, useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export type RouteStage = {
@@ -463,6 +464,8 @@ const FALLBACK_WALK_STAGE: RouteStage = {
 export default function RouteDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { voiceRead } = useAccessibilityPreferences();
+  const sx = useAccessibilitySurfaces();
   const params = useLocalSearchParams<{
     route?: string | string[];
     routeList?: string | string[];
@@ -573,6 +576,7 @@ export default function RouteDetailScreen() {
       setIsReading(false);
       return;
     }
+    if (!voiceRead) return;
     setIsReading(true);
     const instructions = route.stages
       .map(
@@ -599,11 +603,12 @@ export default function RouteDetailScreen() {
   const arrivalTime = formatClock(arrivalDate);
 
   useEffect(() => {
-    if (!route) return;
+    if (!route || !voiceRead) return;
     AccessibilityInfo.isScreenReaderEnabled().then((enabled) => {
       if (enabled && route) readRoute();
     });
-  }, [route]);
+    // Leitura automática só na montagem / mudança de rota ou preferência; não incluir readRoute (evita loop).
+  }, [route, voiceRead]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setElapsedMinutes(0);
@@ -649,7 +654,7 @@ export default function RouteDetailScreen() {
 
   if (!route) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={[styles.screen, sx.fillScreen]} edges={['top', 'left', 'right']}>
         <Stack.Screen options={{ headerShown: false }} />
         <View style={styles.errorBox}>
           <TouchableOpacity onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Voltar">
@@ -698,7 +703,7 @@ export default function RouteDetailScreen() {
   const canGoAfter = routeListParams.length > 0 && clampedRouteIndex < routeListParams.length - 1;
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.screen, sx.fillScreen]} edges={['top', 'left', 'right']}>
       <Stack.Screen options={{ headerShown: false }} />
 
       <View style={styles.flex1}>
@@ -776,6 +781,7 @@ export default function RouteDetailScreen() {
         <Animated.View
           style={[
             styles.sheet,
+            sx.fillCard,
             {
               top: sheetTopAnim,
               bottom: footerBand,

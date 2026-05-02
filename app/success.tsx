@@ -1,10 +1,15 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
+import { ScaledText } from '@/components/ScaledText';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+
+const AnimatedScaledText = Animated.createAnimatedComponent(ScaledText);
 
 export default function SuccessScreen() {
   const router = useRouter();
+  const sx = useAccessibilitySurfaces();
 
   const dotTL = useRef(new Animated.Value(0)).current;
   const dotTR = useRef(new Animated.Value(0)).current;
@@ -43,7 +48,7 @@ export default function SuccessScreen() {
   }, [router]);
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
 
       <View style={styles.heroWrap}>
@@ -76,15 +81,15 @@ export default function SuccessScreen() {
           ]}
         />
 
-        <Animated.Text style={[styles.star, styles.star1, { transform: [{ scale: star1 }] }]}>
+        <AnimatedScaledText style={[styles.star, styles.star1, { transform: [{ scale: star1 }] }]}>
           ★
-        </Animated.Text>
-        <Animated.Text style={[styles.star, styles.star2, { transform: [{ scale: star2 }] }]}>
+        </AnimatedScaledText>
+        <AnimatedScaledText style={[styles.star, styles.star2, { transform: [{ scale: star2 }] }]}>
           ★
-        </Animated.Text>
-        <Animated.Text style={[styles.star, styles.star3, { transform: [{ scale: star3 }] }]}>
+        </AnimatedScaledText>
+        <AnimatedScaledText style={[styles.star, styles.star3, { transform: [{ scale: star3 }] }]}>
           ★
-        </Animated.Text>
+        </AnimatedScaledText>
 
         <Animated.View
           style={[
@@ -96,10 +101,10 @@ export default function SuccessScreen() {
         </Animated.View>
       </View>
 
-      <Text style={styles.title}>Cadastro realizado!</Text>
-      <Text style={styles.subtitle}>
+      <ScaledText style={styles.title}>Cadastro realizado!</ScaledText>
+      <ScaledText style={styles.subtitle}>
         Sua conta está pronta! Você será redirecionado para a tela inicial.
-      </Text>
+      </ScaledText>
 
     </View>
   );
@@ -108,7 +113,6 @@ export default function SuccessScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 32,

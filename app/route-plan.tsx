@@ -8,11 +8,12 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import { ScaledText as Text } from '@/components/ScaledText';
+import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { API_URL } from '../constants/api';
@@ -73,6 +74,7 @@ function formatGeocodeLabel(first: Location.LocationGeocodedAddress | null | und
 
 export default function RoutePlanScreen() {
   const router = useRouter();
+  const sx = useAccessibilitySurfaces();
   const params = useLocalSearchParams<{
     destination?: string | string[];
     origin?: string | string[];
@@ -366,7 +368,7 @@ export default function RoutePlanScreen() {
   const destDisplay = destLabel.trim() || destinationParam;
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.safe, sx.fillScreen]} edges={['top', 'left', 'right']}>
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle="dark-content" />
 
