@@ -422,11 +422,21 @@ function parseRouteParam(raw: string | string[] | undefined): SerializedRouteDet
         line_code: st.line_code != null ? String(st.line_code) : undefined,
         street_view_image:
           st.street_view_image != null ? String(st.street_view_image) : undefined,
-        segment_images: Array.isArray(st.segment_images)
-          ? (st.segment_images as unknown[])
-              .filter((x) => typeof x === 'string' && /^https?:\/\//i.test(x.trim()))
+        segment_images: (() => {
+          const pack = st.street_view_images;
+          if (Array.isArray(pack)) {
+            const u = pack
+              .filter((x) => typeof x === 'string' && /^https?:\/\//i.test(String(x).trim()))
               .map((x) => String(x).trim())
-          : undefined,
+              .slice(0, 3);
+            if (u.length > 0) return u;
+          }
+          return Array.isArray(st.segment_images)
+            ? (st.segment_images as unknown[])
+                .filter((x) => typeof x === 'string' && /^https?:\/\//i.test(x.trim()))
+                .map((x) => String(x).trim())
+            : undefined;
+        })(),
         points: Array.isArray(st.points)
           ? (st.points as { latitude: number; longitude: number }[]).filter(
               (p) =>

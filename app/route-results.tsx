@@ -37,6 +37,8 @@ type Stage = {
   arrivalTime?: string;
   departure_minutes?: number | string | Array<number | string>;
   street_view_image?: string;
+  /** Até 3 URLs — só caminhada (backend). */
+  street_view_images?: string[];
   points?: { latitude: number; longitude: number }[];
   accessible?: boolean;
   warning?: string;
@@ -127,6 +129,10 @@ function collectStageDetailImages(stage: Stage): string[] {
     if (/^https?:\/\//i.test(v)) urls.push(v);
   };
 
+  const walkPack = raw.street_view_images;
+  if (Array.isArray(walkPack)) {
+    for (const item of walkPack) pushIfUrl(item);
+  }
   pushIfUrl(stage.street_view_image);
   pushIfUrl(raw.image_url);
   pushIfUrl(raw.imageUrl);
