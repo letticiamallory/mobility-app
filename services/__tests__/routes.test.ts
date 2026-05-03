@@ -85,7 +85,7 @@ describe('searchRoutes', () => {
 
     await expect(
       searchRoutes('Ibituruna', 'Shopping', 1, 'bus'),
-    ).rejects.toMatchObject({ message: 'Erro ao buscar rotas', status: 500 });
+    ).rejects.toMatchObject({ message: 'Erro interno', status: 500 });
   });
 
   it('não inclui accompanied quando undefined ou string vazia', async () => {

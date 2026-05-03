@@ -33,6 +33,22 @@ export function sortRouteHistoryNewestFirst(rows: RouteHistoryApiRow[]): RouteHi
   });
 }
 
+/** Hard cap end-to-end (cliente) — produto exige resposta em ≤ 15 s. */
+export const ROUTES_FETCH_TIMEOUT_MS = 15_000;
+
+export type SearchRoutesOptions = {
+  signal?: AbortSignal;
+  /** Override do timeout local; padrão = ROUTES_FETCH_TIMEOUT_MS. */
+  timeoutMs?: number;
+};
+
+export class SearchRoutesTimeoutError extends Error {
+  constructor() {
+    super('Tempo limite de 15s excedido ao buscar rotas');
+    this.name = 'SearchRoutesTimeoutError';
+  }
+}
+
 export async function searchRoutes(
   origin: string,
   destination: string,
@@ -42,28 +58,34 @@ export async function searchRoutes(
   timeFilter?: string,
   timeValue?: string,
   routePreference?: string,
+  options?: SearchRoutesOptions,
 ) {
+  const token = await getToken();
+  const url = `${API_URL}/routes/check`;
+  const body = {
+    origin,
+    destination,
+    user_id: userId,
+    transport_type: transportType,
+    ...(accompanied !== undefined && accompanied !== '' ? { accompanied } : {}),
+    ...(timeFilter ? { time_filter: timeFilter } : {}),
+    ...(timeValue ? { time_value: timeValue } : {}),
+    ...(routePreference ? { route_preference: routePreference } : {}),
+  };
+  const bodyString = JSON.stringify(body);
+
+  const localController = new AbortController();
+  const timeoutMs = options?.timeoutMs ?? ROUTES_FETCH_TIMEOUT_MS;
+  const timer = setTimeout(() => localController.abort(), timeoutMs);
+
+  const externalSignal = options?.signal;
+  const onExternalAbort = () => localController.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) localController.abort();
+    else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+  }
+
   try {
-    const token = await getToken();
-    const url = `${API_URL}/routes/check`;
-    const body = {
-      origin,
-      destination,
-      user_id: userId,
-      transport_type: transportType,
-      ...(accompanied !== undefined && accompanied !== '' ? { accompanied } : {}),
-      ...(timeFilter ? { time_filter: timeFilter } : {}),
-      ...(timeValue ? { time_value: timeValue } : {}),
-      ...(routePreference ? { route_preference: routePreference } : {}),
-    };
-    const bodyString = JSON.stringify(body);
-
-    console.log('[searchRoutes] antes do fetch', {
-      url,
-      token,
-      body: bodyString,
-    });
-
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -71,16 +93,10 @@ export async function searchRoutes(
         Authorization: `Bearer ${token ?? ''}`,
       },
       body: bodyString,
+      signal: localController.signal,
     });
 
     const httpStatus = response.status;
-
-    console.log('[searchRoutes] após o fetch', {
-      status: httpStatus,
-      ok: response.ok,
-      sucesso: response.ok,
-    });
-
     const text = await response.text();
     let result: unknown = null;
     try {
@@ -89,15 +105,25 @@ export async function searchRoutes(
       result = null;
     }
 
-    console.log('[searchRoutes] após parse JSON', result);
-
     if (!response.ok) {
-      throw Object.assign(new Error('Erro ao buscar rotas'), { status: httpStatus });
+      let msg = 'Erro ao buscar rotas';
+      if (result && typeof result === 'object' && result !== null && 'message' in result) {
+        const m = (result as { message: unknown }).message;
+        if (m != null) {
+          msg = Array.isArray(m) ? m.map(String).join(', ') : String(m);
+        }
+      }
+      throw Object.assign(new Error(msg), { status: httpStatus });
     }
 
     return result;
   } catch (error) {
-    console.error('[searchRoutes] catch', error);
+    if ((error as { name?: string })?.name === 'AbortError') {
+      throw new SearchRoutesTimeoutError();
+    }
     throw error;
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
   }
 }

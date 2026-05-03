@@ -119,6 +119,40 @@ function normalizeSearch(s: string): string {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
+async function geocodeAddressText(
+  address: string,
+  key: string,
+  bias?: { latitude: number; longitude: number } | null,
+): Promise<{ lat: number; lng: number } | null> {
+  try {
+    let url =
+      'https://maps.googleapis.com/maps/api/geocode/json' +
+      `?address=${encodeURIComponent(address)}` +
+      '&language=pt-BR' +
+      '&region=br';
+    if (bias) {
+      const d = 0.35;
+      const swLat = bias.latitude - d;
+      const swLng = bias.longitude - d;
+      const neLat = bias.latitude + d;
+      const neLng = bias.longitude + d;
+      url += `&bounds=${swLat},${swLng}|${neLat},${neLng}`;
+    }
+    url += `&key=${encodeURIComponent(key)}`;
+    const res = await fetch(url);
+    const json = (await res.json()) as {
+      results?: { geometry?: { location?: { lat?: number; lng?: number } } }[];
+    };
+    const loc = json.results?.[0]?.geometry?.location;
+    const lat = loc?.lat;
+    const lng = loc?.lng;
+    if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
 async function fetchPlaceGeometry(
   placeId: string,
   key: string,
@@ -182,6 +216,11 @@ export default function SearchDestinationScreen() {
     favoriteAction?: string;
     presetIcon?: string;
     screenTitle?: string;
+    origin?: string | string[];
+    destination?: string | string[];
+    originCoordinate?: string | string[];
+    destinationCoordinate?: string | string[];
+    editField?: string | string[];
   }>();
   const isFavoriteFlow = navParams.favoriteFlow === '1' || navParams.favoriteFlow === 'true';
   const [query, setQuery] = useState('');
@@ -232,6 +271,65 @@ export default function SearchDestinationScreen() {
     [router],
   );
 
+  const planEditField = useMemo((): 'origin' | 'destination' => {
+    const raw = paramOne(navParams.editField).trim().toLowerCase();
+    return raw === 'origin' ? 'origin' : 'destination';
+  }, [navParams.editField]);
+
+  const isRoutePlanEdit = useMemo(
+    () => paramOne(navParams.editField).trim().length > 0,
+    [navParams.editField],
+  );
+
+  const searchPlaceholder = useMemo(
+    () =>
+      isRoutePlanEdit
+        ? planEditField === 'origin'
+          ? 'De onde você sai?'
+          : 'Para onde você quer ir?'
+        : 'Para onde você quer ir?',
+    [isRoutePlanEdit, planEditField],
+  );
+
+  useEffect(() => {
+    const ef = paramOne(navParams.editField).trim();
+    if (!ef) return;
+    if (ef.toLowerCase() === 'origin') {
+      setQuery(paramOne(navParams.origin));
+    } else {
+      setQuery(paramOne(navParams.destination));
+    }
+  }, [navParams.editField, navParams.origin, navParams.destination]);
+
+  const pickPlaceForRoutePlan = useCallback(
+    (fullDescription: string, lat: number, lng: number) => {
+      if (!isRoutePlanEdit) {
+        goToRoutePlan({ destination: fullDescription, destLat: lat, destLng: lng });
+        return;
+      }
+      const baseO = paramOne(navParams.origin).trim();
+      const baseD = paramOne(navParams.destination).trim();
+      const rp: Record<string, string> = {};
+      if (planEditField === 'origin') {
+        rp.origin = fullDescription;
+        rp.destination = baseD;
+        rp.originLat = String(lat);
+        rp.originLng = String(lng);
+        const dc = paramOne(navParams.destinationCoordinate);
+        if (dc) rp.destinationCoordinate = dc;
+      } else {
+        rp.destination = fullDescription;
+        rp.destLat = String(lat);
+        rp.destLng = String(lng);
+        if (baseO) rp.origin = baseO;
+        const oc = paramOne(navParams.originCoordinate);
+        if (oc) rp.originCoordinate = oc;
+      }
+      router.push({ pathname: '/route-plan', params: rp });
+    },
+    [isRoutePlanEdit, planEditField, navParams, router, goToRoutePlan],
+  );
+
   const goFavoriteConfirm = useCallback(
     (p: { address: string; lat: number; lng: number; inferredIcon?: string }) => {
       router.push({
@@ -276,13 +374,18 @@ export default function SearchDestinationScreen() {
           return;
         }
       }
-      goToRoutePlan({
-        destination: item.fullDescription,
-        destLat: item.destLat,
-        destLng: item.destLng,
-      });
+      if (item.destLat != null && item.destLng != null && Number.isFinite(item.destLat) && Number.isFinite(item.destLng)) {
+        pickPlaceForRoutePlan(item.fullDescription, item.destLat, item.destLng);
+        return;
+      }
+      void (async () => {
+        const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
+        if (!key) return;
+        const g = await fetchPlaceGeometry(item.placeId, key);
+        if (g) pickPlaceForRoutePlan(item.fullDescription, g.lat, g.lng);
+      })();
     },
-    [goFavoriteConfirm, goToRoutePlan, isFavoriteFlow],
+    [goFavoriteConfirm, pickPlaceForRoutePlan, isFavoriteFlow],
   );
 
   useEffect(() => {
@@ -362,12 +465,16 @@ export default function SearchDestinationScreen() {
     setLoadingPlaces(true);
     const timeoutId = setTimeout(async () => {
       try {
-        const url =
+        let url =
           'https://maps.googleapis.com/maps/api/place/autocomplete/json' +
           `?input=${encodeURIComponent(trimmed)}` +
           '&language=pt-BR' +
           '&types=geocode' +
-          `&key=${encodeURIComponent(key)}`;
+          '&region=br';
+        if (userCoords != null) {
+          url += `&location=${userCoords.latitude},${userCoords.longitude}&radius=100000`;
+        }
+        url += `&key=${encodeURIComponent(key)}`;
         const res = await fetch(url);
         const json = (await res.json()) as {
           predictions?: {
@@ -406,6 +513,17 @@ export default function SearchDestinationScreen() {
             ...(geom ? { destLat: geom.lat, destLng: geom.lng } : {}),
           });
         }
+        rows.sort((a, b) => {
+          const da =
+            a.destLat != null && a.destLng != null
+              ? calculateDistanceNum(lat0, lng0, a.destLat, a.destLng)
+              : Number.POSITIVE_INFINITY;
+          const db =
+            b.destLat != null && b.destLng != null
+              ? calculateDistanceNum(lat0, lng0, b.destLat, b.destLng)
+              : Number.POSITIVE_INFINITY;
+          return da - db;
+        });
         if (!cancelled) setPlaceRows(rows);
       } catch {
         if (!cancelled) setPlaceRows([]);
@@ -469,19 +587,41 @@ export default function SearchDestinationScreen() {
           <TextInput
             testID="input-destino"
             style={[styles.searchInput, sx.fillCard, sx.outlineBorder]}
-            placeholder="Para onde você quer ir?"
+            placeholder={searchPlaceholder}
             placeholderTextColor="#9CA3AF"
             value={query}
             onChangeText={setQuery}
             returnKeyType="search"
             onSubmitEditing={() => {
               const t = query.trim();
-              if (t) goToResults(t);
+              if (!t) return;
+              if (!isRoutePlanEdit) {
+                goToResults(t);
+                return;
+              }
+              void (async () => {
+                const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
+                if (!key) return;
+                const loc = await geocodeAddressText(t, key, userCoords);
+                if (loc) pickPlaceForRoutePlan(t, loc.lat, loc.lng);
+              })();
             }}
             autoCorrect={false}
             autoCapitalize="sentences"
-            accessibilityLabel="Destino da viagem"
-            accessibilityHint="Digite para onde deseja ir e confirme para buscar rotas"
+            accessibilityLabel={
+              isRoutePlanEdit
+                ? planEditField === 'origin'
+                  ? 'Origem da viagem'
+                  : 'Destino da viagem'
+                : 'Destino da viagem'
+            }
+            accessibilityHint={
+              isRoutePlanEdit
+                ? planEditField === 'origin'
+                  ? 'Digite o endereço de partida e confirme'
+                  : 'Digite para onde deseja ir e confirme'
+                : 'Digite para onde deseja ir e confirme para buscar rotas'
+            }
             importantForAccessibility="yes"
           />
           {hasQuery ? (
@@ -695,11 +835,7 @@ export default function SearchDestinationScreen() {
                           });
                           return;
                         }
-                        goToRoutePlan({
-                          destination: dest,
-                          destLat: station.lat,
-                          destLng: station.lng,
-                        });
+                        pickPlaceForRoutePlan(dest, station.lat, station.lng);
                       }}
                       activeOpacity={0.75}
                       accessibilityRole="button"

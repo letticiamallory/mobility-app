@@ -45,14 +45,15 @@ async function fetchPackagedRoutes(
   destination: string,
   userId: number,
 ): Promise<PackagedRoutesPayload> {
-  const [aloneResult, companiedResult] = await Promise.allSettled([
-    fetchDiverseRoutes(origin, destination, userId, 'alone'),
-    fetchDiverseRoutes(origin, destination, userId, 'companied'),
-  ]);
-  return {
-    alone: aloneResult.status === 'fulfilled' ? (aloneResult.value as unknown[]) : [],
-    companied: companiedResult.status === 'fulfilled' ? (companiedResult.value as unknown[]) : [],
-  };
+  try {
+    const payload = await fetchDiverseRoutes(origin, destination, userId);
+    return {
+      alone: payload.alone as unknown[],
+      companied: payload.companied as unknown[],
+    };
+  } catch {
+    return { alone: [], companied: [] };
+  }
 }
 
 function paramOne(v: string | string[] | undefined): string {
@@ -66,16 +67,37 @@ function parseCoord(v: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function parseCoordJsonString(s: string | undefined): { latitude: number; longitude: number } | null {
+  if (s == null || !String(s).trim()) return null;
+  try {
+    const o = JSON.parse(String(s)) as { latitude?: number; longitude?: number };
+    if (typeof o.latitude !== 'number' || typeof o.longitude !== 'number') return null;
+    return { latitude: o.latitude, longitude: o.longitude };
+  } catch {
+    return null;
+  }
+}
+
 async function geocodeAddress(
   address: string,
   key: string,
+  bias?: { latitude: number; longitude: number } | null,
 ): Promise<{ latitude: number; longitude: number } | null> {
   try {
-    const url =
+    let url =
       'https://maps.googleapis.com/maps/api/geocode/json' +
       `?address=${encodeURIComponent(address)}` +
       '&language=pt-BR' +
-      `&key=${encodeURIComponent(key)}`;
+      '&region=br';
+    if (bias) {
+      const d = 0.35;
+      const swLat = bias.latitude - d;
+      const swLng = bias.longitude - d;
+      const neLat = bias.latitude + d;
+      const neLng = bias.longitude + d;
+      url += `&bounds=${swLat},${swLng}|${neLat},${neLng}`;
+    }
+    url += `&key=${encodeURIComponent(key)}`;
     const res = await fetch(url);
     const json = (await res.json()) as {
       results?: { geometry?: { location?: { lat?: number; lng?: number } } }[];
@@ -105,12 +127,18 @@ export default function RoutePlanScreen() {
     origin?: string | string[];
     destLat?: string | string[];
     destLng?: string | string[];
+    originLat?: string | string[];
+    originLng?: string | string[];
+    originCoordinate?: string | string[];
+    destinationCoordinate?: string | string[];
   }>();
 
   const destinationParam = useMemo(() => paramOne(params.destination).trim(), [params.destination]);
   const originParam = useMemo(() => paramOne(params.origin).trim(), [params.origin]);
   const destLatParam = parseCoord(paramOne(params.destLat));
   const destLngParam = parseCoord(paramOne(params.destLng));
+  const originLatParam = parseCoord(paramOne(params.originLat));
+  const originLngParam = parseCoord(paramOne(params.originLng));
 
   const mapRef = useRef<MapView>(null);
   const routesCacheRef = useRef<{ key: string; data: PackagedRoutesPayload } | null>(null);
@@ -180,6 +208,11 @@ export default function RoutePlanScreen() {
         if (!cancelled) setDestCoord({ latitude: destLatParam, longitude: destLngParam });
         return;
       }
+      const destFromJson = parseCoordJsonString(paramOne(params.destinationCoordinate));
+      if (destFromJson) {
+        if (!cancelled) setDestCoord(destFromJson);
+        return;
+      }
       if (!cancelled) setDestCoord(null);
       const nextDest = key ? await geocodeAddress(destinationParam, key) : null;
       if (cancelled) return;
@@ -194,6 +227,31 @@ export default function RoutePlanScreen() {
     })();
 
     void (async () => {
+      if (originLatParam != null && originLngParam != null) {
+        if (!cancelled) {
+          setOriginCoord({ latitude: originLatParam, longitude: originLngParam });
+        }
+        return;
+      }
+
+      const originFromJson = parseCoordJsonString(paramOne(params.originCoordinate));
+      if (originFromJson) {
+        if (!cancelled) setOriginCoord(originFromJson);
+        return;
+      }
+
+      const oText = originParam.trim();
+      if (oText && oText !== 'Local atual') {
+        const nextOrigin = key ? await geocodeAddress(oText, key) : null;
+        if (cancelled) return;
+        if (nextOrigin) {
+          setOriginCoord(nextOrigin);
+        } else {
+          setOriginCoord(null);
+        }
+        return;
+      }
+
       try {
         const perm = await Location.requestForegroundPermissionsAsync();
         if (cancelled) return;
@@ -232,7 +290,16 @@ export default function RoutePlanScreen() {
     return () => {
       cancelled = true;
     };
-  }, [destinationParam, destLatParam, destLngParam, originParam]);
+  }, [
+    destinationParam,
+    destLatParam,
+    destLngParam,
+    originParam,
+    originLatParam,
+    originLngParam,
+    params.destinationCoordinate,
+    params.originCoordinate,
+  ]);
 
   useEffect(() => {
     const t = setTimeout(() => fitBoth(), 120);
@@ -300,25 +367,29 @@ export default function RoutePlanScreen() {
     setTimeout(() => fitBoth(), 320);
   }, [originLabel, destLabel, originCoord, destCoord, fitBoth]);
 
-  const goEditLocations = useCallback(() => {
-    const p: Record<string, string> = {
-      origin: originLabel.trim() || 'Local atual',
-      destination: destLabel.trim() || destinationParam,
-    };
-    if (originCoord) {
-      p.originCoordinate = JSON.stringify({
-        latitude: originCoord.latitude,
-        longitude: originCoord.longitude,
-      });
-    }
-    if (destCoord) {
-      p.destinationCoordinate = JSON.stringify({
-        latitude: destCoord.latitude,
-        longitude: destCoord.longitude,
-      });
-    }
-    router.push({ pathname: '/search-destination', params: p });
-  }, [router, originLabel, destLabel, destinationParam, originCoord, destCoord]);
+  const goEditLocations = useCallback(
+    (field: 'origin' | 'destination') => {
+      const p: Record<string, string> = {
+        origin: originLabel.trim() || 'Local atual',
+        destination: destLabel.trim() || destinationParam,
+        editField: field,
+      };
+      if (originCoord) {
+        p.originCoordinate = JSON.stringify({
+          latitude: originCoord.latitude,
+          longitude: originCoord.longitude,
+        });
+      }
+      if (destCoord) {
+        p.destinationCoordinate = JSON.stringify({
+          latitude: destCoord.latitude,
+          longitude: destCoord.longitude,
+        });
+      }
+      router.push({ pathname: '/search-destination', params: p });
+    },
+    [router, originLabel, destLabel, destinationParam, originCoord, destCoord],
+  );
 
   const goFindRoutes = useCallback(async () => {
     const dest = destLabel.trim() || destinationParam;
@@ -498,10 +569,10 @@ export default function RoutePlanScreen() {
           </View>
           <View style={styles.odTexts}>
             <TouchableOpacity
-              onPress={goEditLocations}
+              onPress={() => goEditLocations('origin')}
               activeOpacity={0.75}
               accessibilityRole="button"
-              accessibilityLabel={`Origem: ${originDisplay}. Toque para editar origem e destino`}
+              accessibilityLabel={`Origem: ${originDisplay}. Toque para alterar a origem`}
             >
               <Text style={styles.odPrimary} numberOfLines={1} ellipsizeMode="tail">
                 {originDisplay}
@@ -509,10 +580,10 @@ export default function RoutePlanScreen() {
             </TouchableOpacity>
             <View style={styles.odDivider} />
             <TouchableOpacity
-              onPress={goEditLocations}
+              onPress={() => goEditLocations('destination')}
               activeOpacity={0.75}
               accessibilityRole="button"
-              accessibilityLabel={`Destino: ${destDisplay}. Toque para editar origem e destino`}
+              accessibilityLabel={`Destino: ${destDisplay}. Toque para alterar o destino`}
             >
               <Text style={styles.odPrimary} numberOfLines={1} ellipsizeMode="tail">
                 {destDisplay}

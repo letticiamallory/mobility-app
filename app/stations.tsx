@@ -21,7 +21,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
 import { MOCK_LINES } from '../mocks/lines';
 import type { Station } from '../mocks/stations';
-import { MOCK_STATIONS } from '../mocks/stations';
 import { normalizeNextBusFromApi } from '../utils/schedule-time';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -151,7 +150,8 @@ export default function StationsScreen() {
   const [selectedTab, setSelectedTab] = useState<'all' | 'favorites'>(initialTab);
   const [selectedStation, setSelectedStation] = useState<Station | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [isDemo, setIsDemo] = useState(false);
+  /** true se a requisição falhou (rede, API fora do ar, etc.) */
+  const [stationsFetchError, setStationsFetchError] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [stationPhotos, setStationPhotos] = useState<Record<string, string>>({});
   const [photoErrors, setPhotoErrors] = useState<Record<string, boolean>>({});
@@ -165,8 +165,16 @@ export default function StationsScreen() {
   });
 
   useEffect(() => {
-    AsyncStorage.getItem('favorite_stations').then((data) => {
-      if (data) setFavorites(JSON.parse(data) as string[]);
+    void AsyncStorage.getItem('favorite_stations').then((data) => {
+      if (!data?.trim()) return;
+      try {
+        const parsed = JSON.parse(data) as unknown;
+        if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) {
+          setFavorites(parsed);
+        }
+      } catch {
+        void AsyncStorage.removeItem('favorite_stations');
+      }
     });
   }, []);
 
@@ -174,33 +182,33 @@ export default function StationsScreen() {
     const load = async () => {
       try {
         setLoading(true);
+        let lat = MAP_CENTER.latitude;
+        let lng = MAP_CENTER.longitude;
+
         const permission = await Location.requestForegroundPermissionsAsync();
         if (permission.status === 'granted') {
           const current = await Location.getCurrentPositionAsync({});
-          setUserLocation({ latitude: current.coords.latitude, longitude: current.coords.longitude });
+          lat = current.coords.latitude;
+          lng = current.coords.longitude;
+          setUserLocation({ latitude: lat, longitude: lng });
+        } else {
+          setUserLocation(null);
         }
 
-        const lat = userLocation?.latitude ?? MAP_CENTER.latitude;
-        const lng = userLocation?.longitude ?? MAP_CENTER.longitude;
         const response = await fetch(`${API_URL}/stations/nearby?lat=${lat}&lng=${lng}`);
         const data = response.ok ? ((await response.json()) as unknown) : [];
         const parsed = parseStations(data);
-        if (parsed.length > 0) {
-          setStations(parsed);
-          setIsDemo(false);
-        } else {
-          setStations(MOCK_STATIONS);
-          setIsDemo(true);
-        }
+        setStationsFetchError(!response.ok);
+        setStations(parsed);
       } catch {
-        setStations(MOCK_STATIONS);
-        setIsDemo(true);
+        setStationsFetchError(true);
+        setStations([]);
       } finally {
         setLoading(false);
       }
     };
-    load();
-  }, [userLocation?.latitude, userLocation?.longitude]);
+    void load();
+  }, []);
 
   const fetchStationPhoto = async (station: Station) => {
     try {
@@ -244,6 +252,7 @@ export default function StationsScreen() {
     });
     if (userLocation) {
       next = next.filter((station) => {
+        if (!station.nextBus) return true;
         const status = getArrivalStatus(
           station.nextBus,
           calculateDistanceNum(userLocation.latitude, userLocation.longitude, station.lat, station.lng),
@@ -332,11 +341,6 @@ export default function StationsScreen() {
       <View style={[styles.header, sx.fillCard, { paddingTop: insets.top + 12 }]}>
         <View style={styles.headerTop}>
           <Text style={styles.title}>Estações</Text>
-          {isDemo ? (
-            <View style={styles.demoBadge}>
-              <Text style={styles.demoBadgeText}>Demo</Text>
-            </View>
-          ) : null}
         </View>
         <TouchableOpacity
           style={[styles.searchBar, sx.searchInset]}
@@ -414,6 +418,16 @@ export default function StationsScreen() {
         </View>
       ) : (
         <SectionList
+          ListEmptyComponent={
+            <View style={styles.centerWrap}>
+              <MaterialCommunityIcons name="bus-stop" size={40} color="#CCCCCC" />
+              <Text style={[styles.emptyText, { marginTop: 12, textAlign: 'center', paddingHorizontal: 24 }]}>
+                {stationsFetchError
+                  ? 'Não foi possível carregar as estações. Verifique a internet e se a API está no ar.'
+                  : 'Nenhuma parada encontrada nesta região. Tente outro local ou aumente a cobertura no backend.'}
+              </Text>
+            </View>
+          }
           ListHeaderComponent={selectedTab !== 'all' ? null : (
             <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
               {nearestAccessibleStation
@@ -966,8 +980,6 @@ const styles = StyleSheet.create({
   header: { backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingBottom: 12 },
   headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { color: '#1E1D1D', fontSize: 22, fontWeight: '800' },
-  demoBadge: { backgroundColor: '#F59E0B', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  demoBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
   searchBar: { backgroundColor: '#F5F5F5', borderRadius: 14, height: 44, marginTop: 12, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 },
   searchInput: { flex: 1, marginLeft: 8, color: '#1E1D1D', fontSize: 14 },
   map: { height: 220, width: '100%' },

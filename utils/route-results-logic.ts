@@ -2,6 +2,19 @@
  * Pure helpers used by route-results and fetch-diverse-routes — fully unit-testable.
  */
 
+/** Bloqueador estruturado por trecho — espelha contrato do backend. */
+export type RouteLogicBlocker = {
+  type?: string;
+  severity?: 'low' | 'medium' | 'high';
+  detail?: string;
+};
+
+export type RouteLogicAccessibilityReport = {
+  confidence?: 'low' | 'medium' | 'high';
+  blockers?: RouteLogicBlocker[];
+  sources?: string[];
+};
+
 export type RouteLogicStage = {
   mode?: string;
   duration?: string | number;
@@ -11,6 +24,7 @@ export type RouteLogicStage = {
   accessible?: boolean;
   warning?: string;
   slope_warning?: boolean;
+  accessibility_report?: RouteLogicAccessibilityReport;
 };
 
 export type RouteLogicItem = {
@@ -25,6 +39,8 @@ export type RouteLogicItem = {
   recommended_for?: string;
   profile?: string;
   search_profile?: 'alone' | 'companied';
+  /** 0–100, maior = mais acessível (preenchido pelo backend). */
+  accessibility_score?: number;
   stages?: RouteLogicStage[];
 };
 
@@ -109,8 +125,8 @@ export function minutesUntilClock(clock: string, now: Date = new Date()): number
 }
 
 export function isWalkStageMode(mode?: string): boolean {
-  const m = `${mode ?? ''}`.toLowerCase();
-  return m === 'walk' || m === 'walking';
+  const m = `${mode ?? ''}`.toLowerCase().trim();
+  return m === 'walk' || m === 'walking' || m === 'foot';
 }
 
 export function normalizeStageMode(mode?: string): 'walk' | 'bus' | 'subway' | 'other' {
@@ -189,10 +205,62 @@ export function routeCompanionAudience(route: RouteLogicItem): 'alone' | 'compan
   return null;
 }
 
-export function stageNeedsAttention(stage: RouteLogicStage): boolean {
-  if (stage.slope_warning === true) return true;
+/** Severidade efetiva do estágio: maior bloqueador estruturado, ou 'medium' se houver warning textual / slope, ou null. */
+export function stageMaxSeverity(
+  stage: RouteLogicStage,
+): 'low' | 'medium' | 'high' | null {
+  const blockers = stage.accessibility_report?.blockers ?? [];
+  if (blockers.some((b) => b?.severity === 'high')) return 'high';
+  if (blockers.some((b) => b?.severity === 'medium')) return 'medium';
+  if (stage.accessible === false) return 'high';
+  if (stage.slope_warning === true) return 'medium';
   const w = `${stage.warning ?? ''}`.trim();
-  return w.length > 0;
+  if (w.length > 0) return 'medium';
+  if (blockers.some((b) => b?.severity === 'low')) return 'low';
+  return null;
+}
+
+export function stageNeedsAttention(stage: RouteLogicStage): boolean {
+  const sev = stageMaxSeverity(stage);
+  return sev === 'medium' || sev === 'high';
+}
+
+/** Razão principal (texto curto) p/ chip/badge no card; null quando não precisa. */
+export function stageAttentionReason(stage: RouteLogicStage): string | null {
+  const blockers = stage.accessibility_report?.blockers ?? [];
+  const high = blockers.find((b) => b?.severity === 'high');
+  const medium = blockers.find((b) => b?.severity === 'medium');
+  if (high) return blockerHumanLabel(high) ?? high.detail ?? 'Trecho com obstáculo grave';
+  if (medium) return blockerHumanLabel(medium) ?? medium.detail ?? 'Trecho exige atenção';
+  if (stage.slope_warning === true) return 'Inclinação acentuada';
+  const w = `${stage.warning ?? ''}`.trim();
+  if (w.length > 0) return w;
+  return null;
+}
+
+function blockerHumanLabel(b: RouteLogicBlocker): string | null {
+  switch (b.type) {
+    case 'stairs_or_steps':
+      return 'Escadas/degraus mapeados';
+    case 'excessive_slope':
+      return 'Inclinação acentuada';
+    case 'missing_geometry':
+      return 'Sem dados suficientes do trecho';
+    case 'rough_surface':
+      return 'Calçada ou caminho irregular';
+    case 'ors_no_wheelchair_route':
+      return 'Rota cadeira não encontrada';
+    case 'ors_wheelchair_detour':
+      return 'Rota cadeira com desvio longo';
+    case 'transit_not_wheelchair':
+      return 'Transporte não acessível';
+    case 'missing_curb_ramp':
+      return 'Sem rampa de meio-fio';
+    case 'vision_or_llm_warning':
+      return 'Possível obstáculo na imagem';
+    default:
+      return null;
+  }
 }
 
 export function isCalmRoute(route: RouteLogicItem): boolean {
@@ -202,21 +270,60 @@ export function isCalmRoute(route: RouteLogicItem): boolean {
   return !stages.some((s) => stageNeedsAttention(s) || s.accessible === false);
 }
 
+/** True quando a rota merece badge "atenção" no card. */
+export function routeNeedsAttention(route: RouteLogicItem): boolean {
+  if (route.accessible === false) return true;
+  if (route.slope_warning === true) return true;
+  const stages = route.stages ?? [];
+  return stages.some((s) => stageNeedsAttention(s));
+}
+
+/** Razão principal para a rota inteira (do estágio mais severo). */
+export function routeAttentionReason(route: RouteLogicItem): string | null {
+  const stages = route.stages ?? [];
+  let bestSev: 'low' | 'medium' | 'high' | null = null;
+  let bestStage: RouteLogicStage | null = null;
+  for (const s of stages) {
+    const sev = stageMaxSeverity(s);
+    if (!sev) continue;
+    if (sev === 'high') {
+      bestSev = 'high';
+      bestStage = s;
+      break;
+    }
+    if (sev === 'medium' && bestSev !== 'medium') {
+      bestSev = 'medium';
+      bestStage = s;
+    } else if (sev === 'low' && !bestSev) {
+      bestSev = 'low';
+      bestStage = s;
+    }
+  }
+  if (!bestStage) {
+    if (route.slope_warning === true) return 'Trajeto com inclinação';
+    if (route.accessible === false) return 'Trajeto com obstáculos';
+    return null;
+  }
+  return stageAttentionReason(bestStage);
+}
+
 export function routeIncidentCount(route: RouteLogicItem): number {
   const stages = route.stages ?? [];
   let incidents = route.slope_warning === true ? 1 : 0;
   for (const stage of stages) {
-    if (stage.slope_warning === true) incidents += 1;
     if (stageNeedsAttention(stage)) incidents += 1;
   }
   return incidents;
 }
 
 export function routeMatchesCompanionTab(route: RouteLogicItem, tab: CompanionTab): boolean {
-  if (route.accessible === false) return false;
-  const incidents = routeIncidentCount(route);
-  if (tab === 'alone') {
-    return incidents === 0 && isCalmRoute(route);
+  const sp = route.search_profile;
+  if (sp === 'alone' || sp === 'companied') {
+    return sp === tab;
   }
-  return incidents <= 2;
+  if (tab === 'alone') {
+    if (route.accessible === false) return false;
+    return !routeNeedsAttention(route);
+  }
+  return true;
 }

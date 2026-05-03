@@ -2,7 +2,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Fragment, useCallback, useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { ACTIVE_MOCK_WEATHER } from '../mocks';
-import { fetchDiverseRoutes } from '../services/fetch-diverse-routes';
+import {
+  fetchDiverseRoutes,
+  type DiverseRoutesPayload,
+} from '../services/fetch-diverse-routes';
 import { getUserInfo } from '../services/token.service';
 import * as Location from 'expo-location';
 import {
@@ -30,6 +33,7 @@ import {
   formatUnixToLocalClock,
   isClock,
   isWalkStageMode,
+  routeAttentionReason,
   minutesUntilClock,
   normalizeDepartureMinutes,
   normalizeStageMode,
@@ -89,6 +93,8 @@ type RouteItem = {
   stages?: Stage[];
   /** Definido pela API conforme a busca (sozinho vs acompanhado). */
   search_profile?: 'alone' | 'companied';
+  /** 0–100 da API: maior = mais acessível. */
+  accessibility_score?: number;
 };
 
 type TimeFilterOption = {
@@ -194,10 +200,16 @@ function shouldPreviewRainForDestination(destination: string): boolean {
   return normalizeDestMatch(destination).includes('ibituruna');
 }
 
+/** Pré-visualização de chuva no cenário de demo Ibituruna — só ativa com EXPO_PUBLIC_DEMO_MODE. */
+const DEMO_MODE_ENABLED = ['1', 'true', 'yes'].includes(
+  `${process.env.EXPO_PUBLIC_DEMO_MODE ?? ''}`.toLowerCase(),
+);
+
 function withPreviewWeatherIfNeeded(
   routesList: RouteItem[],
   destination: string,
 ): RouteItem[] {
+  if (!DEMO_MODE_ENABLED) return routesList;
   if (!shouldPreviewRainForDestination(destination)) return routesList;
   const rain = ACTIVE_MOCK_WEATHER.rain;
   return routesList.map((r) => ({
@@ -512,7 +524,7 @@ export default function RouteResultsScreen() {
   const [activeOriginCoord, setActiveOriginCoord] = useState<LatLng | null>(null);
   const [activeDestCoord, setActiveDestCoord] = useState<LatLng | null>(null);
   const [activeCompanionTab, setActiveCompanionTab] = useState<CompanionTab>('alone');
-  const [fetchedRoutes, setFetchedRoutes] = useState<RouteItem[] | null>(null);
+  const [fetchedSplit, setFetchedSplit] = useState<DiverseRoutesPayload | null>(null);
   const [activeSearchField, setActiveSearchField] = useState<SearchField | null>(null);
   const [placeSuggestions, setPlaceSuggestions] = useState<PlaceSuggestion[]>([]);
   const [selectedTimeFilter, setSelectedTimeFilter] = useState<TimeFilterOption>(TIME_FILTER_OPTIONS[0]);
@@ -536,7 +548,7 @@ export default function RouteResultsScreen() {
     setMiddleStop(null);
     setActiveOriginCoord(originCoordParam);
     setActiveDestCoord(destCoordParam);
-    setFetchedRoutes(null);
+    setFetchedSplit(null);
     setShowTimeFilterList(false);
     setForcedServerResults(false);
     setSelectedTimeFilter(TIME_FILTER_OPTIONS[0]);
@@ -559,25 +571,25 @@ export default function RouteResultsScreen() {
       try {
         const { userId } = await getUserInfo();
         if (typeof userId !== 'number' || Number.isNaN(userId) || cancelled) {
-          if (!cancelled) setFetchedRoutes([]);
+          if (!cancelled) setFetchedSplit({ alone: [], companied: [] });
           return;
         }
         const originQuery = originFromParams.trim() || 'Local atual';
-        const list = await fetchDiverseRoutes(
+        const payload = await fetchDiverseRoutes(
           originQuery,
           dest,
           userId,
-          activeCompanionTab === 'alone' ? 'alone' : 'companied',
+          undefined,
           selectedTimeFilter.key,
           selectedTimeFilter.timeValue,
           selectedRoutePreference,
         );
         if (!cancelled) {
-          setFetchedRoutes(list as RouteItem[]);
+          setFetchedSplit(payload);
           setMiddleStop(null);
         }
       } catch {
-        if (!cancelled) setFetchedRoutes([]);
+        if (!cancelled) setFetchedSplit({ alone: [], companied: [] });
       }
     })();
     return () => {
@@ -587,7 +599,6 @@ export default function RouteResultsScreen() {
     destinationFromParams,
     originFromParams,
     params.routes,
-    activeCompanionTab,
     selectedTimeFilter,
     selectedRoutePreference,
   ]);
@@ -641,12 +652,25 @@ export default function RouteResultsScreen() {
     let cancelled = false;
     const timeoutId = setTimeout(async () => {
       try {
-        const url =
+        const biasCoord =
+          activeSearchField === 'waypoint' && activeOriginCoord && activeDestCoord
+            ? {
+                lat: (activeOriginCoord.lat + activeDestCoord.lat) / 2,
+                lng: (activeOriginCoord.lng + activeDestCoord.lng) / 2,
+              }
+            : activeSearchField === 'origin'
+              ? activeOriginCoord ?? activeDestCoord
+              : activeDestCoord ?? activeOriginCoord;
+        let url =
           'https://maps.googleapis.com/maps/api/place/autocomplete/json' +
           `?input=${encodeURIComponent(query)}` +
           '&language=pt-BR' +
           '&types=geocode' +
-          `&key=${encodeURIComponent(key)}`;
+          '&region=br';
+        if (biasCoord) {
+          url += `&location=${biasCoord.lat},${biasCoord.lng}&radius=100000`;
+        }
+        url += `&key=${encodeURIComponent(key)}`;
         const res = await fetch(url);
         const json = (await res.json()) as {
           predictions?: { description?: string; place_id?: string }[];
@@ -668,7 +692,14 @@ export default function RouteResultsScreen() {
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [activeSearchField, headerOrigin, middleStop, headerDestination]);
+  }, [
+    activeSearchField,
+    headerOrigin,
+    middleStop,
+    headerDestination,
+    activeOriginCoord,
+    activeDestCoord,
+  ]);
 
   const handleSwapLocations = () => {
     setHeaderOrigin(headerDestination);
@@ -700,24 +731,24 @@ export default function RouteResultsScreen() {
     try {
       const { userId } = await getUserInfo();
       if (typeof userId !== 'number' || Number.isNaN(userId)) {
-        setFetchedRoutes([]);
+        setFetchedSplit({ alone: [], companied: [] });
         return;
       }
       const originQuery = headerOrigin.trim() || 'Local atual';
-      const list = await fetchDiverseRoutes(
+      const payload = await fetchDiverseRoutes(
         originQuery,
         destinationQuery,
         userId,
-        activeCompanionTab === 'alone' ? 'alone' : 'companied',
+        undefined,
         nextTimeOption.key,
         nextTimeOption.timeValue,
         nextRoutePreference,
       );
-      setFetchedRoutes(list as RouteItem[]);
+      setFetchedSplit(payload);
       setForcedServerResults(true);
       setMiddleStop(null);
     } catch {
-      setFetchedRoutes([]);
+      setFetchedSplit({ alone: [], companied: [] });
       setForcedServerResults(true);
     }
   };
@@ -776,7 +807,9 @@ export default function RouteResultsScreen() {
   }, [params.routes]);
 
   const routes = useMemo(() => {
-    if (forcedServerResults) return fetchedRoutes ?? [];
+    if (forcedServerResults && fetchedSplit) {
+      return (activeCompanionTab === 'alone' ? fetchedSplit.alone : fetchedSplit.companied) as RouteItem[];
+    }
     if (packagedRoutesByTab) {
       return activeCompanionTab === 'alone'
         ? packagedRoutesByTab.alone
@@ -790,10 +823,13 @@ export default function RouteResultsScreen() {
         // ignora JSON inválido em routes
       }
     }
-    return fetchedRoutes ?? [];
-  }, [forcedServerResults, packagedRoutesByTab, activeCompanionTab, params.routes, fetchedRoutes]);
+    if (fetchedSplit) {
+      return (activeCompanionTab === 'alone' ? fetchedSplit.alone : fetchedSplit.companied) as RouteItem[];
+    }
+    return [];
+  }, [forcedServerResults, packagedRoutesByTab, activeCompanionTab, params.routes, fetchedSplit]);
 
-  const showRouteResults = hasPackagedRoutes || fetchedRoutes !== null || forcedServerResults;
+  const showRouteResults = hasPackagedRoutes || fetchedSplit !== null || forcedServerResults;
 
   const filteredRoutes = useMemo(() => {
     const calmRoutes = (routes as RouteItem[]).filter((route) => {
@@ -1200,31 +1236,49 @@ export default function RouteResultsScreen() {
                   </Text>
                 </View>
               )}
-              {hasAttentionSegments && (
-                <TouchableOpacity
-                  onPress={() =>
-                    Alert.alert(
-                      'Atenção neste trajeto',
-                      route.warning ??
-                        route.accompanied_warning ??
-                        'Este trajeto contém trechos que requerem atenção.',
-                    )
-                  }
+              {hasAttentionSegments && (() => {
+                const reason =
+                  routeAttentionReason(route as RouteItem) ??
+                  route.warning ??
+                  route.accompanied_warning ??
+                  'Este trajeto contém trechos que requerem atenção.';
+                return (
+                  <TouchableOpacity
+                    onPress={() => Alert.alert('Atenção neste trajeto', reason)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 4,
+                      backgroundColor: '#FEF3C7',
+                      borderRadius: 20,
+                      paddingHorizontal: 10,
+                      paddingVertical: 4,
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Atenção: ${reason}`}
+                  >
+                    <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#D97706' }} />
+                    <Text style={{ fontSize: 11, fontWeight: '500', color: '#92400E' }}>Atenção</Text>
+                  </TouchableOpacity>
+                );
+              })()}
+              {typeof route.accessibility_score === 'number' && (
+                <View
                   style={{
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 4,
-                    backgroundColor: '#FEF3C7',
+                    backgroundColor: '#EEF2FF',
                     borderRadius: 20,
                     paddingHorizontal: 10,
                     paddingVertical: 4,
                   }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Atenção neste trajeto. Toque para detalhes"
+                  accessibilityLabel={`Acessibilidade ${Math.round(route.accessibility_score)} de 100`}
                 >
-                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#D97706' }} />
-                  <Text style={{ fontSize: 11, fontWeight: '500', color: '#92400E' }}>Atenção</Text>
-                </TouchableOpacity>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#3730A3' }}>
+                    {Math.round(route.accessibility_score)}/100
+                  </Text>
+                </View>
               )}
               {rainChip && (
                 <View

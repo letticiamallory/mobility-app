@@ -7,13 +7,17 @@ import {
   minutesUntilClock,
   normalizeDepartureMinutes,
   normalizeStageMode,
+  routeAttentionReason,
   routeCompanionAudience,
   routeDurationMinutes,
   routeIncidentCount,
   routeMatchesCompanionTab,
+  routeNeedsAttention,
   routeSignature,
   routeTransportFamily,
+  stageAttentionReason,
   stageDurationMinutes,
+  stageMaxSeverity,
   stageNeedsAttention,
 } from '../route-results-logic';
 
@@ -129,9 +133,16 @@ describe('routeCompanionAudience — perfil e heurísticas', () => {
 });
 
 describe('routeMatchesCompanionTab — acessibilidade e incidentes', () => {
-  it('bloqueia rota inacessível em qualquer aba', () => {
+  it('search_profile da API fixa a aba (listas já particionadas)', () => {
+    expect(routeMatchesCompanionTab({ search_profile: 'alone' }, 'alone')).toBe(true);
+    expect(routeMatchesCompanionTab({ search_profile: 'alone' }, 'companied')).toBe(false);
+    expect(routeMatchesCompanionTab({ search_profile: 'companied' }, 'companied')).toBe(true);
+    expect(routeMatchesCompanionTab({ search_profile: 'companied' }, 'alone')).toBe(false);
+  });
+
+  it('bloqueia rota inacessível só em sozinho; acompanhado exibe para orientação', () => {
     expect(routeMatchesCompanionTab({ accessible: false }, 'alone')).toBe(false);
-    expect(routeMatchesCompanionTab({ accessible: false }, 'companied')).toBe(false);
+    expect(routeMatchesCompanionTab({ accessible: false }, 'companied')).toBe(true);
   });
 
   it('sozinho exige 0 incidentes e rota calma', () => {
@@ -156,7 +167,7 @@ describe('routeMatchesCompanionTab — acessibilidade e incidentes', () => {
     ).toBe(true);
   });
 
-  it('acompanhado rejeita >2 incidentes', () => {
+  it('acompanhado aceita muitos incidentes (rotas longas com vários trechos)', () => {
     expect(
       routeMatchesCompanionTab(
         {
@@ -166,7 +177,7 @@ describe('routeMatchesCompanionTab — acessibilidade e incidentes', () => {
         },
         'companied',
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
@@ -208,8 +219,84 @@ describe('relógio e espera', () => {
 });
 
 describe('isWalkStageMode', () => {
-  it('só walk/walking', () => {
-    expect(isWalkStageMode('foot')).toBe(false);
+  it('aceita walk, walking e foot (alinhado ao backend)', () => {
+    expect(isWalkStageMode('foot')).toBe(true);
+    expect(isWalkStageMode('Foot')).toBe(true);
     expect(isWalkStageMode('WALKING')).toBe(true);
+    expect(isWalkStageMode('walk')).toBe(true);
+    expect(isWalkStageMode('bus')).toBe(false);
+  });
+});
+
+describe('stageMaxSeverity / stageAttentionReason / stageNeedsAttention', () => {
+  it('high é detectado em accessibility_report.blockers', () => {
+    const stage = {
+      mode: 'walk',
+      accessibility_report: {
+        confidence: 'high' as const,
+        blockers: [{ type: 'stairs_or_steps', severity: 'high' as const }],
+      },
+    };
+    expect(stageMaxSeverity(stage)).toBe('high');
+    expect(stageNeedsAttention(stage)).toBe(true);
+    expect(stageAttentionReason(stage)).toBe('Escadas/degraus mapeados');
+  });
+
+  it('warning textual sem blocker estruturado vira medium', () => {
+    const stage = { mode: 'walk', warning: 'Buraco na calçada' };
+    expect(stageMaxSeverity(stage)).toBe('medium');
+    expect(stageNeedsAttention(stage)).toBe(true);
+    expect(stageAttentionReason(stage)).toBe('Buraco na calçada');
+  });
+
+  it('apenas low (desvio ORS) não dispara aviso (atenção falsa)', () => {
+    const stage = {
+      mode: 'walk',
+      accessibility_report: {
+        confidence: 'high' as const,
+        blockers: [{ type: 'ors_wheelchair_detour', severity: 'low' as const }],
+      },
+    };
+    expect(stageMaxSeverity(stage)).toBe('low');
+    expect(stageNeedsAttention(stage)).toBe(false);
+  });
+});
+
+describe('routeNeedsAttention / routeAttentionReason', () => {
+  it('rota com bloqueador medium em qualquer estágio precisa de atenção', () => {
+    const route = {
+      stages: [
+        { mode: 'bus' },
+        {
+          mode: 'walk',
+          accessibility_report: {
+            confidence: 'medium' as const,
+            blockers: [{ type: 'rough_surface', severity: 'medium' as const }],
+          },
+        },
+      ],
+    };
+    expect(routeNeedsAttention(route)).toBe(true);
+    expect(routeAttentionReason(route)).toBe('Calçada ou caminho irregular');
+  });
+
+  it('rota limpa não precisa de atenção', () => {
+    const route = {
+      accessible: true,
+      slope_warning: false,
+      stages: [{ mode: 'walk' }, { mode: 'bus' }],
+    };
+    expect(routeNeedsAttention(route)).toBe(false);
+    expect(routeAttentionReason(route)).toBeNull();
+  });
+});
+
+describe('routeIncidentCount — sem dupla contagem', () => {
+  it('walk com slope_warning conta 1, não 2', () => {
+    expect(
+      routeIncidentCount({
+        stages: [{ mode: 'walk', slope_warning: true }],
+      }),
+    ).toBe(1);
   });
 });
