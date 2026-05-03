@@ -65,6 +65,8 @@ type RouteItem = {
     rain?: number;
   } | null;
   stages?: Stage[];
+  /** Definido pela API conforme a busca (sozinho vs acompanhado). */
+  search_profile?: 'alone' | 'companied';
 };
 
 type TimeFilterOption = {
@@ -450,6 +452,9 @@ type PlaceSuggestion = { description: string; placeId: string };
 type PackagedRoutesByTab = { alone: RouteItem[]; companied: RouteItem[] };
 
 function routeCompanionAudience(route: RouteItem): 'alone' | 'companied' | 'both' | null {
+  const sp = route.search_profile;
+  if (sp === 'alone') return 'alone';
+  if (sp === 'companied') return 'companied';
   const rawValues = [
     route.accompanied,
     route.companion_mode,
