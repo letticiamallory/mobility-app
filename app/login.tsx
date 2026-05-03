@@ -1,5 +1,3 @@
-import * as Google from 'expo-auth-session/providers/google';
-import * as WebBrowser from 'expo-web-browser';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -22,14 +20,10 @@ import {
 } from '@/contexts/accessibility-preferences';
 import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { GoogleAuthErrorBoundary, GoogleLoginSection } from '@/components/GoogleLoginSection';
 import { login } from '../services/auth.service';
 import { API_URL } from '../constants/api';
-import {
-  GOOGLE_WEB_CLIENT_ID,
-  googlePayloadFromIdToken,
-  isExpoGo,
-  signInWithGoogleNative,
-} from '../services/google-auth.service';
+import { isGoogleLoginEnabled } from '../services/google-auth.service';
 import {
   clearAllMobilityStorage,
   getRememberMe,
@@ -38,8 +32,6 @@ import {
   saveToken,
   saveUserInfo,
 } from '../services/token.service';
-
-WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen() {
   return (
@@ -55,27 +47,13 @@ function LoginScreenInner() {
   const sx = useAccessibilitySurfaces();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loadingEmail, setLoadingEmail] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const router = useRouter();
   const dot1 = useRef(new Animated.Value(0.3)).current;
   const dot2 = useRef(new Animated.Value(0.3)).current;
   const dot3 = useRef(new Animated.Value(0.3)).current;
-
-  const [googleRequest, , googlePromptAsync] = Google.useIdTokenAuthRequest({
-    webClientId: GOOGLE_WEB_CLIENT_ID,
-    clientId: GOOGLE_WEB_CLIENT_ID,
-  });
-
-  useEffect(() => {
-    if (__DEV__ && googleRequest && isExpoGo()) {
-      console.log(
-        '[Google / Expo Go] Cadastre esta URL em Google Cloud → OAuth Web client → Authorized redirect URIs:',
-        googleRequest.redirectUri
-      );
-    }
-  }, [googleRequest]);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,7 +98,7 @@ function LoginScreenInner() {
     }
 
     try {
-      setLoading(true);
+      setLoadingEmail(true);
       if (__DEV__) {
         console.log('[login/email] Antes da API', { email: emailTrimmed, apiUrl: API_URL });
       }
@@ -142,74 +120,7 @@ function LoginScreenInner() {
         error instanceof Error ? error.message : 'Não foi possível entrar. Tente de novo.';
       Alert.alert('Erro', message);
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    try {
-      setLoading(true);
-      let googleData: {
-        email: string;
-        name: string;
-        googleId: string;
-        token: string;
-      };
-
-      if (isExpoGo()) {
-        if (!googleRequest) {
-          throw new Error('Login Google ainda não está pronto. Tente de novo em um instante.');
-        }
-        const result = await googlePromptAsync();
-        if (result.type === 'cancel' || result.type === 'dismiss') return;
-        if (result.type !== 'success') {
-          const err =
-            result.type === 'error'
-              ? String(result.params?.error_description ?? result.error ?? 'Falha no login Google')
-              : 'Falha no login Google';
-          throw new Error(err);
-        }
-        const idToken =
-          result.params.id_token ?? result.authentication?.idToken ?? '';
-        if (!idToken) {
-          throw new Error(
-            'Não foi possível obter o token do Google. Verifique o redirect URI no Google Cloud Console (veja o log [Google / Expo Go]).'
-          );
-        }
-        googleData = googlePayloadFromIdToken(idToken);
-      } else {
-        googleData = await signInWithGoogleNative();
-      }
-
-      if (!googleData.email || !googleData.googleId || !googleData.token) {
-        throw new Error('Não foi possível obter os dados da conta Google.');
-      }
-
-      const response = await fetch(`${API_URL}/auth/google`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(googleData),
-      });
-
-      const data = (await response.json()) as {
-        access_token?: string;
-        user_id?: number;
-        name?: string;
-        message?: string;
-      };
-      if (!response.ok) throw new Error(data.message ?? 'Falha no login com Google');
-      if (!data.access_token || !data.user_id || !data.name) {
-        throw new Error('Resposta inválida no login com Google.');
-      }
-
-      await saveRememberMe(true);
-      await saveToken(data.access_token);
-      await saveUserInfo(data.user_id, data.name, googleData.email);
-      router.replace('/home');
-    } catch (error: any) {
-      Alert.alert('Erro', error.message);
-    } finally {
-      setLoading(false);
+      setLoadingEmail(false);
     }
   };
 
@@ -317,14 +228,14 @@ function LoginScreenInner() {
               </View>
 
               <TouchableOpacity
-                style={[styles.button, loading && styles.buttonDisabled]}
+                style={[styles.button, loadingEmail && styles.buttonDisabled]}
                 onPress={handleLogin}
-                disabled={loading}
+                disabled={loadingEmail}
                 accessibilityRole="button"
-                accessibilityLabel={loading ? 'Entrando' : 'Entrar'}
-                accessibilityState={{ disabled: loading }}
+                accessibilityLabel={loadingEmail ? 'Entrando' : 'Entrar'}
+                accessibilityState={{ disabled: loadingEmail }}
               >
-                <Text style={styles.buttonText}>{loading ? 'Entrando...' : 'Entrar'}</Text>
+                <Text style={styles.buttonText}>{loadingEmail ? 'Entrando...' : 'Entrar'}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -339,32 +250,11 @@ function LoginScreenInner() {
                 </Text>
               </TouchableOpacity>
 
-              <View style={styles.dividerRow}>
-                <View style={styles.dividerLine} />
-                <View style={styles.withCircle}>
-                  <Text style={styles.withText}>Com</Text>
-                </View>
-                <View style={styles.dividerLine} />
-              </View>
-
-              <TouchableOpacity
-                activeOpacity={0.85}
-                style={[
-                  styles.googleSignInButton,
-                  (loading || (isExpoGo() && !googleRequest)) && styles.googleSignInButtonDisabled,
-                ]}
-                onPress={handleGoogleLogin}
-                disabled={loading || (isExpoGo() && !googleRequest)}
-                accessibilityRole="button"
-                accessibilityLabel="Conectar-se com o Google"
-              >
-                <Image
-                  source={{ uri: 'https://www.gstatic.com/images/branding/product/1x/googleg_48dp.png' }}
-                  style={styles.googleSignInIcon}
-                  resizeMode="contain"
-                />
-                <Text style={styles.googleSignInLabel}>Conectar-se com o Google</Text>
-              </TouchableOpacity>
+              {isGoogleLoginEnabled() ? (
+                <GoogleAuthErrorBoundary>
+                  <GoogleLoginSection />
+                </GoogleAuthErrorBoundary>
+              ) : null}
 
               <Text style={styles.termsText}>
                 Ao entrar, você concorda com os termos{'\n'}e condições.
@@ -533,64 +423,12 @@ const styles = StyleSheet.create({
     color: '#0057A8',
     fontWeight: '600',
   },
-  dividerRow: {
-    marginTop: 24,
-    marginBottom: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
-    width: '100%',
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#E0E0E0',
-  },
-  withCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    borderWidth: 1,
-    borderColor: '#1E1D1D',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 10,
-  },
-  withText: { color: '#1E1D1D', fontSize: 20 * 0.6 },
-  /** Padrão alinhado às diretrizes “Sign in with Google” (fundo claro, G colorido, texto localizado). */
-  googleSignInButton: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 52,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 26,
-    borderWidth: 1,
-    borderColor: '#747775',
-    backgroundColor: '#FFFFFF',
-    marginBottom: 24,
-    gap: 12,
-  },
-  googleSignInButtonDisabled: {
-    opacity: 0.55,
-  },
-  googleSignInIcon: {
-    width: 20,
-    height: 20,
-  },
-  googleSignInLabel: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#1F1F1F',
-    letterSpacing: 0.15,
-  },
   termsText: {
     color: '#1E1D1D',
     fontSize: 28 * 0.45,
     textAlign: 'center',
     lineHeight: 20,
-    marginTop: -12,
+    marginTop: 20,
     marginBottom: 32,
   },
   title: {

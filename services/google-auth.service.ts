@@ -1,5 +1,19 @@
 import Constants from 'expo-constants';
 
+/**
+ * Google na tela de login só aparece quando esta variável está explicitamente ativa
+ * (`1`, `true`, `on`, `yes`). Assim email/senha contra o backend não depende de OAuth nem de hooks do Google.
+ */
+export function isGoogleLoginEnabled(): boolean {
+  const raw =
+    typeof process !== 'undefined' && process.env.EXPO_PUBLIC_ENABLE_GOOGLE_LOGIN
+      ? String(process.env.EXPO_PUBLIC_ENABLE_GOOGLE_LOGIN).trim().toLowerCase()
+      : '';
+  if (!raw) return false;
+  if (raw === '0' || raw === 'false' || raw === 'off' || raw === 'no') return false;
+  return raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes';
+}
+
 export const GOOGLE_WEB_CLIENT_ID =
   (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
     ? String(process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID).trim()
