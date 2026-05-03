@@ -1,3 +1,4 @@
+import { routeSignature } from '../utils/route-results-logic';
 import { searchRoutes } from './routes.service';
 
 const DEFAULT_TRANSPORT_TYPE = 'bus';
@@ -12,28 +13,6 @@ export type FetchedRouteItem = {
   accessible?: boolean;
   [key: string]: unknown;
 };
-
-function normalizeStageMode(mode?: string): 'walk' | 'bus' | 'subway' | 'other' {
-  const m = `${mode ?? ''}`.toLowerCase();
-  if (m === 'walk' || m === 'walking' || m === 'foot') return 'walk';
-  if (m.includes('metro') || m.includes('subway') || m === 'rail') return 'subway';
-  if (m.includes('bus') || m.includes('onibus')) return 'bus';
-  return 'other';
-}
-
-function routeSignature(route: FetchedRouteItem): string {
-  const modes = (route.stages ?? [])
-    .map((s) => {
-      const mode = normalizeStageMode(s.mode);
-      const line = `${s.line_code ?? ''}`.trim().toLowerCase();
-      const stop = `${s.stop_name ?? ''}`.trim().toLowerCase();
-      return `${mode}:${line}:${stop}`;
-    })
-    .join('|');
-  const duration = `${route.total_duration ?? route.totalDuration ?? route.totalTime ?? ''}`.trim().toLowerCase();
-  const distance = `${route.total_distance ?? ''}`.trim().toLowerCase();
-  return `${duration}::${distance}::${modes}`;
-}
 
 export async function fetchDiverseRoutes(
   originQuery: string,

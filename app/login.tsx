@@ -42,7 +42,8 @@ export default function LoginScreen() {
   );
 }
 
-function LoginScreenInner() {
+/** Exportado para testes (RTL). */
+export function LoginScreenInner() {
   const { highContrast, colors } = useAccessibilityPreferences();
   const sx = useAccessibilitySurfaces();
   const [email, setEmail] = useState('');

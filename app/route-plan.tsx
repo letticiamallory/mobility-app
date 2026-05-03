@@ -3,6 +3,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  InteractionManager,
   Modal,
   Platform,
   ScrollView,
@@ -25,11 +26,34 @@ const PRIMARY = '#0057A8';
 const BG = '#F5F5F5';
 const CARD = '#FFFFFF';
 const BORDER = '#E5E7EB';
-const MUTED = '#6B7280';
 const TITLE = '#111827';
 const LINE = '#94A3B8';
 
 const MAP_FALLBACK = { latitude: -16.7167, longitude: -43.8647 };
+
+/** Debounce para não disparar várias pré-buscas ao trocar texto/coords rapidamente. */
+const PREFETCH_DEBOUNCE_MS = 450;
+
+type PackagedRoutesPayload = { alone: unknown[]; companied: unknown[] };
+
+function routesPayloadCacheKey(userId: number, origin: string, destination: string): string {
+  return `${userId}\u001f${origin.trim()}\u001f${destination.trim()}`;
+}
+
+async function fetchPackagedRoutes(
+  origin: string,
+  destination: string,
+  userId: number,
+): Promise<PackagedRoutesPayload> {
+  const [aloneResult, companiedResult] = await Promise.allSettled([
+    fetchDiverseRoutes(origin, destination, userId, 'alone'),
+    fetchDiverseRoutes(origin, destination, userId, 'companied'),
+  ]);
+  return {
+    alone: aloneResult.status === 'fulfilled' ? (aloneResult.value as unknown[]) : [],
+    companied: companiedResult.status === 'fulfilled' ? (companiedResult.value as unknown[]) : [],
+  };
+}
 
 function paramOne(v: string | string[] | undefined): string {
   if (v == null) return '';
@@ -89,11 +113,17 @@ export default function RoutePlanScreen() {
   const destLngParam = parseCoord(paramOne(params.destLng));
 
   const mapRef = useRef<MapView>(null);
+  const routesCacheRef = useRef<{ key: string; data: PackagedRoutesPayload } | null>(null);
+  const prefetchGenerationRef = useRef(0);
+  const inflightRoutesByKeyRef = useRef<Map<string, Promise<PackagedRoutesPayload>>>(new Map());
   const [originLabel, setOriginLabel] = useState(originParam);
   const [destLabel, setDestLabel] = useState(destinationParam);
   const [originCoord, setOriginCoord] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [destCoord, setDestCoord] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [destCoord, setDestCoord] = useState<{ latitude: number; longitude: number } | null>(() =>
+    destLatParam != null && destLngParam != null
+      ? { latitude: destLatParam, longitude: destLngParam }
+      : null,
+  );
   const [loadError, setLoadError] = useState<string | null>(null);
   const [findRoutesLoading, setFindRoutesLoading] = useState(false);
   const [accessibilityPoints, setAccessibilityPoints] = useState<any[]>([]);
@@ -104,6 +134,7 @@ export default function RoutePlanScreen() {
   const fitBoth = useCallback(() => {
     const o = originCoord;
     const d = destCoord;
+    const destAnchor = d ?? MAP_FALLBACK;
     if (!mapRef.current) return;
     if (o && d) {
       mapRef.current.fitToCoordinates([o, d], {
@@ -112,81 +143,89 @@ export default function RoutePlanScreen() {
       });
       return;
     }
-    const c = d ?? o;
-    if (c) {
-      mapRef.current.animateToRegion(
-        {
-          latitude: c.latitude,
-          longitude: c.longitude,
-          latitudeDelta: 0.06,
-          longitudeDelta: 0.06,
-        },
-        280,
-      );
+    if (o && !d) {
+      mapRef.current.fitToCoordinates([o, destAnchor], {
+        edgePadding: { top: 56, right: 48, bottom: 48, left: 48 },
+        animated: true,
+      });
+      return;
     }
+    mapRef.current.animateToRegion(
+      {
+        latitude: destAnchor.latitude,
+        longitude: destAnchor.longitude,
+        latitudeDelta: 0.06,
+        longitudeDelta: 0.06,
+      },
+      220,
+    );
   }, [originCoord, destCoord]);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setLoadError(null);
 
-    (async () => {
-      const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
+    if (!destinationParam.trim()) {
+      setLoadError('Destino inválido.');
+      return;
+    }
 
-      if (!destinationParam) {
-        if (!cancelled) {
-          setLoadError('Destino inválido.');
-          setLoading(false);
-        }
+    setDestLabel(destinationParam);
+    if (originParam) setOriginLabel(originParam);
+
+    const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
+
+    void (async () => {
+      if (destLatParam != null && destLngParam != null) {
+        if (!cancelled) setDestCoord({ latitude: destLatParam, longitude: destLngParam });
         return;
       }
-
-      setDestLabel(destinationParam);
-
-      let nextDest: { latitude: number; longitude: number } | null = null;
-      if (destLatParam != null && destLngParam != null) {
-        nextDest = { latitude: destLatParam, longitude: destLngParam };
-      } else if (key) {
-        nextDest = await geocodeAddress(destinationParam, key);
-      }
+      if (!cancelled) setDestCoord(null);
+      const nextDest = key ? await geocodeAddress(destinationParam, key) : null;
       if (cancelled) return;
-      if (!nextDest) {
-        nextDest = { latitude: MAP_FALLBACK.latitude, longitude: MAP_FALLBACK.longitude };
-        if (!destLatParam && !key) {
+      if (nextDest) {
+        setDestCoord(nextDest);
+      } else {
+        setDestCoord({ latitude: MAP_FALLBACK.latitude, longitude: MAP_FALLBACK.longitude });
+        if (!key) {
           setLoadError('Não foi possível localizar o destino no mapa.');
         }
       }
-      setDestCoord(nextDest);
+    })();
 
-      if (originParam) {
-        setOriginLabel(originParam);
-      }
-
+    void (async () => {
       try {
         const perm = await Location.requestForegroundPermissionsAsync();
+        if (cancelled) return;
         if (perm.status !== 'granted') {
-          if (!cancelled) {
-            if (!originParam) setOriginLabel('Local atual');
-            setOriginCoord(null);
-          }
-        } else {
-          const pos = await Location.getCurrentPositionAsync({});
-          const o = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-          if (cancelled) return;
-          setOriginCoord(o);
-          if (!originParam) {
+          if (!originParam) setOriginLabel('Local atual');
+          setOriginCoord(null);
+          return;
+        }
+        const last = await Location.getLastKnownPositionAsync({
+          maxAge: 5 * 60 * 1000,
+        });
+        const pos =
+          last ??
+          (await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Low,
+          }));
+        if (cancelled) return;
+        const o = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+        setOriginCoord(o);
+        if (!originParam) {
+          try {
             const rev = await Location.reverseGeocodeAsync({
               latitude: o.latitude,
               longitude: o.longitude,
             });
             if (!cancelled) setOriginLabel(formatGeocodeLabel(rev[0]));
+          } catch {
+            if (!cancelled) setOriginLabel('Local atual');
           }
         }
       } catch {
         if (!cancelled && !originParam) setOriginLabel('Local atual');
-      } finally {
-        if (!cancelled) setLoading(false);
       }
     })();
 
@@ -196,10 +235,56 @@ export default function RoutePlanScreen() {
   }, [destinationParam, destLatParam, destLngParam, originParam]);
 
   useEffect(() => {
-    if (loading) return;
-    const t = setTimeout(() => fitBoth(), 400);
+    const t = setTimeout(() => fitBoth(), 120);
     return () => clearTimeout(t);
-  }, [loading, fitBoth]);
+  }, [fitBoth]);
+
+  /** Pré-busca alone + companied emBackground quando O/D estão definidos — o botão reaproveita cache ou a mesma promise. */
+  useEffect(() => {
+    if (!originCoord || !destCoord) {
+      prefetchGenerationRef.current += 1;
+      routesCacheRef.current = null;
+      return;
+    }
+
+    const dest = destLabel.trim() || destinationParam.trim();
+    const orig = originLabel.trim() || 'Local atual';
+    if (!dest) {
+      return;
+    }
+
+    prefetchGenerationRef.current += 1;
+    const generation = prefetchGenerationRef.current;
+
+    const debounceId = setTimeout(() => {
+      void (async () => {
+        try {
+          const { userId } = await getUserInfo();
+          if (typeof userId !== 'number' || Number.isNaN(userId)) return;
+          if (generation !== prefetchGenerationRef.current) return;
+
+          const key = routesPayloadCacheKey(userId, orig, dest);
+          if (routesCacheRef.current?.key === key) return;
+
+          let promise = inflightRoutesByKeyRef.current.get(key);
+          if (!promise) {
+            promise = fetchPackagedRoutes(orig, dest, userId).finally(() => {
+              inflightRoutesByKeyRef.current.delete(key);
+            });
+            inflightRoutesByKeyRef.current.set(key, promise);
+          }
+
+          const data = await promise;
+          if (generation !== prefetchGenerationRef.current) return;
+          routesCacheRef.current = { key, data };
+        } catch {
+          // silencioso — rota ainda pode ser pedida no botão
+        }
+      })();
+    }, PREFETCH_DEBOUNCE_MS);
+
+    return () => clearTimeout(debounceId);
+  }, [originCoord, destCoord, originLabel, destLabel, destinationParam]);
 
   const canSwapCoords = !!(originCoord && destCoord);
 
@@ -240,23 +325,36 @@ export default function RoutePlanScreen() {
     const orig = originLabel.trim() || 'Local atual';
     if (!dest) return;
 
-    setFindRoutesLoading(true);
-    let packagedRoutes: { alone: unknown[]; companied: unknown[] } = { alone: [], companied: [] };
+    let packagedRoutes: PackagedRoutesPayload = { alone: [], companied: [] };
+
     try {
       const { userId } = await getUserInfo();
-      if (typeof userId === 'number' && !Number.isNaN(userId)) {
-        const [aloneResult, companiedResult] = await Promise.allSettled([
-          fetchDiverseRoutes(orig, dest, userId, 'alone'),
-          fetchDiverseRoutes(orig, dest, userId, 'companied'),
-        ]);
-        packagedRoutes = {
-          alone: aloneResult.status === 'fulfilled' ? (aloneResult.value as unknown[]) : [],
-          companied: companiedResult.status === 'fulfilled' ? (companiedResult.value as unknown[]) : [],
-        };
+      if (typeof userId !== 'number' || Number.isNaN(userId)) {
+        packagedRoutes = { alone: [], companied: [] };
+      } else {
+        const key = routesPayloadCacheKey(userId, orig, dest);
+
+        if (routesCacheRef.current?.key === key) {
+          packagedRoutes = routesCacheRef.current.data;
+        } else {
+          let promise = inflightRoutesByKeyRef.current.get(key);
+          if (!promise) {
+            promise = fetchPackagedRoutes(orig, dest, userId).finally(() => {
+              inflightRoutesByKeyRef.current.delete(key);
+            });
+            inflightRoutesByKeyRef.current.set(key, promise);
+          }
+          setFindRoutesLoading(true);
+          try {
+            packagedRoutes = await promise;
+            routesCacheRef.current = { key, data: packagedRoutes };
+          } finally {
+            setFindRoutesLoading(false);
+          }
+        }
       }
     } catch {
       packagedRoutes = { alone: [], companied: [] };
-    } finally {
       setFindRoutesLoading(false);
     }
 
@@ -309,44 +407,48 @@ export default function RoutePlanScreen() {
     const coord = mid?.points?.[0];
     if (!coord) return;
 
-    (async () => {
-      const token = await getToken();
-      fetch(`${API_URL}/accessibility/nearby?lat=${coord.latitude}&lng=${coord.longitude}`, {
-        headers: { Authorization: `Bearer ${token ?? ''}` },
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          const list = Array.isArray(data)
-            ? data
-            : Array.isArray((data as { data?: unknown })?.data)
-              ? ((data as { data: unknown[] }).data)
-              : [];
-          setAccessibilityPoints(list);
+    const task = InteractionManager.runAfterInteractions(() => {
+      void (async () => {
+        const token = await getToken();
+        fetch(`${API_URL}/accessibility/nearby?lat=${coord.latitude}&lng=${coord.longitude}`, {
+          headers: { Authorization: `Bearer ${token ?? ''}` },
         })
-        .catch(() => {});
+          .then((r) => r.json())
+          .then((data) => {
+            const list = Array.isArray(data)
+              ? data
+              : Array.isArray((data as { data?: unknown })?.data)
+                ? (data as { data: unknown[] }).data
+                : [];
+            setAccessibilityPoints(list);
+          })
+          .catch(() => {});
 
-      const googleUrl = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${coord.latitude},${coord.longitude}&radius=500&keyword=acessivel+rampa+cadeirante&key=${process.env.EXPO_PUBLIC_GOOGLE_API_KEY}`;
-      fetch(googleUrl)
-        .then((r) => r.json())
-        .then((data) => {
-          const rawResults = Array.isArray((data as { results?: unknown })?.results)
-            ? ((data as { results: unknown[] }).results)
-            : [];
-          const places = rawResults
-            .filter((p: any) => p.wheelchair_accessible_entrance === true || p.rating >= 4)
-            .map((p: any) => ({
-              id: p.place_id,
-              name: p.name,
-              lat: p.geometry.location.lat,
-              lng: p.geometry.location.lng,
-              rating: p.rating,
-              source: 'google',
-              wheelchair: p.wheelchair_accessible_entrance ? 'yes' : 'unknown',
-            }));
-          setGooglePlaces(places);
-        })
-        .catch(() => {});
-    })();
+        const googleUrl = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${coord.latitude},${coord.longitude}&radius=500&keyword=acessivel+rampa+cadeirante&key=${process.env.EXPO_PUBLIC_GOOGLE_API_KEY}`;
+        fetch(googleUrl)
+          .then((r) => r.json())
+          .then((data) => {
+            const rawResults = Array.isArray((data as { results?: unknown })?.results)
+              ? (data as { results: unknown[] }).results
+              : [];
+            const places = rawResults
+              .filter((p: any) => p.wheelchair_accessible_entrance === true || p.rating >= 4)
+              .map((p: any) => ({
+                id: p.place_id,
+                name: p.name,
+                lat: p.geometry.location.lat,
+                lng: p.geometry.location.lng,
+                rating: p.rating,
+                source: 'google',
+                wheelchair: p.wheelchair_accessible_entrance ? 'yes' : 'unknown',
+              }));
+            setGooglePlaces(places);
+          })
+          .catch(() => {});
+      })();
+    });
+
+    return () => task.cancel();
   }, [route]);
 
   const handleSelectPoint = async (point: any) => {
@@ -367,6 +469,8 @@ export default function RoutePlanScreen() {
 
   const originDisplay = originLabel.trim() || 'Local atual';
   const destDisplay = destLabel.trim() || destinationParam;
+  const hasDestination = destinationParam.trim().length > 0;
+  const mapRegionCenter = destCoord ?? MAP_FALLBACK;
 
   return (
     <SafeAreaView style={[styles.safe, sx.fillScreen]} edges={['top', 'left', 'right']}>
@@ -452,7 +556,7 @@ export default function RoutePlanScreen() {
       {loadError ? <Text style={styles.warn}>{loadError}</Text> : null}
 
       <View style={styles.mapWrap}>
-        {destCoord ? (
+        {hasDestination ? (
           <MapView
             ref={mapRef}
             style={StyleSheet.absoluteFill}
@@ -460,10 +564,11 @@ export default function RoutePlanScreen() {
             mapType="standard"
             showsUserLocation={false}
             showsMyLocationButton={false}
+            loadingEnabled={false}
             accessibilityLabel={`Mapa da rota de ${originDisplay} até ${destDisplay}`}
             initialRegion={{
-              latitude: destCoord.latitude,
-              longitude: destCoord.longitude,
+              latitude: mapRegionCenter.latitude,
+              longitude: mapRegionCenter.longitude,
               latitudeDelta: 0.08,
               longitudeDelta: 0.08,
             }}
@@ -474,9 +579,11 @@ export default function RoutePlanScreen() {
                 <View style={styles.originMarker} />
               </Marker>
             ) : null}
-            <Marker coordinate={destCoord} anchor={{ x: 0.5, y: 1 }}>
-              <MaterialCommunityIcons name="map-marker" size={36} color={PRIMARY} />
-            </Marker>
+            {destCoord ? (
+              <Marker coordinate={destCoord} anchor={{ x: 0.5, y: 1 }}>
+                <MaterialCommunityIcons name="map-marker" size={36} color={PRIMARY} />
+              </Marker>
+            ) : null}
             {accessibilityPoints.map((point: any) => (
               <Marker
                 key={`w_${point.id}`}
@@ -521,14 +628,9 @@ export default function RoutePlanScreen() {
               <Polyline coordinates={lineCoords} strokeColor={LINE} strokeWidth={4} />
             ) : null}
           </MapView>
-        ) : null}
-
-        {loading ? (
-          <View style={styles.mapLoading}>
-            <ActivityIndicator size="large" color={PRIMARY} />
-            <Text style={styles.mapLoadingText}>Preparando o mapa…</Text>
-          </View>
-        ) : null}
+        ) : (
+          <View style={[StyleSheet.absoluteFill, styles.mapPlaceholder]} />
+        )}
 
         <TouchableOpacity
           style={styles.recenter}
@@ -747,17 +849,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#E2E8F0',
   },
-  mapLoading: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(245,245,245,0.92)',
-  },
-  mapLoadingText: {
-    marginTop: 10,
-    fontSize: 14,
-    color: MUTED,
-    fontFamily: 'Agrandir-Regular',
+  mapPlaceholder: {
+    backgroundColor: '#E2E8F0',
   },
   recenter: {
     position: 'absolute',

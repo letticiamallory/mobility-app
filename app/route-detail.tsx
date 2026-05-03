@@ -35,6 +35,7 @@ export type RouteStage = {
   departureTime?: string;
   arrivalTime?: string;
   departure_minutes?: number | string | Array<number | string>;
+  transit_departure_unix?: number;
   accessible: boolean;
   warning?: string;
   street_view_image?: string;
@@ -416,6 +417,10 @@ function parseRouteParam(raw: string | string[] | undefined): SerializedRouteDet
           st.departure_minutes != null
             ? (st.departure_minutes as RouteStage['departure_minutes'])
             : undefined,
+        transit_departure_unix:
+          typeof st.transit_departure_unix === 'number'
+            ? st.transit_departure_unix
+            : undefined,
         accessible: st.accessible !== false,
         warning: st.warning != null ? String(st.warning) : undefined,
         slope_warning: st.slope_warning === true,
@@ -749,6 +754,11 @@ export default function RouteDetailScreen() {
     };
 
   const transitEtaMinutes = (stage: RouteStage) => {
+    const unix = stage.transit_departure_unix;
+    if (typeof unix === 'number' && Number.isFinite(unix)) {
+      const until = Math.max(0, Math.round((unix * 1000 - Date.now()) / 60000));
+      return `${Math.max(0, until - elapsedMinutes)}`;
+    }
     const apiMinutes = normalizeDepartureMinutes(stage.departure_minutes);
     if (typeof apiMinutes === 'number') {
       return `${Math.max(0, apiMinutes - elapsedMinutes)}`;

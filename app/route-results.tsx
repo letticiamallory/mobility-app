@@ -23,6 +23,26 @@ import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  addMinutesToClock,
+  formatClockFromNow,
+  formatClockNow,
+  formatUnixToLocalClock,
+  isClock,
+  isWalkStageMode,
+  minutesUntilClock,
+  normalizeDepartureMinutes,
+  normalizeStageMode,
+  routeCompanionAudience,
+  routeDurationMinutes,
+  routeIncidentCount,
+  routeMatchesCompanionTab,
+  routeSignature,
+  routeTransportFamily,
+  stageDurationMinutes,
+  stageNeedsAttention,
+  type CompanionTab,
+} from '../utils/route-results-logic';
 
 type Stage = {
   mode?: string;
@@ -36,6 +56,8 @@ type Stage = {
   departureTime?: string;
   arrivalTime?: string;
   departure_minutes?: number | string | Array<number | string>;
+  /** Segundos desde epoch — partida real do trecho (Google Transit). */
+  transit_departure_unix?: number;
   street_view_image?: string;
   /** Até 3 URLs — só caminhada (backend). */
   street_view_images?: string[];
@@ -280,6 +302,8 @@ function serializeRouteDetail(
       departureTime: s.departureTime,
       arrivalTime: s.arrivalTime,
       departure_minutes: s.departure_minutes,
+      transit_departure_unix:
+        typeof s.transit_departure_unix === 'number' ? s.transit_departure_unix : undefined,
       accessible: s.accessible !== false,
       warning: s.warning != null && String(s.warning).trim() ? String(s.warning) : undefined,
       street_view_image: s.street_view_image,
@@ -331,193 +355,12 @@ function detailCoordinateFallbacks(route: RouteItem): {
   };
 }
 
-function routeDurationMinutes(route: RouteItem): number {
-  const value = `${route.total_duration ?? route.totalDuration ?? route.totalTime ?? ''}`;
-  const hours = value.match(/(\d+)\s*h/i);
-  const minutes = value.match(/(\d+)\s*min/i);
-  const fromLabel = (hours ? Number(hours[1]) * 60 : 0) + (minutes ? Number(minutes[1]) : 0);
-  if (fromLabel > 0) return fromLabel;
-  const onlyNumber = value.match(/\d+/)?.[0];
-  return onlyNumber ? Number(onlyNumber) : 0;
-}
+/** Acima disso, não mostramos “em X h” — só o horário (evita “em 17 h” confuso). */
+const MAX_RELATIVE_WAIT_DISPLAY_MINUTES = 180;
 
-function stageDurationMinutes(stage: Stage): number {
-  const raw = `${stage.duration ?? ''}`;
-  const hours = raw.match(/(\d+)\s*h/i);
-  const minutes = raw.match(/(\d+)\s*min/i);
-  const fromLabel = (hours ? Number(hours[1]) * 60 : 0) + (minutes ? Number(minutes[1]) : 0);
-  if (fromLabel > 0) return fromLabel;
-  const onlyNumber = raw.match(/\d+/)?.[0];
-  return onlyNumber ? Number(onlyNumber) : 0;
-}
-
-function normalizeDepartureMinutes(value: Stage['departure_minutes']): number | null {
-  if (Array.isArray(value)) {
-    const firstNumeric = value
-      .map((v) => Number(v))
-      .find((n) => Number.isFinite(n) && n >= 0);
-    return typeof firstNumeric === 'number' ? firstNumeric : null;
-  }
-  const asNumber = Number(value);
-  return Number.isFinite(asNumber) && asNumber >= 0 ? asNumber : null;
-}
-
-function formatClockFromNow(deltaMinutes: number): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() + deltaMinutes);
-  const hh = `${d.getHours()}`.padStart(2, '0');
-  const mm = `${d.getMinutes()}`.padStart(2, '0');
-  return `${hh}:${mm}`;
-}
-
-function formatClockNow(): string {
-  const d = new Date();
-  const hh = `${d.getHours()}`.padStart(2, '0');
-  const mm = `${d.getMinutes()}`.padStart(2, '0');
-  return `${hh}:${mm}`;
-}
-
-function isClock(value?: string): boolean {
-  return !!value && /^\d{1,2}:\d{2}$/.test(value.trim());
-}
-
-function addMinutesToClock(clock: string, minutesToAdd: number): string {
-  const [h, m] = clock.split(':').map(Number);
-  const d = new Date();
-  d.setHours(h, m, 0, 0);
-  d.setMinutes(d.getMinutes() + minutesToAdd);
-  const hh = `${d.getHours()}`.padStart(2, '0');
-  const mm = `${d.getMinutes()}`.padStart(2, '0');
-  return `${hh}:${mm}`;
-}
-
-function minutesUntilClock(clock: string): number {
-  const [h, m] = clock.split(':').map(Number);
-  const now = new Date();
-  const target = new Date();
-  target.setHours(h, m, 0, 0);
-  if (target.getTime() < now.getTime()) {
-    target.setDate(target.getDate() + 1);
-  }
-  return Math.max(0, Math.round((target.getTime() - now.getTime()) / 60000));
-}
-
-function isWalkStageMode(mode?: string): boolean {
-  const m = `${mode ?? ''}`.toLowerCase();
-  return m === 'walk' || m === 'walking';
-}
-
-function normalizeStageMode(mode?: string): 'walk' | 'bus' | 'subway' | 'other' {
-  const m = `${mode ?? ''}`.toLowerCase();
-  if (m === 'walk' || m === 'walking' || m === 'foot') return 'walk';
-  if (m.includes('metro') || m.includes('subway') || m === 'rail') return 'subway';
-  if (m.includes('bus') || m.includes('onibus')) return 'bus';
-  return 'other';
-}
-
-function routeSignature(route: RouteItem): string {
-  const modes = (route.stages ?? [])
-    .map((s) => {
-      const mode = normalizeStageMode(s.mode);
-      const line = `${s.line_code ?? ''}`.trim().toLowerCase();
-      const stop = `${s.stop_name ?? ''}`.trim().toLowerCase();
-      return `${mode}:${line}:${stop}`;
-    })
-    .join('|');
-  const duration = `${route.total_duration ?? route.totalDuration ?? route.totalTime ?? ''}`.trim().toLowerCase();
-  const distance = `${route.total_distance ?? ''}`.trim().toLowerCase();
-  return `${duration}::${distance}::${modes}`;
-}
-
-function routeTransportFamily(route: RouteItem): 'walk-only' | 'bus-only' | 'subway-only' | 'combined' | 'other' {
-  const set = new Set(
-    (route.stages ?? [])
-      .map((s) => normalizeStageMode(s.mode))
-      .filter((m) => m === 'walk' || m === 'bus' || m === 'subway'),
-  );
-  const hasWalk = set.has('walk');
-  const hasBus = set.has('bus');
-  const hasSubway = set.has('subway');
-  if (hasWalk && !hasBus && !hasSubway) return 'walk-only';
-  if (hasBus && !hasWalk && !hasSubway) return 'bus-only';
-  if (hasSubway && !hasWalk && !hasBus) return 'subway-only';
-  if ((hasBus || hasSubway) && hasWalk) return 'combined';
-  if (hasBus && hasSubway) return 'combined';
-  return 'other';
-}
-
-type CompanionTab = 'alone' | 'companied';
 type SearchField = 'origin' | 'destination' | 'waypoint';
 type PlaceSuggestion = { description: string; placeId: string };
 type PackagedRoutesByTab = { alone: RouteItem[]; companied: RouteItem[] };
-
-function routeCompanionAudience(route: RouteItem): 'alone' | 'companied' | 'both' | null {
-  const sp = route.search_profile;
-  if (sp === 'alone') return 'alone';
-  if (sp === 'companied') return 'companied';
-  const rawValues = [
-    route.accompanied,
-    route.companion_mode,
-    route.recommended_for,
-    route.profile,
-  ]
-    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
-    .map((v) => v.trim().toLowerCase());
-
-  if (rawValues.length === 0) return null;
-  const joined = rawValues.join(' ');
-  const mentionsBoth =
-    joined.includes('both') ||
-    joined.includes('ambos') ||
-    joined.includes('sozinho e acompanhado');
-  const mentionsAlone =
-    joined.includes('alone') ||
-    joined.includes('solo') ||
-    joined.includes('sozinho') ||
-    joined.includes('individual');
-  const mentionsCompanied =
-    joined.includes('companied') ||
-    joined.includes('acompanhado') ||
-    joined.includes('with companion') ||
-    joined.includes('com acompanhante');
-  if (mentionsBoth || (mentionsAlone && mentionsCompanied)) return 'both';
-  if (mentionsCompanied) return 'companied';
-  if (mentionsAlone) return 'alone';
-  return null;
-}
-
-function isCalmRoute(route: RouteItem): boolean {
-  if (route.accessible === false) return false;
-  if (route.slope_warning === true) return false;
-  const stages = route.stages ?? [];
-  return !stages.some((s) => stageNeedsAttention(s) || s.accessible === false);
-}
-
-function routeIncidentCount(route: RouteItem): number {
-  const stages = route.stages ?? [];
-  let incidents = route.slope_warning === true ? 1 : 0;
-  for (const stage of stages) {
-    if (stage.slope_warning === true) incidents += 1;
-    if (stageNeedsAttention(stage)) incidents += 1;
-  }
-  return incidents;
-}
-
-function routeMatchesCompanionTab(route: RouteItem, tab: CompanionTab): boolean {
-  if (route.accessible === false) return false;
-  const incidents = routeIncidentCount(route);
-  if (tab === 'alone') {
-    return incidents === 0 && isCalmRoute(route);
-  }
-  // Acompanhado: aceita pequenas ocorrencias de atencao, mas bloqueia rotas críticas.
-  return incidents <= 2;
-}
-
-function stageNeedsAttention(stage: Stage): boolean {
-  if (stage.slope_warning === true) return true;
-  const w = `${stage.warning ?? ''}`.trim();
-  return w.length > 0;
-}
 
 function toFiniteLatLng(lat: unknown, lng: unknown): { lat: number; lng: number } | null {
   const la = typeof lat === 'number' ? lat : Number(lat);
@@ -1100,15 +943,18 @@ export default function RouteResultsScreen() {
     const stageMinutesSum = orderedStages.reduce((acc, s) => acc + stageDurationMinutes(s), 0);
     const totalMinutes = routeMinutesFromLabel > 0 ? routeMinutesFromLabel : stageMinutesSum;
     const firstTransitDepartureMinutes = normalizeDepartureMinutes(firstTransitStage?.departure_minutes);
+    const transitDepUnix = firstTransitStage?.transit_departure_unix;
     const rawDepartureTime =
       firstTransitStage?.departure_time ??
       firstTransitStage?.departureTime ??
       route.departTime;
     const departureTime = isClock(rawDepartureTime)
       ? rawDepartureTime!.trim()
-      : typeof firstTransitDepartureMinutes === 'number'
-        ? formatClockFromNow(firstTransitDepartureMinutes)
-        : formatClockNow();
+      : typeof transitDepUnix === 'number' && Number.isFinite(transitDepUnix)
+        ? formatUnixToLocalClock(transitDepUnix)
+        : typeof firstTransitDepartureMinutes === 'number'
+          ? formatClockFromNow(firstTransitDepartureMinutes)
+          : formatClockNow();
     const rawArrivalTime = lastTransitStage?.arrival_time ?? lastTransitStage?.arrivalTime ?? route.arriveTime;
     const arrivalTime = isClock(rawArrivalTime)
       ? rawArrivalTime!.trim()
@@ -1145,14 +991,29 @@ export default function RouteResultsScreen() {
     const departureInfoLine =
       firstTransitStage
         ? (() => {
-            const minutes = normalizeDepartureMinutes(firstTransitStage.departure_minutes);
             const explicitDeparture = firstTransitStage.departure_time ?? firstTransitStage.departureTime;
             const departureClock = isClock(explicitDeparture)
               ? explicitDeparture!.trim()
               : departureTime;
-            const minutesLeft =
-              typeof minutes === 'number' ? minutes : minutesUntilClock(departureClock);
-            return `Sai às ${departureClock} · em ${formatWaitTime(minutesLeft)}`;
+            const minutesNorm = normalizeDepartureMinutes(firstTransitStage.departure_minutes);
+            let minutesLeft: number;
+            if (typeof transitDepUnix === 'number' && Number.isFinite(transitDepUnix)) {
+              minutesLeft = Math.max(
+                0,
+                Math.round((transitDepUnix * 1000 - Date.now()) / 60000),
+              );
+            } else if (typeof minutesNorm === 'number') {
+              minutesLeft = minutesNorm;
+            } else {
+              minutesLeft = minutesUntilClock(departureClock);
+            }
+            if (minutesLeft <= MAX_RELATIVE_WAIT_DISPLAY_MINUTES) {
+              return `Sai às ${departureClock} · em ${formatWaitTime(minutesLeft)}`;
+            }
+            if (selectedTimeFilter.key === 'leave_now') {
+              return `Próxima partida · ${departureClock}`;
+            }
+            return `Partida prevista · ${departureClock}`;
           })()
         : `Sai às ${departureTime}`;
 

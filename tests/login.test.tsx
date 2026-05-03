@@ -31,10 +31,32 @@ jest.mock('../services/auth.service', () => ({
 jest.mock('../services/token.service', () => ({
   getRememberMe: jest.fn().mockResolvedValue(false),
   getToken: jest.fn().mockResolvedValue(null),
+  getStoredTokenOnly: jest.fn().mockResolvedValue(null),
   saveRememberMe: jest.fn(),
   saveToken: jest.fn(),
   saveUserInfo: jest.fn(),
 }));
+
+jest.mock('@/contexts/accessibility-preferences', () => ({
+  useAccessibilityPreferences: () => ({
+    highContrast: false,
+    colors: { screenBackground: '#EEF2FF' },
+    voiceRead: false,
+  }),
+  useAccessibilitySurfaces: () => ({ fillCard: {}, fillScreen: {} }),
+}));
+
+jest.mock('../services/google-auth.service', () => ({
+  isGoogleLoginEnabled: jest.fn().mockReturnValue(false),
+}));
+
+jest.mock('@/components/GoogleLoginSection', () => {
+  const React = require('react');
+  return {
+    GoogleLoginSection: () => null,
+    GoogleAuthErrorBoundary: ({ children }: { children?: React.ReactNode }) => children,
+  };
+});
 
 function renderLogin() {
   return render(
