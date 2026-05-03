@@ -1,12 +1,14 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import {
   Alert,
   Dimensions,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
+  type KeyboardEvent,
   Modal,
   Platform,
   Pressable,
@@ -97,6 +99,7 @@ export default function RegisterScreen() {
   const sx = useAccessibilitySurfaces();
   const formScrollRef = useRef<ScrollView>(null);
   const groupRef = useRef<View>(null);
+  const confirmPasswordFocusedRef = useRef(false);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -111,6 +114,30 @@ export default function RegisterScreen() {
 
   const [menu, setMenu] = useState<MenuKind | null>(null);
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
+  /** Espaço extra no fundo do ScrollView = altura do teclado, para poder rolar o campo “Confirmar senha” acima dele. */
+  const [keyboardBottomInset, setKeyboardBottomInset] = useState(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = (e: KeyboardEvent) => setKeyboardBottomInset(e.endCoordinates.height);
+    const onHide = () => setKeyboardBottomInset(0);
+    const subShow = Keyboard.addListener(showEvent, onShow);
+    const subHide = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      subShow.remove();
+      subHide.remove();
+    };
+  }, []);
+
+  /** No Android o teclado abre depois do onFocus — volta a rolar quando a altura do teclado for conhecida. */
+  useEffect(() => {
+    if (keyboardBottomInset <= 0 || !confirmPasswordFocusedRef.current) return;
+    const t = setTimeout(() => {
+      formScrollRef.current?.scrollToEnd({ animated: true });
+    }, 80);
+    return () => clearTimeout(t);
+  }, [keyboardBottomInset]);
 
   const closeMenu = useCallback(() => {
     setMenu(null);
@@ -146,10 +173,22 @@ export default function RegisterScreen() {
     DISABILITY_OPTIONS.find((o) => o.value === disabilityType)?.label ?? null;
   const passwordsMatch = confirmPassword.length > 0 && confirmPassword === password;
 
-  const ensurePasswordVisible = useCallback(() => {
-    setTimeout(() => {
-      formScrollRef.current?.scrollTo({ y: 300, animated: true });
-    }, 120);
+  const scrollPasswordFieldIntoView = useCallback(() => {
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        formScrollRef.current?.scrollTo({ y: 220, animated: true });
+      }, 50);
+    });
+  }, []);
+
+  /** Confirmação de senha fica no meio do formulário — rola até o fim para ficar acima do teclado. */
+  const scrollConfirmPasswordIntoView = useCallback(() => {
+    const delay = Platform.OS === 'ios' ? 100 : 220;
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        formScrollRef.current?.scrollToEnd({ animated: true });
+      }, delay);
+    });
   }, []);
 
   const handleSubmit = async () => {
@@ -274,7 +313,7 @@ export default function RegisterScreen() {
       <ScrollView
         ref={formScrollRef}
         style={styles.formScroll}
-        contentContainerStyle={styles.form}
+        contentContainerStyle={[styles.form, { paddingBottom: 48 + keyboardBottomInset }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -346,7 +385,7 @@ export default function RegisterScreen() {
             secureTextEntry={!showPassword}
             value={password}
             onChangeText={setPassword}
-            onFocus={ensurePasswordVisible}
+            onFocus={scrollPasswordFieldIntoView}
             accessibilityLabel="Senha"
             textContentType="newPassword"
             autoComplete="password-new"
@@ -375,7 +414,13 @@ export default function RegisterScreen() {
             secureTextEntry={!showConfirmPassword}
             value={confirmPassword}
             onChangeText={setConfirmPassword}
-            onFocus={ensurePasswordVisible}
+            onFocus={() => {
+              confirmPasswordFocusedRef.current = true;
+              scrollConfirmPasswordIntoView();
+            }}
+            onBlur={() => {
+              confirmPasswordFocusedRef.current = false;
+            }}
             accessibilityLabel="Confirmar senha"
             textContentType="newPassword"
           />
