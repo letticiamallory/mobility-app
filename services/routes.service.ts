@@ -1,6 +1,38 @@
 import { API_URL } from '../constants/api';
 import { getToken } from './token.service';
 
+/** Linha retornada por GET /routes/history/:userId */
+export type RouteHistoryApiRow = {
+  id: number;
+  origin?: string;
+  destination?: string;
+  transport_type?: string;
+  accessible?: boolean;
+  created_at?: string;
+};
+
+export async function fetchUserRouteHistory(
+  token: string,
+  userId: number,
+): Promise<RouteHistoryApiRow[]> {
+  const response = await fetch(`${API_URL}/routes/history/${userId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) return [];
+  const data = (await response.json()) as unknown;
+  return Array.isArray(data) ? (data as RouteHistoryApiRow[]) : [];
+}
+
+/** Mais recentes primeiro (por data; desempate por id). */
+export function sortRouteHistoryNewestFirst(rows: RouteHistoryApiRow[]): RouteHistoryApiRow[] {
+  return [...rows].sort((a, b) => {
+    const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+    if (tb !== ta) return tb - ta;
+    return (b.id ?? 0) - (a.id ?? 0);
+  });
+}
+
 export async function searchRoutes(
   origin: string,
   destination: string,

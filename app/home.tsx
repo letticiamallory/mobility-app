@@ -17,13 +17,16 @@ import { ScaledTextInput as TextInput } from '@/components/ScaledTextInput';
 import { useAccessibilityPreferences, useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { API_URL } from '../constants/api';
 import {
   getHomeFavorites,
   PRESET_FAVORITE_IDS,
   removeHomeFavorite,
   type HomeFavoriteRow,
 } from '../services/home-favorites.service';
+import {
+  fetchUserRouteHistory,
+  sortRouteHistoryNewestFirst,
+} from '../services/routes.service';
 import { getToken, getUserInfo } from '../services/token.service';
 
 const FAVORITE_EDIT_TITLES: Record<string, string> = {
@@ -55,10 +58,36 @@ export default function HomeScreen() {
     setFavorites(await getHomeFavorites());
   }, []);
 
+  const loadRecentRoutes = useCallback(async () => {
+    try {
+      setLoadingRecents(true);
+      const token = await getToken();
+      const { userId } = await getUserInfo();
+      if (!token || userId == null) {
+        setRecentRoutes([]);
+        return;
+      }
+      const list = await fetchUserRouteHistory(token, userId);
+      const sorted = sortRouteHistoryNewestFirst(list);
+      const mapped = sorted.slice(0, 4).map((item) => ({
+        id: String(item.id),
+        origin: item.origin?.trim() || 'Origem',
+        destination: item.destination?.trim() || 'Destino',
+        accessible: item.accessible !== false,
+      }));
+      setRecentRoutes(mapped);
+    } catch {
+      setRecentRoutes([]);
+    } finally {
+      setLoadingRecents(false);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       void reloadFavorites();
-    }, [reloadFavorites]),
+      void loadRecentRoutes();
+    }, [reloadFavorites, loadRecentRoutes]),
   );
 
   useEffect(() => {
@@ -67,49 +96,6 @@ export default function HomeScreen() {
       if (userInfo.name) setName(userInfo.name);
     };
     loadData();
-  }, []);
-
-  useEffect(() => {
-    const fetchRecentRoutes = async () => {
-      try {
-        setLoadingRecents(true);
-        const token = await getToken();
-        if (!token) {
-          setRecentRoutes([]);
-          return;
-        }
-
-        const response = await fetch(`${API_URL}/routes/recent`, {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (!response.ok) {
-          setRecentRoutes([]);
-          return;
-        }
-
-        const data = await response.json();
-        const list = Array.isArray(data) ? data : Array.isArray(data?.routes) ? data.routes : [];
-
-        const mapped = list.slice(0, 4).map((item: any, index: number) => ({
-          id: String(item?.id ?? index),
-          origin: item?.origin ?? item?.route?.origin ?? 'Origem',
-          destination: item?.destination ?? item?.route?.destination ?? 'Destino',
-          accessible: item?.accessible !== false,
-        }));
-
-        setRecentRoutes(mapped);
-      } catch {
-        setRecentRoutes([]);
-      } finally {
-        setLoadingRecents(false);
-      }
-    };
-
-    fetchRecentRoutes();
   }, []);
 
   useEffect(() => {
@@ -327,7 +313,7 @@ export default function HomeScreen() {
         <View style={styles.recentSection}>
           <PaperText style={styles.sectionTitle}>Viagens recentes</PaperText>
           {!loadingRecents && !hasRecents ? (
-            <View style={[styles.emptyWrap, sx.fillCard]}>
+            <View style={[styles.emptyWrap, sx.fillScreen]}>
               <MaterialCommunityIcons name="map-search-outline" size={40} color="#CCCCCC" />
               <PaperText style={styles.emptyText}>Nenhuma viagem recente</PaperText>
               <TouchableOpacity
@@ -344,7 +330,7 @@ export default function HomeScreen() {
               {recentRoutes.map((route) => (
                 <TouchableOpacity
                   key={route.id}
-                  style={[styles.recentCard, sx.fillCard]}
+                  style={[styles.recentCard, sx.fillScreen]}
                   onPress={() => goToDirections(route.destination, route.origin)}
                   activeOpacity={0.85}
                   accessibilityRole="button"
@@ -354,8 +340,10 @@ export default function HomeScreen() {
                   <MaterialCommunityIcons name="clock-outline" size={18} color="#AAAAAA" />
                   <PaperText style={styles.recentOrigin}>{route.origin}</PaperText>
                   <PaperText style={styles.recentDestination}>{route.destination}</PaperText>
-                  <View style={styles.badge}>
-                    <PaperText style={styles.badgeText}>Acessível</PaperText>
+                  <View style={[styles.badge, route.accessible ? null : styles.badgeWarn]}>
+                    <PaperText style={[styles.badgeText, route.accessible ? null : styles.badgeTextWarn]}>
+                      {route.accessible ? 'Acessível' : 'Atenção'}
+                    </PaperText>
                   </View>
                 </TouchableOpacity>
               ))}
@@ -639,15 +627,14 @@ const styles = StyleSheet.create({
   },
   recentCard: {
     width: '48%',
-    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 14,
     marginBottom: 12,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 5,
-    elevation: 2,
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
   },
   recentOrigin: {
     color: '#999999',
@@ -670,10 +657,16 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     marginTop: 8,
   },
+  badgeWarn: {
+    backgroundColor: '#FEF3C7',
+  },
   badgeText: {
     color: '#16A34A',
     fontSize: 11,
     fontFamily: 'Agrandir-Regular',
+  },
+  badgeTextWarn: {
+    color: '#92400E',
   },
   bottomNav: {
     backgroundColor: '#FFFFFF',

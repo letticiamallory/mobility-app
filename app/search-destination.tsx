@@ -21,7 +21,11 @@ import { API_URL } from '../constants/api';
 import type { Station } from '../mocks/stations';
 import { MOCK_STATIONS } from '../mocks/stations';
 import { getHomeFavorites, type HomeFavoriteRow } from '../services/home-favorites.service';
-import { getToken } from '../services/token.service';
+import {
+  fetchUserRouteHistory,
+  sortRouteHistoryNewestFirst,
+} from '../services/routes.service';
+import { getToken, getUserInfo } from '../services/token.service';
 import { inferPlaceIcon } from '../utils/place-icon';
 
 const PRIMARY = '#0057A8';
@@ -216,12 +220,6 @@ export default function SearchDestinationScreen() {
     }
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      void reloadHomeFavorites();
-    }, [reloadHomeFavorites]),
-  );
-
   const goToRoutePlan = useCallback(
     (p: { destination: string; destLat?: number; destLng?: number }) => {
       const rp: Record<string, string> = { destination: p.destination.trim() };
@@ -315,41 +313,36 @@ export default function SearchDestinationScreen() {
     loadLocationAndStations();
   }, []);
 
-  useEffect(() => {
-    const fetchRecentRoutes = async () => {
-      try {
-        setLoadingRecents(true);
-        const token = await getToken();
-        if (!token) {
-          setRecentRoutes([]);
-          return;
-        }
-        const response = await fetch(`${API_URL}/routes/recent`, {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        if (!response.ok) {
-          setRecentRoutes([]);
-          return;
-        }
-        const data = await response.json();
-        const list = Array.isArray(data) ? data : Array.isArray(data?.routes) ? data.routes : [];
-        const mapped = list.slice(0, 8).map((item: any, index: number) => ({
-          id: String(item?.id ?? index),
-          origin: item?.origin ?? item?.route?.origin ?? '',
-          destination: item?.destination ?? item?.route?.destination ?? 'Destino',
-        }));
-        setRecentRoutes(mapped);
-      } catch {
+  const loadRecentRoutes = useCallback(async () => {
+    try {
+      setLoadingRecents(true);
+      const token = await getToken();
+      const { userId } = await getUserInfo();
+      if (!token || userId == null) {
         setRecentRoutes([]);
-      } finally {
-        setLoadingRecents(false);
+        return;
       }
-    };
-    fetchRecentRoutes();
+      const list = await fetchUserRouteHistory(token, userId);
+      const sorted = sortRouteHistoryNewestFirst(list);
+      const mapped = sorted.slice(0, 8).map((item) => ({
+        id: String(item.id),
+        origin: item.origin?.trim() ?? '',
+        destination: item.destination?.trim() || 'Destino',
+      }));
+      setRecentRoutes(mapped);
+    } catch {
+      setRecentRoutes([]);
+    } finally {
+      setLoadingRecents(false);
+    }
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void reloadHomeFavorites();
+      void loadRecentRoutes();
+    }, [reloadHomeFavorites, loadRecentRoutes]),
+  );
 
   useEffect(() => {
     const trimmed = query.trim();

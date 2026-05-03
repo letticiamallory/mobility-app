@@ -6,9 +6,11 @@ import { Image as ExpoImage } from 'expo-image';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
+  Alert,
   Animated,
   Dimensions,
   PanResponder,
+  Platform,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
@@ -17,6 +19,10 @@ import {
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { useAccessibilityPreferences, useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
+import { regionsWithActiveFeedAt } from '@/constants/br-transit-realtime';
+import { useLiveTransitVehicles } from '@/hooks/useLiveTransitVehicles';
+import { useRouteLiveNavigation } from '@/hooks/useRouteLiveNavigation';
+import { ensureJourneyNotificationPermission } from '@/services/journey-notifications';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export type RouteStage = {
@@ -519,6 +525,59 @@ export default function RouteDetailScreen() {
     });
   }, [route]);
 
+  const mapCenterForTransit = useMemo(() => {
+    if (!route) return { latitude: -19.9, longitude: -43.9 };
+    return {
+      latitude: (route.originCoordinate.latitude + route.destinationCoordinate.latitude) / 2,
+      longitude: (route.originCoordinate.longitude + route.destinationCoordinate.longitude) / 2,
+    };
+  }, [route]);
+
+  const hasLiveTransitFeed = useMemo(
+    () =>
+      Platform.OS !== 'web' &&
+      regionsWithActiveFeedAt(mapCenterForTransit.latitude, mapCenterForTransit.longitude).length > 0,
+    [mapCenterForTransit.latitude, mapCenterForTransit.longitude],
+  );
+
+  const liveNav = useRouteLiveNavigation({
+    route,
+    polylineCoords,
+    orderedStages,
+  });
+
+  const [showLiveBuses, setShowLiveBuses] = useState(false);
+  useEffect(() => {
+    if (!hasLiveTransitFeed) setShowLiveBuses(false);
+  }, [hasLiveTransitFeed]);
+  const {
+    vehicles: liveVehicles,
+    loading: liveVehiclesLoading,
+    coverageHint: liveCoverageHint,
+    lastError: liveVehiclesError,
+  } = useLiveTransitVehicles({
+    mapCenter: mapCenterForTransit,
+    transitPolyline: transitPoly,
+    enabled: showLiveBuses && hasLiveTransitFeed,
+  });
+
+  const lastFollowCamAt = useRef(0);
+  useEffect(() => {
+    if (!liveNav.navActive || !liveNav.userLocation || !mapRef.current) return;
+    const now = Date.now();
+    if (now - lastFollowCamAt.current < 5500) return;
+    lastFollowCamAt.current = now;
+    mapRef.current.animateCamera(
+      {
+        center: liveNav.userLocation,
+        pitch: 0,
+        heading: 0,
+        zoom: 16,
+      },
+      { duration: 600 },
+    );
+  }, [liveNav.navActive, liveNav.userLocation]);
+
   const [isReading, setIsReading] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
   const [showTraffic, setShowTraffic] = useState(false);
@@ -630,7 +689,12 @@ export default function RouteDetailScreen() {
   }, [route, polylineCoords]);
 
   const handleStartNavigation = () => {
-    readRoute();
+    if (Platform.OS === 'web') return;
+    if (liveNav.navActive) {
+      liveNav.stopNavigation();
+      return;
+    }
+    void liveNav.startNavigation();
   };
 
   const fitMap = () => {
@@ -712,7 +776,7 @@ export default function RouteDetailScreen() {
             ref={mapRef}
             style={StyleSheet.absoluteFill}
             initialRegion={initialRegion}
-            showsUserLocation={false}
+            showsUserLocation={liveNav.navActive}
             showsTraffic={showTraffic}
             mapType="standard"
           >
@@ -733,6 +797,21 @@ export default function RouteDetailScreen() {
             ))}
             <Marker coordinate={route.originCoordinate} title="Origem" pinColor={COLORS.orangeOrigin} />
             <Marker coordinate={route.destinationCoordinate} title="Destino" pinColor={COLORS.redDest} />
+            {showLiveBuses
+              ? liveVehicles.map((v) => (
+                  <Marker
+                    key={`bus-${v.id}`}
+                    coordinate={{ latitude: v.latitude, longitude: v.longitude }}
+                    tracksViewChanges={false}
+                    title="Ônibus"
+                    description={v.routeId ? `Linha ${v.routeId}` : undefined}
+                  >
+                    <View style={styles.liveBusMarker}>
+                      <MaterialCommunityIcons name="bus" size={14} color="#FFFFFF" />
+                    </View>
+                  </Marker>
+                ))
+              : null}
           </MapView>
 
           <TouchableOpacity
@@ -760,6 +839,28 @@ export default function RouteDetailScreen() {
               <MaterialCommunityIcons name="car-outline" size={18} color="#FFFFFF" />
               <Text style={styles.pillTrafficText}>Mostrar trânsito</Text>
             </TouchableOpacity>
+            {liveNav.navActive && orderedStages[liveNav.currentStageIndex] ? (
+              <View style={styles.pillStageHint}>
+                <Text style={styles.pillStageHintText} numberOfLines={2}>
+                  Etapa {liveNav.currentStageIndex + 1}/{orderedStages.length}:{' '}
+                  {orderedStages[liveNav.currentStageIndex].instruction.slice(0, 72)}
+                </Text>
+              </View>
+            ) : null}
+            {liveNav.navError ? (
+              <View style={styles.pillStageHint}>
+                <Text style={styles.pillStageHintErr}>{liveNav.navError}</Text>
+              </View>
+            ) : null}
+            {showLiveBuses ? (
+              <View style={styles.pillStageHint}>
+                <Text style={styles.pillLiveMeta} numberOfLines={3}>
+                  {liveVehiclesLoading ? 'Atualizando ônibus…' : `${liveVehicles.length} veículo(s) próximo(s) ao trajeto`}
+                  {liveVehiclesError ? `\n${liveVehiclesError}` : ''}
+                  {`\n${liveCoverageHint}`}
+                </Text>
+              </View>
+            ) : null}
           </View>
         </View>
 
@@ -772,9 +873,18 @@ export default function RouteDetailScreen() {
           ]}
           pointerEvents="box-none"
         >
-          <TouchableOpacity style={styles.pillStart} activeOpacity={0.85} onPress={handleStartNavigation}>
-            <MaterialCommunityIcons name="navigation-variant" size={18} color="#FFFFFF" />
-            <Text style={styles.pillStartText}>Iniciar</Text>
+          <TouchableOpacity
+            style={[styles.pillStart, liveNav.navActive && styles.pillStartActive]}
+            activeOpacity={0.85}
+            onPress={handleStartNavigation}
+            accessibilityLabel={liveNav.navActive ? 'Parar navegação do trajeto' : 'Iniciar navegação do trajeto'}
+          >
+            <MaterialCommunityIcons
+              name={liveNav.navActive ? 'stop-circle' : 'navigation-variant'}
+              size={18}
+              color="#FFFFFF"
+            />
+            <Text style={styles.pillStartText}>{liveNav.navActive ? 'Parar' : 'Iniciar'}</Text>
           </TouchableOpacity>
         </Animated.View>
 
@@ -1236,21 +1346,43 @@ export default function RouteDetailScreen() {
                         </View>
 
                         <View style={styles.badgeRow}>
-                          <TouchableOpacity style={styles.transitActionBtn} activeOpacity={0.85}>
-                            <MaterialCommunityIcons
-                              name="bus-clock"
-                              size={16}
-                              color="#FFFFFF"
-                            />
-                            <Text style={styles.transitActionText}>Localização em tempo real</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.transitActionBtn} activeOpacity={0.85}>
+                          {hasLiveTransitFeed ? (
+                            <TouchableOpacity
+                              style={[styles.transitActionBtn, showLiveBuses && styles.transitActionBtnOn]}
+                              activeOpacity={0.85}
+                              onPress={() => setShowLiveBuses((v) => !v)}
+                            >
+                              <MaterialCommunityIcons
+                                name="bus-clock"
+                                size={16}
+                                color="#FFFFFF"
+                              />
+                              <Text style={styles.transitActionText}>
+                                {showLiveBuses ? 'Ocultar ônibus ao vivo' : 'Localização em tempo real'}
+                              </Text>
+                            </TouchableOpacity>
+                          ) : null}
+                          <TouchableOpacity
+                            style={styles.transitActionBtn}
+                            activeOpacity={0.85}
+                            onPress={() => {
+                              void (async () => {
+                                const ok = await ensureJourneyNotificationPermission();
+                                Alert.alert(
+                                  'Notificações da viagem',
+                                  ok
+                                    ? 'Quando você tocar em Iniciar, avisamos a cada nova etapa do trajeto.'
+                                    : 'Sem permissão, só verá os avisos na tela. Ative nas configurações do sistema.',
+                                );
+                              })();
+                            }}
+                          >
                             <MaterialCommunityIcons
                               name="bell-ring-outline"
                               size={16}
                               color="#FFFFFF"
                             />
-                            <Text style={styles.transitActionText}>Ative as notificações</Text>
+                            <Text style={styles.transitActionText}>Notificações por etapa</Text>
                           </TouchableOpacity>
                         </View>
 
@@ -1300,17 +1432,26 @@ export default function RouteDetailScreen() {
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <TouchableOpacity
             style={styles.btnPlay}
-            onPress={handleStartNavigation}
-            accessibilityLabel={isReading ? 'Parar' : 'Ouvir rota'}
+            onPress={() => readRoute()}
+            accessibilityLabel={isReading ? 'Parar leitura da rota' : 'Ouvir rota em voz alta'}
           >
             <MaterialCommunityIcons name={isReading ? 'stop' : 'play'} size={26} color="#FFFFFF" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.btnPill} activeOpacity={0.88}>
-            <MaterialCommunityIcons name="bus-clock" size={18} color="#FFFFFF" />
-            <Text style={[styles.btnPillText, styles.btnPillTextSmall]} numberOfLines={2}>
-              Localização em tempo real
-            </Text>
-          </TouchableOpacity>
+          {hasLiveTransitFeed ? (
+            <TouchableOpacity
+              style={[styles.btnPill, showLiveBuses && styles.btnPillActive]}
+              activeOpacity={0.88}
+              onPress={() => setShowLiveBuses((v) => !v)}
+              accessibilityLabel={
+                showLiveBuses ? 'Desligar ônibus em tempo real no mapa' : 'Mostrar ônibus em tempo real no mapa'
+              }
+            >
+              <MaterialCommunityIcons name="bus-clock" size={18} color="#FFFFFF" />
+              <Text style={[styles.btnPillText, styles.btnPillTextSmall]} numberOfLines={2}>
+                {showLiveBuses ? 'Ônibus ao vivo ligado' : 'Localização em tempo real'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
     </SafeAreaView>
@@ -1599,6 +1740,44 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
   },
+  pillStartActive: {
+    backgroundColor: '#B91C1C',
+  },
+  pillStageHint: {
+    maxWidth: '100%',
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#E5E7EB',
+    elevation: 2,
+  },
+  pillStageHintText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  pillStageHintErr: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#B91C1C',
+  },
+  pillLiveMeta: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: COLORS.textMuted,
+  },
+  liveBusMarker: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 14,
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
   summaryTop: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1852,6 +2031,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
+  transitActionBtnOn: {
+    backgroundColor: '#15803D',
+  },
   transitActionText: {
     color: '#FFFFFF',
     fontSize: 14,
@@ -2000,6 +2182,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     paddingHorizontal: 8,
     paddingVertical: 8,
+  },
+  btnPillActive: {
+    backgroundColor: '#15803D',
   },
   btnPillText: {
     color: '#FFFFFF',
