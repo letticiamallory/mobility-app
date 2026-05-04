@@ -326,26 +326,43 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            <View style={styles.grid}>
-              {recentRoutes.map((route) => (
-                <TouchableOpacity
-                  key={route.id}
-                  style={[styles.recentCard, sx.fillScreen]}
-                  onPress={() => goToDirections(route.destination, route.origin)}
-                  activeOpacity={0.85}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Viagem recente de ${route.origin} para ${route.destination}`}
-                  accessibilityHint="Abre rotas sugeridas para este trajeto"
-                >
-                  <MaterialCommunityIcons name="clock-outline" size={18} color="#AAAAAA" />
-                  <PaperText style={styles.recentOrigin}>{route.origin}</PaperText>
-                  <PaperText style={styles.recentDestination}>{route.destination}</PaperText>
-                  <View style={[styles.badge, route.accessible ? null : styles.badgeWarn]}>
-                    <PaperText style={[styles.badgeText, route.accessible ? null : styles.badgeTextWarn]}>
-                      {route.accessible ? 'Acessível' : 'Atenção'}
-                    </PaperText>
-                  </View>
-                </TouchableOpacity>
+            <View style={[styles.recentsGrouped, sx.fillCard]}>
+              {recentRoutes.map((route, index) => (
+                <View key={route.id}>
+                  {index > 0 ? (
+                    <View style={styles.recentDividerWrap}>
+                      <View style={[styles.recentDividerLine, sx.hairlineTop]} />
+                    </View>
+                  ) : null}
+                  <TouchableOpacity
+                    style={styles.recentRow}
+                    onPress={() => goToDirections(route.destination, route.origin)}
+                    activeOpacity={0.85}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Viagem recente de ${route.origin} para ${route.destination}`}
+                    accessibilityHint="Abre rotas sugeridas para este trajeto"
+                  >
+                    <View style={styles.recentRowIcon}>
+                      <MaterialCommunityIcons name="clock-outline" size={20} color="#AAAAAA" />
+                    </View>
+                    <View style={styles.recentRowText}>
+                      <PaperText style={styles.recentRowDestination} numberOfLines={1}>
+                        {route.destination}
+                      </PaperText>
+                      <PaperText style={styles.recentRowOrigin} numberOfLines={1}>
+                        {route.origin}
+                      </PaperText>
+                    </View>
+                    <View style={[styles.badge, styles.badgeInline, route.accessible ? null : styles.badgeWarn]}>
+                      <PaperText
+                        style={[styles.badgeText, route.accessible ? null : styles.badgeTextWarn]}
+                        numberOfLines={1}
+                      >
+                        {route.accessible ? 'Acessível' : 'Atenção'}
+                      </PaperText>
+                    </View>
+                  </TouchableOpacity>
+                </View>
               ))}
             </View>
           )}
@@ -619,43 +636,61 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontFamily: 'Agrandir-TextBold',
   },
-  grid: {
+  recentsGrouped: {
     marginTop: 12,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  recentCard: {
-    width: '48%',
     borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
+    overflow: 'hidden',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+    elevation: 2,
   },
-  recentOrigin: {
+  recentDividerWrap: {
+    paddingLeft: 52,
+  },
+  recentDividerLine: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  recentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingRight: 12,
+    paddingLeft: 4,
+  },
+  recentRowIcon: {
+    width: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recentRowText: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 10,
+  },
+  recentRowOrigin: {
     color: '#999999',
-    fontSize: 11,
-    marginTop: 4,
+    fontSize: 12,
+    marginTop: 2,
     fontFamily: 'Agrandir-Regular',
   },
-  recentDestination: {
+  recentRowDestination: {
     color: '#1E1D1D',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
-    marginTop: 2,
     fontFamily: 'Agrandir-TextBold',
   },
   badge: {
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
     backgroundColor: '#DCFCE7',
     borderRadius: 8,
-    paddingHorizontal: 6,
+    paddingHorizontal: 8,
     paddingVertical: 4,
-    marginTop: 8,
+  },
+  badgeInline: {
+    flexShrink: 0,
+    maxWidth: 96,
   },
   badgeWarn: {
     backgroundColor: '#FEF3C7',
