@@ -6,6 +6,15 @@ export type RouteHistoryApiRow = {
   id: number;
   origin?: string;
   destination?: string;
+  /** Rótulo curto para listas (API pode devolver camelCase ou snake_case). */
+  originTitle?: string | null;
+  destinationTitle?: string | null;
+  origin_title?: string | null;
+  destination_title?: string | null;
+  originAddress?: string | null;
+  destinationAddress?: string | null;
+  origin_address?: string | null;
+  destination_address?: string | null;
   transport_type?: string;
   accessible?: boolean;
   created_at?: string;
@@ -40,6 +49,12 @@ export type SearchRoutesOptions = {
   signal?: AbortSignal;
   /** Override do timeout local; padrão = ROUTES_FETCH_TIMEOUT_MS. */
   timeoutMs?: number;
+  /** Rótulo curto (ex.: main_text) guardado no histórico; endereço completo vai em `origin` / `destination`. */
+  originTitle?: string;
+  destinationTitle?: string;
+  /** Endereço completo persistido em `origin_address` / `destination_address` no histórico. */
+  originAddress?: string;
+  destinationAddress?: string;
 };
 
 export class SearchRoutesTimeoutError extends Error {
@@ -71,6 +86,14 @@ export async function searchRoutes(
     ...(timeFilter ? { time_filter: timeFilter } : {}),
     ...(timeValue ? { time_value: timeValue } : {}),
     ...(routePreference ? { route_preference: routePreference } : {}),
+    ...(options?.originTitle?.trim() ? { origin_title: options.originTitle.trim() } : {}),
+    ...(options?.destinationTitle?.trim()
+      ? { destination_title: options.destinationTitle.trim() }
+      : {}),
+    ...(options?.originAddress?.trim() ? { origin_address: options.originAddress.trim() } : {}),
+    ...(options?.destinationAddress?.trim()
+      ? { destination_address: options.destinationAddress.trim() }
+      : {}),
   };
   const bodyString = JSON.stringify(body);
 

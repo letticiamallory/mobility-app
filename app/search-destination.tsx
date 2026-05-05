@@ -42,6 +42,10 @@ type RecentRoute = {
   id: string;
   origin: string;
   destination: string;
+  originTitle?: string;
+  destinationTitle?: string;
+  originAddress?: string;
+  destinationAddress?: string;
 };
 
 type PlaceSuggestionRow = {
@@ -271,6 +275,19 @@ export default function SearchDestinationScreen() {
     [router],
   );
 
+  const openRecentTripOnRoutePlan = useCallback(
+    (destination: string, origin: string) => {
+      router.push({
+        pathname: '/route-plan',
+        params: {
+          destination: destination.trim(),
+          origin: origin.trim(),
+        },
+      });
+    },
+    [router],
+  );
+
   const planEditField = useMemo((): 'origin' | 'destination' => {
     const raw = paramOne(navParams.editField).trim().toLowerCase();
     return raw === 'origin' ? 'origin' : 'destination';
@@ -431,6 +448,10 @@ export default function SearchDestinationScreen() {
         id: String(item.id),
         origin: item.origin?.trim() ?? '',
         destination: item.destination?.trim() || 'Destino',
+        originTitle: (item.originTitle ?? item.origin_title)?.trim() || undefined,
+        destinationTitle: (item.destinationTitle ?? item.destination_title)?.trim() || undefined,
+        originAddress: (item.originAddress ?? item.origin_address)?.trim() || undefined,
+        destinationAddress: (item.destinationAddress ?? item.destination_address)?.trim() || undefined,
       }));
       setRecentRoutes(mapped);
     } catch {
@@ -737,21 +758,31 @@ export default function SearchDestinationScreen() {
                   <View key={route.id}>
                     <TouchableOpacity
                       style={styles.rowPad}
-                      onPress={() => goToResults(route.destination, route.origin)}
+                      onPress={() =>
+                        openRecentTripOnRoutePlan(
+                          route.destinationAddress?.trim() || route.destination,
+                          route.originAddress?.trim() || route.origin,
+                        )
+                      }
                       activeOpacity={0.75}
                       accessibilityRole="button"
                       accessibilityLabel={
                         route.origin
-                          ? `Viagem recente para ${route.destination}, partindo de ${route.origin}`
-                          : `Viagem recente para ${route.destination}`
+                          ? `Viagem recente para ${route.destinationAddress?.trim() || route.destination}, partindo de ${route.originAddress?.trim() || route.origin}`
+                          : `Viagem recente para ${route.destinationAddress?.trim() || route.destination}`
                       }
                     >
                       <MaterialCommunityIcons name="shopping-outline" size={22} color="#9CA3AF" />
                       <View style={styles.rowBody}>
-                        <Text style={styles.rowTitle}>{route.destination}</Text>
-                        {route.origin ? <Text style={styles.rowSub}>{route.origin}</Text> : null}
+                        <Text style={styles.rowTitle}>
+                          {route.destinationAddress?.trim() || route.destination}
+                        </Text>
+                        {route.origin ? (
+                          <Text style={styles.rowSub}>
+                            {route.originAddress?.trim() || route.origin}
+                          </Text>
+                        ) : null}
                       </View>
-                      <MaterialCommunityIcons name="star-outline" size={22} color="#9CA3AF" />
                     </TouchableOpacity>
                     {index < recentRoutes.length - 1 ? <View style={styles.divider} /> : null}
                   </View>

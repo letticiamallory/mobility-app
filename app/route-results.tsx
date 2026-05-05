@@ -371,7 +371,7 @@ function detailCoordinateFallbacks(route: RouteItem): {
 const MAX_RELATIVE_WAIT_DISPLAY_MINUTES = 180;
 
 type SearchField = 'origin' | 'destination' | 'waypoint';
-type PlaceSuggestion = { description: string; placeId: string };
+type PlaceSuggestion = { description: string; placeId: string; mainText?: string };
 type PackagedRoutesByTab = { alone: RouteItem[]; companied: RouteItem[] };
 
 function toFiniteLatLng(lat: unknown, lng: unknown): { lat: number; lng: number } | null {
@@ -527,6 +527,9 @@ export default function RouteResultsScreen() {
   const [fetchedSplit, setFetchedSplit] = useState<DiverseRoutesPayload | null>(null);
   const [activeSearchField, setActiveSearchField] = useState<SearchField | null>(null);
   const [placeSuggestions, setPlaceSuggestions] = useState<PlaceSuggestion[]>([]);
+  /** Rótulos curtos (ex.: main_text) enviados ao histórico; endereços completos ficam em headerOrigin / headerDestination. */
+  const [historyOriginTitle, setHistoryOriginTitle] = useState<string | undefined>(undefined);
+  const [historyDestinationTitle, setHistoryDestinationTitle] = useState<string | undefined>(undefined);
   const [selectedTimeFilter, setSelectedTimeFilter] = useState<TimeFilterOption>(TIME_FILTER_OPTIONS[0]);
   const [showTimeFilterList, setShowTimeFilterList] = useState(false);
   const [forcedServerResults, setForcedServerResults] = useState(false);
@@ -556,6 +559,8 @@ export default function RouteResultsScreen() {
     setShowManualTimeModal(false);
     setPendingTimeFilterKey(null);
     setManualTimeDigits(['', '', '', '']);
+    setHistoryOriginTitle(undefined);
+    setHistoryDestinationTitle(undefined);
   }, [originFromParams, destinationFromParams, originCoordParam, destCoordParam]);
 
   /** Sem `routes` na URL (ex.: home / estações): busca na API ao abrir. */
@@ -583,6 +588,10 @@ export default function RouteResultsScreen() {
           selectedTimeFilter.key,
           selectedTimeFilter.timeValue,
           selectedRoutePreference,
+          {
+            originAddress: originQuery,
+            destinationAddress: dest,
+          },
         );
         if (!cancelled) {
           setFetchedSplit(payload);
@@ -622,7 +631,10 @@ export default function RouteResultsScreen() {
         const label = first
           ? [first.street, first.district, first.city].filter(Boolean).join(', ')
           : '';
-        if (label.trim()) setHeaderOrigin(label.trim());
+        if (label.trim()) {
+          setHeaderOrigin(label.trim());
+          setHistoryOriginTitle(undefined);
+        }
       } catch {
         // mantém vazio se geolocalização falhar
       }
@@ -673,14 +685,24 @@ export default function RouteResultsScreen() {
         url += `&key=${encodeURIComponent(key)}`;
         const res = await fetch(url);
         const json = (await res.json()) as {
-          predictions?: { description?: string; place_id?: string }[];
+          predictions?: {
+            description?: string;
+            place_id?: string;
+            structured_formatting?: { main_text?: string };
+          }[];
         };
         if (cancelled) return;
         const next = (json.predictions ?? [])
-          .map((p) => ({
-            description: String(p.description ?? '').trim(),
-            placeId: String(p.place_id ?? '').trim(),
-          }))
+          .map((p) => {
+            const description = String(p.description ?? '').trim();
+            const mainRaw = String(p.structured_formatting?.main_text ?? '').trim();
+            const mainText = mainRaw && mainRaw !== description ? mainRaw : undefined;
+            return {
+              description,
+              placeId: String(p.place_id ?? '').trim(),
+              ...(mainText ? { mainText } : {}),
+            };
+          })
           .filter((p) => p.description && p.placeId)
           .slice(0, 3);
         setPlaceSuggestions(next);
@@ -706,6 +728,9 @@ export default function RouteResultsScreen() {
     setHeaderDestination(headerOrigin);
     setActiveOriginCoord(activeDestCoord);
     setActiveDestCoord(activeOriginCoord);
+    const ot = historyOriginTitle;
+    setHistoryOriginTitle(historyDestinationTitle);
+    setHistoryDestinationTitle(ot);
   };
 
   const handleAddWaypoint = () => {
@@ -735,6 +760,14 @@ export default function RouteResultsScreen() {
         return;
       }
       const originQuery = headerOrigin.trim() || 'Local atual';
+      const historyExtras = {
+        ...(historyOriginTitle?.trim() ? { originTitle: historyOriginTitle.trim() } : {}),
+        ...(historyDestinationTitle?.trim()
+          ? { destinationTitle: historyDestinationTitle.trim() }
+          : {}),
+        originAddress: originQuery,
+        destinationAddress: destinationQuery,
+      };
       const payload = await fetchDiverseRoutes(
         originQuery,
         destinationQuery,
@@ -743,6 +776,7 @@ export default function RouteResultsScreen() {
         nextTimeOption.key,
         nextTimeOption.timeValue,
         nextRoutePreference,
+        historyExtras,
       );
       setFetchedSplit(payload);
       setForcedServerResults(true);
@@ -1376,6 +1410,7 @@ export default function RouteResultsScreen() {
                   value={headerOrigin}
                   onChangeText={(text) => {
                     setHeaderOrigin(text);
+                    setHistoryOriginTitle(undefined);
                     if (activeSearchField !== 'origin') setActiveSearchField('origin');
                   }}
                   onFocus={() => setActiveSearchField('origin')}
@@ -1405,6 +1440,7 @@ export default function RouteResultsScreen() {
                           onPress={() => {
                             Keyboard.dismiss();
                             setHeaderOrigin(item.description);
+                            setHistoryOriginTitle(item.mainText);
                             setActiveSearchField(null);
                             setPlaceSuggestions([]);
                           }}
@@ -1479,6 +1515,7 @@ export default function RouteResultsScreen() {
                   value={headerDestination}
                   onChangeText={(text) => {
                     setHeaderDestination(text);
+                    setHistoryDestinationTitle(undefined);
                     if (activeSearchField !== 'destination') setActiveSearchField('destination');
                   }}
                   onFocus={() => setActiveSearchField('destination')}
@@ -1514,6 +1551,7 @@ export default function RouteResultsScreen() {
                           onPress={() => {
                             Keyboard.dismiss();
                             setHeaderDestination(item.description);
+                            setHistoryDestinationTitle(item.mainText);
                             setActiveSearchField(null);
                             setPlaceSuggestions([]);
                           }}

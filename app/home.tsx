@@ -36,10 +36,30 @@ const FAVORITE_EDIT_TITLES: Record<string, string> = {
   school: 'Definir endereço da escola',
 };
 
+/** Endereço placeholder dos presets Hospital/Escola em favoritos antigos (sem `subtitle`). */
+const PRESET_PLACEHOLDER_ADDRESS: Record<string, string> = {
+  hospital: 'Hospital',
+  school: 'Escola',
+};
+
+function favoriteCardSubtitle(item: HomeFavoriteRow): string {
+  const hint = item.subtitle?.trim();
+  if (hint) return hint;
+  const id = String(item.id).trim();
+  const ph = PRESET_PLACEHOLDER_ADDRESS[id];
+  if (ph && item.address.trim() === ph) return 'toque para editar';
+  const addr = item.address ?? '';
+  return addr.length > 36 ? `${addr.slice(0, 36)}…` : addr;
+}
+
 type RecentRoute = {
   id: string;
   origin: string;
   destination: string;
+  originTitle?: string;
+  destinationTitle?: string;
+  originAddress?: string;
+  destinationAddress?: string;
   accessible: boolean;
 };
 
@@ -73,6 +93,10 @@ export default function HomeScreen() {
         id: String(item.id),
         origin: item.origin?.trim() || 'Origem',
         destination: item.destination?.trim() || 'Destino',
+        originTitle: (item.originTitle ?? item.origin_title)?.trim() || undefined,
+        destinationTitle: (item.destinationTitle ?? item.destination_title)?.trim() || undefined,
+        originAddress: (item.originAddress ?? item.origin_address)?.trim() || undefined,
+        destinationAddress: (item.destinationAddress ?? item.destination_address)?.trim() || undefined,
         accessible: item.accessible !== false,
       }));
       setRecentRoutes(mapped);
@@ -121,6 +145,16 @@ export default function HomeScreen() {
       params: {
         destination: dest,
         ...(origin ? { origin } : {}),
+      },
+    });
+  };
+
+  const goToRoutePlanFromRecent = (destination: string, origin: string) => {
+    router.push({
+      pathname: '/route-plan',
+      params: {
+        destination: destination.trim(),
+        origin: origin.trim(),
       },
     });
   };
@@ -268,8 +302,7 @@ export default function HomeScreen() {
                   {item.label}
                 </PaperText>
                 <PaperText style={styles.favoriteSubLabel} numberOfLines={2}>
-                  {item.subtitle ||
-                    (item.address.length > 36 ? `${item.address.slice(0, 36)}…` : item.address)}
+                  {favoriteCardSubtitle(item)}
                 </PaperText>
               </TouchableOpacity>
               {/* Por cima do card para o toque no X não abrir o editor */}
@@ -336,22 +369,39 @@ export default function HomeScreen() {
                   ) : null}
                   <TouchableOpacity
                     style={styles.recentRow}
-                    onPress={() => goToDirections(route.destination, route.origin)}
+                    onPress={() => {
+                      const destAddr = route.destinationAddress?.trim() || route.destination;
+                      const origAddr = route.originAddress?.trim() || route.origin;
+                      goToRoutePlanFromRecent(destAddr, origAddr);
+                    }}
                     activeOpacity={0.85}
                     accessibilityRole="button"
-                    accessibilityLabel={`Viagem recente de ${route.origin} para ${route.destination}`}
-                    accessibilityHint="Abre rotas sugeridas para este trajeto"
+                    accessibilityLabel={`Viagem recente de ${route.originAddress?.trim() || route.origin} para ${route.destinationAddress?.trim() || route.destination}`}
+                    accessibilityHint="Abre o planejamento de rota com origem e destino preenchidos"
                   >
                     <View style={styles.recentRowIcon}>
                       <MaterialCommunityIcons name="clock-outline" size={20} color="#AAAAAA" />
                     </View>
                     <View style={styles.recentRowText}>
-                      <PaperText style={styles.recentRowDestination} numberOfLines={1}>
-                        {route.destination}
+                      <PaperText style={styles.recentRowDestination} numberOfLines={2}>
+                        {route.destinationAddress?.trim() || route.destination}
                       </PaperText>
-                      <PaperText style={styles.recentRowOrigin} numberOfLines={1}>
-                        {route.origin}
+                      {route.destinationTitle?.trim() &&
+                      route.destinationTitle.trim() !==
+                        (route.destinationAddress?.trim() || route.destination) ? (
+                        <PaperText style={styles.recentRowNick} numberOfLines={1}>
+                          {route.destinationTitle}
+                        </PaperText>
+                      ) : null}
+                      <PaperText style={styles.recentRowOrigin} numberOfLines={2}>
+                        {route.originAddress?.trim() || route.origin}
                       </PaperText>
+                      {route.originTitle?.trim() &&
+                      route.originTitle.trim() !== (route.originAddress?.trim() || route.origin) ? (
+                        <PaperText style={styles.recentRowNick} numberOfLines={1}>
+                          {route.originTitle}
+                        </PaperText>
+                      ) : null}
                     </View>
                     <View style={[styles.badge, styles.badgeInline, route.accessible ? null : styles.badgeWarn]}>
                       <PaperText
@@ -680,6 +730,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     fontFamily: 'Agrandir-TextBold',
+  },
+  recentRowNick: {
+    color: '#888888',
+    fontSize: 11,
+    marginTop: 2,
+    fontFamily: 'Agrandir-Regular',
   },
   badge: {
     alignSelf: 'center',

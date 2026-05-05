@@ -77,6 +77,12 @@ export async function fetchDiverseRoutes(
   timeFilter?: string,
   timeValue?: string,
   routePreference?: string,
+  historyExtras?: {
+    originTitle?: string;
+    destinationTitle?: string;
+    originAddress?: string;
+    destinationAddress?: string;
+  },
 ): Promise<DiverseRoutesPayload> {
   const overallController = new AbortController();
   const overallTimer = setTimeout(
@@ -110,6 +116,22 @@ export async function fetchDiverseRoutes(
     return { alone: aloneOut, companied: companiedOut };
   };
 
+  const searchOpts = {
+    signal: overallController.signal,
+    ...(historyExtras?.originTitle?.trim()
+      ? { originTitle: historyExtras.originTitle.trim() }
+      : {}),
+    ...(historyExtras?.destinationTitle?.trim()
+      ? { destinationTitle: historyExtras.destinationTitle.trim() }
+      : {}),
+    ...(historyExtras?.originAddress?.trim()
+      ? { originAddress: historyExtras.originAddress.trim() }
+      : {}),
+    ...(historyExtras?.destinationAddress?.trim()
+      ? { destinationAddress: historyExtras.destinationAddress.trim() }
+      : {}),
+  };
+
   const transportTypes = ['bus', 'subway', 'combined', 'walk'] as const;
   try {
     const allResults = await Promise.allSettled(
@@ -123,7 +145,7 @@ export async function fetchDiverseRoutes(
           timeFilter,
           timeValue,
           routePreference,
-          { signal: overallController.signal },
+          searchOpts,
         ),
       ),
     );
@@ -143,7 +165,7 @@ export async function fetchDiverseRoutes(
         timeFilter,
         timeValue,
         routePreference,
-        { signal: overallController.signal },
+        searchOpts,
       );
       const parsed =
         fallbackRaw && typeof fallbackRaw === 'object'
