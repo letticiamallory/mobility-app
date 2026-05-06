@@ -4,7 +4,7 @@
     "slug": "Mobility",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/ChatGPT Image 6 de mai. de 2026, 19_35_48.png",
     "scheme": "mobility",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -26,10 +26,8 @@
       "package": "com.mobility.app",
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#0057A8",
+        "foregroundImage": "./assets/images/ChatGPT Image 6 de mai. de 2026, 19_35_48.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -58,7 +56,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/icon.png",
+          "icon": "./assets/images/ChatGPT Image 6 de mai. de 2026, 19_35_48.png",
           "color": "#0057A8",
           "sounds": [],
           "mode": "production"
