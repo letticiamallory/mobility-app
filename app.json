@@ -4,7 +4,7 @@
     "slug": "Mobility",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/ChatGPT Image 6 de mai. de 2026, 19_35_48.png",
+    "icon": "./assets/images/ChatGPT Image 6 de mai. de 2026, 20_41_16.png",
     "scheme": "mobility",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -27,7 +27,7 @@
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#0057A8",
-        "foregroundImage": "./assets/images/ChatGPT Image 6 de mai. de 2026, 19_35_48.png"
+        "foregroundImage": "./assets/images/ChatGPT Image 6 de mai. de 2026, 20_41_16.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -56,7 +56,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/ChatGPT Image 6 de mai. de 2026, 19_35_48.png",
+          "icon": "./assets/images/ChatGPT Image 6 de mai. de 2026, 20_41_16.png",
           "color": "#0057A8",
           "sounds": [],
           "mode": "production"
