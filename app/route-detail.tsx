@@ -931,12 +931,17 @@ export default function RouteDetailScreen() {
                     <Text style={styles.summaryHeaderPart}>
                       {(() => {
                         const fromTotal = toMinutes(stripEstimado(route.totalTime ?? ''));
-                        if (fromTotal > 0) return `${fromTotal} min`;
+                        if (fromTotal > 0) {
+                          return fromTotal > 59 ? formatAsHoursMinutes(fromTotal) : `${fromTotal} min`;
+                        }
                         const fromStages = route.stages.reduce(
                           (acc, stage) => acc + toMinutes(String(stage.duration ?? '')),
                           0,
                         );
-                        return fromStages > 0 ? `${fromStages} min` : '—';
+                        if (fromStages > 0) {
+                          return fromStages > 59 ? formatAsHoursMinutes(fromStages) : `${fromStages} min`;
+                        }
+                        return '—';
                       })()}
                     </Text>
                     <Text style={styles.summaryHeaderSep}> | </Text>

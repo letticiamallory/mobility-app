@@ -123,7 +123,8 @@ function parseStations(data: unknown): Station[] {
       address: String(row.address ?? '-'),
       distance: String(row.distance ?? '-'),
       distanceNum: Number(row.distanceNum ?? row.distance ?? 0) || 0,
-      accessible: Boolean(row.accessible),
+      /** API pode omitir; só tratar como não acessível quando vier explicitamente false */
+      accessible: row.accessible !== false,
       lines: Array.isArray(row.lines) ? row.lines.map((line) => String(line)) : [],
       nextBus: normalizeNextBusFromApi(row.nextBus ?? row.next_bus),
       lat: typeof row.lat === 'number' ? row.lat : typeof row.latitude === 'number' ? row.latitude : MAP_CENTER.latitude,
@@ -250,16 +251,6 @@ export default function StationsScreen() {
         calculateDistanceNum(userLocation.latitude, userLocation.longitude, b.lat, b.lng)
       );
     });
-    if (userLocation) {
-      next = next.filter((station) => {
-        if (!station.nextBus) return true;
-        const status = getArrivalStatus(
-          station.nextBus,
-          calculateDistanceNum(userLocation.latitude, userLocation.longitude, station.lat, station.lng),
-        );
-        return status?.status === 'ok';
-      });
-    }
     setFiltered(next);
   }, [stations, selectedTab, favorites, userLocation]);
 
@@ -932,7 +923,7 @@ export default function StationsScreen() {
               onPress={() => {
                 if (!selectedStation) return;
                 closeSheet();
-                router.push({ pathname: '/route-results', params: { destination: selectedStation.name } });
+                router.push({ pathname: '/route-plan', params: { destination: selectedStation.name } });
               }}
               accessibilityRole="button"
               accessibilityLabel="Como chegar nesta estação"

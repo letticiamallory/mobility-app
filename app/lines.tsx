@@ -24,6 +24,11 @@ import { API_URL } from '../constants/api';
 import type { LineItem } from '../mocks/lines';
 import { MOCK_LINES, MOCK_LINE_STOPS } from '../mocks/lines';
 import { getToken } from '../services/token.service';
+import {
+  LINES_REGION_OPTIONS,
+  detectLinesRegionFromCoords,
+  type LinesRegionId,
+} from '../utils/lines-region';
 import { nextScheduleToday, normalizeSchedulesFromApi } from '../utils/schedule-time';
 
 const TABS = ['todos', 'favoritos'] as const;
@@ -112,9 +117,17 @@ const getLineRoute = (line: LineItem | null) => {
   }));
 };
 
+function parseLineRegionRaw(raw: unknown): LinesRegionId {
+  const s = String(raw ?? '').toLowerCase();
+  if (s === 'brasilia' || s === 'brasília') return 'brasilia';
+  if (s === 'sao_paulo' || s === 'são_paulo') return 'sao_paulo';
+  return 'montes_claros';
+}
+
 function normalizeLine(raw: Record<string, unknown>, index: number): LineItem {
   return {
     id: String(raw.id ?? `line-${index}`),
+    region: parseLineRegionRaw(raw.region),
     type: raw.type === 'metro' ? 'metro' : 'bus',
     code: String(raw.code ?? raw.number ?? '-'),
     name: String(raw.name ?? 'Linha'),
@@ -220,6 +233,9 @@ export default function LinesScreen() {
   const [isDemo, setIsDemo] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [linesRegion, setLinesRegion] = useState<LinesRegionId>('montes_claros');
+  /** Se true, não sobrescreve a região pela localização GPS. */
+  const [regionLocked, setRegionLocked] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem('favorite_lines').then((favs) => {
@@ -245,30 +261,46 @@ export default function LinesScreen() {
   }, []);
 
   useEffect(() => {
-    const loadLines = async () => {
+    if (regionLocked || !userLocation) return;
+    const detected = detectLinesRegionFromCoords(
+      userLocation.latitude,
+      userLocation.longitude,
+    );
+    if (detected) setLinesRegion(detected);
+  }, [userLocation, regionLocked]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
       try {
         setLoading(true);
         const token = await getToken();
-        const response = await fetch(`${API_URL}/lines`, {
+        const q = new URLSearchParams({ region: linesRegion });
+        const response = await fetch(`${API_URL}/lines?${q.toString()}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         const data = response.ok ? ((await response.json()) as unknown) : [];
+        if (cancelled) return;
         if (Array.isArray(data) && data.length > 0) {
           setLines(data.map((item, index) => normalizeLine(item as Record<string, unknown>, index)));
           setIsDemo(false);
         } else {
-          setLines(MOCK_LINES);
+          setLines(MOCK_LINES.filter((m) => (m.region ?? 'montes_claros') === linesRegion));
           setIsDemo(true);
         }
       } catch {
-        setLines(MOCK_LINES);
-        setIsDemo(true);
+        if (!cancelled) {
+          setLines(MOCK_LINES.filter((m) => (m.region ?? 'montes_claros') === linesRegion));
+          setIsDemo(true);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
+    })();
+    return () => {
+      cancelled = true;
     };
-    loadLines();
-  }, []);
+  }, [linesRegion]);
 
   useEffect(() => {
     let result = lines;
@@ -330,6 +362,8 @@ export default function LinesScreen() {
     }).start(() => setModalVisible(false));
   };
 
+  const busSectionSubtitle = LINES_REGION_OPTIONS.find((o) => o.id === linesRegion)?.label ?? 'Ônibus';
+
   const sections = useMemo(
     () => [
       {
@@ -340,14 +374,14 @@ export default function LinesScreen() {
         data: filtered.filter((l) => l.type === 'metro'),
       },
       {
-        title: 'MOC BUS',
-        subtitle: 'Ônibus',
+        title: linesRegion === 'montes_claros' ? 'MOC BUS' : 'Ônibus',
+        subtitle: busSectionSubtitle,
         icon: 'bus' as const,
         type: 'bus' as const,
         data: filtered.filter((l) => l.type === 'bus'),
       },
     ],
-    [filtered],
+    [filtered, linesRegion, busSectionSubtitle],
   );
 
   const selectedIsFavorite = selectedLine ? favorites.includes(selectedLine.id) : false;
@@ -428,6 +462,32 @@ export default function LinesScreen() {
           );
         })}
       </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={[styles.regionRow, sx.fillCard, sx.hairlineBottom]}
+        contentContainerStyle={styles.regionRowContent}
+      >
+        {LINES_REGION_OPTIONS.map((opt) => {
+          const active = linesRegion === opt.id;
+          return (
+            <TouchableOpacity
+              key={opt.id}
+              style={[styles.regionChip, active && styles.regionChipActive]}
+              onPress={() => {
+                setRegionLocked(true);
+                setLinesRegion(opt.id);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Região ${opt.label}`}
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.regionChipText, active && styles.regionChipTextActive]}>{opt.short}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
 
       {loading ? (
         <View style={styles.centerWrap}>
@@ -685,7 +745,7 @@ export default function LinesScreen() {
                 onPress={() => {
                   const destination = selectedLine?.destination || 'Destino';
                   closeModal();
-                  router.push({ pathname: '/route-results', params: { destination } });
+                  router.push({ pathname: '/route-plan', params: { destination } });
                 }}
                 accessibilityRole="button"
                 accessibilityLabel="Traçar rota até o destino desta linha"
@@ -746,6 +806,20 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#1E1D1D', fontWeight: '700' },
   tabIndicator: { marginTop: 10, width: 30, height: 3, borderRadius: 2, backgroundColor: 'transparent' },
   tabIndicatorActive: { backgroundColor: '#0057A8' },
+  regionRow: { maxHeight: 48, borderBottomWidth: 1, borderBottomColor: '#EEEEEE', backgroundColor: '#FFFFFF' },
+  regionRowContent: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12 },
+  regionChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginRight: 8,
+  },
+  regionChipActive: { backgroundColor: '#E8F0FE', borderColor: '#0057A8' },
+  regionChipText: { fontSize: 13, fontWeight: '600', color: '#666666' },
+  regionChipTextActive: { color: '#0057A8' },
   centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { color: '#999999' },
   sectionContent: { paddingBottom: 24 },

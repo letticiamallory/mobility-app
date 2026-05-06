@@ -3,6 +3,7 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-rou
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -20,7 +21,7 @@ import * as Location from 'expo-location';
 import { API_URL } from '../constants/api';
 import type { Station } from '../mocks/stations';
 import { MOCK_STATIONS } from '../mocks/stations';
-import { getHomeFavorites, type HomeFavoriteRow } from '../services/home-favorites.service';
+import { getHomeFavorites, upsertHomeFavorite, type HomeFavoriteRow } from '../services/home-favorites.service';
 import {
   fetchUserRouteHistory,
   sortRouteHistoryNewestFirst,
@@ -96,7 +97,7 @@ function parseStations(data: unknown): Station[] {
       address: String(row.address ?? '-'),
       distance: String(row.distance ?? '-'),
       distanceNum: Number(row.distanceNum ?? row.distance ?? 0) || 0,
-      accessible: Boolean(row.accessible),
+      accessible: row.accessible !== false,
       lines: Array.isArray(row.lines) ? row.lines.map((line) => String(line)) : [],
       nextBus: row.nextBus ? String(row.nextBus) : null,
       lat:
@@ -227,6 +228,8 @@ export default function SearchDestinationScreen() {
     editField?: string | string[];
   }>();
   const isFavoriteFlow = navParams.favoriteFlow === '1' || navParams.favoriteFlow === 'true';
+  const favoriteIdParam = paramOne(navParams.favoriteId).trim();
+  const canQuickSaveToFavoriteCard = isFavoriteFlow && favoriteIdParam.length > 0;
   const [query, setQuery] = useState('');
   const [recentRoutes, setRecentRoutes] = useState<RecentRoute[]>([]);
   const [loadingRecents, setLoadingRecents] = useState(true);
@@ -237,14 +240,18 @@ export default function SearchDestinationScreen() {
   const [loadingPlaces, setLoadingPlaces] = useState(false);
   const [homeFavorites, setHomeFavorites] = useState<HomeFavoriteRow[]>([]);
   const [loadingHomeFavorites, setLoadingHomeFavorites] = useState(true);
+  const [savingStarKey, setSavingStarKey] = useState<string | null>(null);
+  const savingFavorite = savingStarKey != null;
 
   const hasQuery = query.trim().length > 0;
   const qNorm = normalizeSearch(query);
 
+  // Evita abrir `route-results` vazio: vai para `route-plan` (que faz loading + pré-busca)
+  // e só navega para `route-results` quando os cards estiverem prontos.
   const goToResults = useCallback(
     (destination: string, origin?: string) => {
       router.push({
-        pathname: '/route-results',
+        pathname: '/route-plan',
         params: {
           destination: destination.trim(),
           ...(origin ? { origin: origin.trim() } : {}),
@@ -366,6 +373,41 @@ export default function SearchDestinationScreen() {
     [router, navParams.favoriteId, navParams.favoriteAction, navParams.presetIcon, navParams.screenTitle],
   );
 
+  const quickSaveToFavoriteCard = useCallback(
+    async (
+      p: { address: string; lat: number; lng: number; inferredIcon?: string },
+      starKey: string,
+    ) => {
+      const favId = favoriteIdParam;
+      if (!favId) return;
+      if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng) || !p.address?.trim()) return;
+      setSavingStarKey(starKey);
+      try {
+        const existing = homeFavorites.find((x) => String(x.id).trim() === favId);
+        const presetIcon = paramOne(navParams.presetIcon).trim();
+        const iconUsed =
+          presetIcon ||
+          existing?.icon ||
+          (p.inferredIcon ?? (inferPlaceIcon(p.address) as string));
+
+        await upsertHomeFavorite({
+          id: favId,
+          label: existing?.label || 'Favorito',
+          subtitle: undefined,
+          icon: iconUsed,
+          address: p.address,
+          lat: p.lat,
+          lng: p.lng,
+          isPreset: existing?.isPreset ?? false,
+        });
+        router.replace('/home');
+      } finally {
+        setSavingStarKey(null);
+      }
+    },
+    [favoriteIdParam, homeFavorites, navParams.presetIcon, router],
+  );
+
   const openPlaceForFlow = useCallback(
     async (item: PlaceSuggestionRow) => {
       if (isFavoriteFlow) {
@@ -390,6 +432,11 @@ export default function SearchDestinationScreen() {
           });
           return;
         }
+        Alert.alert(
+          'Local incompleto',
+          'Não foi possível obter as coordenadas deste lugar. Tente outro resultado da lista ou verifique a chave do Google Places.',
+        );
+        return;
       }
       if (item.destLat != null && item.destLng != null && Number.isFinite(item.destLat) && Number.isFinite(item.destLng)) {
         pickPlaceForRoutePlan(item.fullDescription, item.destLat, item.destLng);
@@ -403,6 +450,36 @@ export default function SearchDestinationScreen() {
       })();
     },
     [goFavoriteConfirm, pickPlaceForRoutePlan, isFavoriteFlow],
+  );
+
+  const quickSavePlaceRow = useCallback(
+    async (item: PlaceSuggestionRow) => {
+      if (!canQuickSaveToFavoriteCard) return;
+      let la = item.destLat;
+      let ln = item.destLng;
+      if (la == null || ln == null) {
+        const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
+        if (key) {
+          const g = await fetchPlaceGeometry(item.placeId, key);
+          if (g) {
+            la = g.lat;
+            ln = g.lng;
+          }
+        }
+      }
+      if (la != null && ln != null && Number.isFinite(la) && Number.isFinite(ln)) {
+        await quickSaveToFavoriteCard(
+          {
+            address: item.fullDescription,
+            lat: la,
+            lng: ln,
+            inferredIcon: inferPlaceIcon(item.fullDescription) as string,
+          },
+          `place:${item.placeId}`,
+        );
+      }
+    },
+    [canQuickSaveToFavoriteCard, quickSaveToFavoriteCard],
   );
 
   useEffect(() => {
@@ -616,6 +693,22 @@ export default function SearchDestinationScreen() {
             onSubmitEditing={() => {
               const t = query.trim();
               if (!t) return;
+              if (isFavoriteFlow && !isRoutePlanEdit) {
+                void (async () => {
+                  const key = process.env.EXPO_PUBLIC_GOOGLE_API_KEY?.trim();
+                  if (!key) return;
+                  const loc = await geocodeAddressText(t, key, userCoords);
+                  if (loc) {
+                    goFavoriteConfirm({
+                      address: t,
+                      lat: loc.lat,
+                      lng: loc.lng,
+                      inferredIcon: inferPlaceIcon(t) as string,
+                    });
+                  }
+                })();
+                return;
+              }
               if (!isRoutePlanEdit) {
                 goToResults(t);
                 return;
@@ -815,7 +908,22 @@ export default function SearchDestinationScreen() {
                   <View key={item.placeId}>
                     <TouchableOpacity
                       style={styles.rowPad}
-                      onPress={() => void openPlaceForFlow(item)}
+                      onPress={() => {
+                        if (isFavoriteFlow) {
+                          void openPlaceForFlow(item);
+                          return;
+                        }
+                        if (
+                          item.destLat != null &&
+                          item.destLng != null &&
+                          Number.isFinite(item.destLat) &&
+                          Number.isFinite(item.destLng)
+                        ) {
+                          pickPlaceForRoutePlan(item.fullDescription, item.destLat, item.destLng);
+                          return;
+                        }
+                        void openPlaceForFlow(item);
+                      }}
                       activeOpacity={0.75}
                       accessibilityRole="button"
                       accessibilityLabel={`${item.title}. ${item.subtitle || item.fullDescription}. Distância ${item.distanceLabel}`}
@@ -832,7 +940,25 @@ export default function SearchDestinationScreen() {
                         <TitleWithHighlight text={item.title} query={query} />
                         {item.subtitle ? <Text style={styles.rowSub}>{item.subtitle}</Text> : null}
                       </View>
-                      <MaterialCommunityIcons name="open-in-new" size={20} color="#9CA3AF" />
+                      {canQuickSaveToFavoriteCard ? (
+                        <TouchableOpacity
+                          style={styles.starBtn}
+                          onPress={() => void quickSavePlaceRow(item)}
+                          disabled={savingFavorite}
+                          hitSlop={A11Y_HIT_SLOP}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Salvar ${item.title} no favorito`}
+                          accessibilityState={{ disabled: savingFavorite }}
+                        >
+                          <MaterialCommunityIcons
+                            name={savingStarKey === `place:${item.placeId}` ? 'star' : 'star-outline'}
+                            size={22}
+                            color={savingStarKey === `place:${item.placeId}` ? PRIMARY : '#9CA3AF'}
+                          />
+                        </TouchableOpacity>
+                      ) : (
+                        <MaterialCommunityIcons name="open-in-new" size={20} color="#9CA3AF" />
+                      )}
                     </TouchableOpacity>
                     {index < placeRows.length - 1 ? <View style={styles.divider} /> : null}
                   </View>
@@ -861,8 +987,7 @@ export default function SearchDestinationScreen() {
                             address: dest,
                             lat: station.lat,
                             lng: station.lng,
-                            inferredIcon:
-                              station.type === 'subway' ? 'subway-variant' : 'bus',
+                            inferredIcon: 'bus',
                           });
                           return;
                         }
@@ -882,7 +1007,36 @@ export default function SearchDestinationScreen() {
                         <TitleWithHighlight text={station.name} query={query} />
                         <Text style={styles.rowSub}>{station.address}</Text>
                       </View>
-                      <MaterialCommunityIcons name="clipboard-text-clock-outline" size={22} color="#9CA3AF" />
+                      {canQuickSaveToFavoriteCard ? (
+                        <TouchableOpacity
+                          style={styles.starBtn}
+                          onPress={() =>
+                            void quickSaveToFavoriteCard({
+                              address: dest,
+                              lat: station.lat,
+                              lng: station.lng,
+                              inferredIcon: station.type === 'subway' ? 'subway-variant' : 'bus',
+                            }, `station:${station.id}`)
+                          }
+                          disabled={savingFavorite}
+                          hitSlop={A11Y_HIT_SLOP}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Salvar estação ${station.name} no favorito`}
+                          accessibilityState={{ disabled: savingFavorite }}
+                        >
+                          <MaterialCommunityIcons
+                            name={savingStarKey === `station:${station.id}` ? 'star' : 'star-outline'}
+                            size={22}
+                            color={savingStarKey === `station:${station.id}` ? PRIMARY : '#9CA3AF'}
+                          />
+                        </TouchableOpacity>
+                      ) : (
+                        <MaterialCommunityIcons
+                          name="clipboard-text-clock-outline"
+                          size={22}
+                          color="#9CA3AF"
+                        />
+                      )}
                     </TouchableOpacity>
                     {index < stationSuggestions.length - 1 ? <View style={styles.divider} /> : null}
                   </View>
@@ -966,6 +1120,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 14,
     gap: 12,
+  },
+  starBtn: {
+    paddingLeft: 8,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rowLeftCol: {
     alignItems: 'center',

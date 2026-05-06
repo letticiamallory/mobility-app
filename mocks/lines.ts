@@ -1,5 +1,9 @@
+import type { LinesRegionId } from '../utils/lines-region';
+
 export type LineItem = {
   id: string;
+  /** Região dos dados (API mobility-api). */
+  region?: LinesRegionId;
   type: 'bus' | 'metro';
   code: string;
   name: string;

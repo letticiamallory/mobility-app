@@ -61,18 +61,22 @@ describe('fetchDiverseRoutes', () => {
     expect(n).toBe(5);
   });
 
-  it('repassa time_filter, route_preference e accompanied real (sem hardcode)', async () => {
+  it('repassa time_filter, route_preferences combinados e accompanied real', async () => {
     searchRoutesMock.mockResolvedValue({
       route: { id: 1 },
       routes_alone: [],
       routes_companied: [],
     });
-    await fetchDiverseRoutes('A', 'B', 3, 'alone', 'set_departure_time', '08:00', 'less_walking');
+    await fetchDiverseRoutes('A', 'B', 3, 'alone', 'set_departure_time', '08:00', undefined, {
+      routePreferences: ['less_walking', 'less_transfers'],
+    });
     const first = searchRoutesMock.mock.calls[0];
     expect(first[4]).toBe('alone');
     expect(first[5]).toBe('set_departure_time');
     expect(first[6]).toBe('08:00');
-    expect(first[7]).toBe('less_walking');
+    expect(first[7]).toBeUndefined();
+    const opts = first[8] as { routePreferences?: string[] };
+    expect(opts.routePreferences).toEqual(['less_walking', 'less_transfers']);
   });
 
   it('quando accompanied não é informado, encaminha undefined (cliente não força)', async () => {

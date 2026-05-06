@@ -9,6 +9,7 @@ import {
 import { getUserInfo } from '../services/token.service';
 import * as Location from 'expo-location';
 import {
+  ActivityIndicator,
   Alert,
   Keyboard,
   Linking,
@@ -108,21 +109,31 @@ type TimeFilterOption = {
 };
 
 type TimeFilterKey = TimeFilterOption['key'];
-type RoutePreference = 'active' | 'less_transfers' | 'less_walking';
+type RoutePreferenceKey = 'less_transfers' | 'less_walking';
 
 const TIME_FILTER_OPTIONS: TimeFilterOption[] = [
-  { key: 'leave_now', label: 'Sair agora' },
+  { key: 'leave_now', label: 'Sair agora (próximos 30 min)' },
   { key: 'set_departure_time', label: 'Definir horário de saída', timeValue: '08:00' },
   { key: 'set_arrival_time', label: 'Definir horário de chegada desejado', timeValue: '09:00' },
-  { key: 'last_departures_today', label: 'Últimas partidas para hoje' },
+  { key: 'last_departures_today', label: 'Últimas partidas (a partir das 21h)' },
 ];
 
 type MciName = ComponentProps<typeof MaterialCommunityIcons>['name'];
 
-const ROUTE_PREFERENCE_OPTIONS: Array<{ key: RoutePreference; label: string; icon: MciName }> = [
+const ROUTE_PREFERENCE_OPTIONS: Array<{ key: RoutePreferenceKey; label: string; icon: MciName }> = [
   { key: 'less_transfers', label: 'Menos trocas', icon: 'swap-horizontal' },
   { key: 'less_walking', label: 'Caminhar menos', icon: 'walk' },
 ];
+
+function buildRoutePreferences(
+  preferLessTransfers: boolean,
+  preferLessWalking: boolean,
+): string[] | undefined {
+  const out: string[] = [];
+  if (preferLessTransfers) out.push('less_transfers');
+  if (preferLessWalking) out.push('less_walking');
+  return out.length > 0 ? out : undefined;
+}
 
 const TIME_FILTER_LABELS: Record<TimeFilterKey, string> = {
   leave_now: 'Sair agora',
@@ -292,6 +303,41 @@ function serializeRouteDetail(
   })();
   const detailTotalTime = topLevelDuration || durationFromStages;
 
+  const extractStageFallbackPoints = (stage: Stage): DetailLatLng[] => {
+    const raw = stage as unknown as Record<string, unknown>;
+    const toLatLng = (v: unknown): DetailLatLng | null => {
+      if (!v || typeof v !== 'object') return null;
+      const o = v as Record<string, unknown>;
+      const lat = typeof o.latitude === 'number' ? o.latitude : typeof o.lat === 'number' ? o.lat : Number(o.lat);
+      const lng =
+        typeof o.longitude === 'number' ? o.longitude : typeof o.lng === 'number' ? o.lng : Number(o.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return { latitude: lat, longitude: lng };
+    };
+
+    // Tentativas comuns (Google / OTP / mapeamentos do backend)
+    const start =
+      toLatLng(raw.start_location) ??
+      toLatLng(raw.startLocation) ??
+      toLatLng(raw.location) ??
+      toLatLng(raw.from) ??
+      null;
+    const end =
+      toLatLng(raw.end_location) ??
+      toLatLng(raw.endLocation) ??
+      toLatLng(raw.to) ??
+      toLatLng(raw.destination_location) ??
+      toLatLng(raw.destinationLocation) ??
+      null;
+
+    if (start && end && (start.latitude !== end.latitude || start.longitude !== end.longitude)) {
+      return [start, end];
+    }
+    if (start) return [start];
+    if (end) return [end];
+    return [];
+  };
+
   const stages = (route.stages ?? []).map((s) => {
     const pts = Array.isArray(s.points)
       ? (s.points as { latitude?: number; longitude?: number }[])
@@ -304,6 +350,7 @@ function serializeRouteDetail(
           )
           .map((p) => ({ latitude: p.latitude as number, longitude: p.longitude as number }))
       : [];
+    const fallbackPts = pts.length > 0 ? [] : extractStageFallbackPoints(s);
     return {
       mode: normalizeStageModeForDetail(s.mode),
       instruction: String(s.instruction ?? ''),
@@ -322,7 +369,7 @@ function serializeRouteDetail(
       slope_warning: s.slope_warning === true,
       segment_images: collectStageDetailImages(s),
       line_code: s.line_code != null && String(s.line_code).trim() ? String(s.line_code) : undefined,
-      points: pts.length > 0 ? pts : undefined,
+      points: pts.length > 0 ? pts : fallbackPts.length > 0 ? fallbackPts : undefined,
     };
   });
 
@@ -533,7 +580,9 @@ export default function RouteResultsScreen() {
   const [selectedTimeFilter, setSelectedTimeFilter] = useState<TimeFilterOption>(TIME_FILTER_OPTIONS[0]);
   const [showTimeFilterList, setShowTimeFilterList] = useState(false);
   const [forcedServerResults, setForcedServerResults] = useState(false);
-  const [selectedRoutePreference, setSelectedRoutePreference] = useState<RoutePreference>('active');
+  const [initialRoutesLoading, setInitialRoutesLoading] = useState(false);
+  const [preferLessTransfers, setPreferLessTransfers] = useState(false);
+  const [preferLessWalking, setPreferLessWalking] = useState(false);
   const [showManualTimeModal, setShowManualTimeModal] = useState(false);
   const [pendingTimeFilterKey, setPendingTimeFilterKey] = useState<
     'set_departure_time' | 'set_arrival_time' | null
@@ -554,8 +603,10 @@ export default function RouteResultsScreen() {
     setFetchedSplit(null);
     setShowTimeFilterList(false);
     setForcedServerResults(false);
+    setInitialRoutesLoading(false);
     setSelectedTimeFilter(TIME_FILTER_OPTIONS[0]);
-    setSelectedRoutePreference('active');
+    setPreferLessTransfers(false);
+    setPreferLessWalking(false);
     setShowManualTimeModal(false);
     setPendingTimeFilterKey(null);
     setManualTimeDigits(['', '', '', '']);
@@ -566,13 +617,35 @@ export default function RouteResultsScreen() {
   /** Sem `routes` na URL (ex.: home / estações): busca na API ao abrir. */
   useEffect(() => {
     const rawParam = Array.isArray(params.routes) ? params.routes[0] : params.routes;
-    if (rawParam && String(rawParam).trim()) return;
+    const rawText = rawParam ? String(rawParam).trim() : '';
+    // Se a tela veio com `routes` via params, mas está vazio (caso comum quando a busca
+    // anterior falhou / mudou backend), fazemos fetch mesmo assim para não "travar" a UI.
+    if (rawText) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(rawText)) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          const obj = parsed as Record<string, unknown>;
+          const alone = Array.isArray(obj.alone) ? obj.alone : null;
+          const companied = Array.isArray(obj.companied) ? obj.companied : null;
+          if (alone && companied && (alone.length > 0 || companied.length > 0)) {
+            setInitialRoutesLoading(false);
+            return;
+          }
+        } else if (Array.isArray(parsed) && parsed.length > 0) {
+          setInitialRoutesLoading(false);
+          return;
+        }
+      } catch {
+        // ignora — se não der pra parsear, seguimos com fetch como fallback
+      }
+    }
 
     const dest = destinationFromParams.trim();
     if (!dest) return;
 
     let cancelled = false;
     (async () => {
+      setInitialRoutesLoading(true);
       try {
         const { userId } = await getUserInfo();
         if (typeof userId !== 'number' || Number.isNaN(userId) || cancelled) {
@@ -580,6 +653,7 @@ export default function RouteResultsScreen() {
           return;
         }
         const originQuery = originFromParams.trim() || 'Local atual';
+        const routePrefs = buildRoutePreferences(preferLessTransfers, preferLessWalking);
         const payload = await fetchDiverseRoutes(
           originQuery,
           dest,
@@ -587,18 +661,23 @@ export default function RouteResultsScreen() {
           undefined,
           selectedTimeFilter.key,
           selectedTimeFilter.timeValue,
-          selectedRoutePreference,
+          undefined,
           {
             originAddress: originQuery,
             destinationAddress: dest,
+            ...(routePrefs ? { routePreferences: routePrefs } : {}),
           },
         );
         if (!cancelled) {
           setFetchedSplit(payload);
           setMiddleStop(null);
+          setForcedServerResults(true);
         }
       } catch {
         if (!cancelled) setFetchedSplit({ alone: [], companied: [] });
+        if (!cancelled) setForcedServerResults(true);
+      } finally {
+        if (!cancelled) setInitialRoutesLoading(false);
       }
     })();
     return () => {
@@ -609,7 +688,8 @@ export default function RouteResultsScreen() {
     originFromParams,
     params.routes,
     selectedTimeFilter,
-    selectedRoutePreference,
+    preferLessTransfers,
+    preferLessWalking,
   ]);
 
   useEffect(() => {
@@ -743,10 +823,13 @@ export default function RouteResultsScreen() {
 
   const fetchRoutesForHeader = async (opts?: {
     timeOption?: TimeFilterOption;
-    routePreference?: RoutePreference;
+    preferLessTransfers?: boolean;
+    preferLessWalking?: boolean;
   }) => {
     const nextTimeOption = opts?.timeOption ?? selectedTimeFilter;
-    const nextRoutePreference = opts?.routePreference ?? selectedRoutePreference;
+    const nextLessTransfers = opts?.preferLessTransfers ?? preferLessTransfers;
+    const nextLessWalking = opts?.preferLessWalking ?? preferLessWalking;
+    const routePrefs = buildRoutePreferences(nextLessTransfers, nextLessWalking);
     const destinationQuery = headerDestination.trim();
     if (!destinationQuery) return;
     Keyboard.dismiss();
@@ -775,8 +858,11 @@ export default function RouteResultsScreen() {
         undefined,
         nextTimeOption.key,
         nextTimeOption.timeValue,
-        nextRoutePreference,
-        historyExtras,
+        undefined,
+        {
+          ...historyExtras,
+          ...(routePrefs ? { routePreferences: routePrefs } : {}),
+        },
       );
       setFetchedSplit(payload);
       setForcedServerResults(true);
@@ -895,43 +981,13 @@ export default function RouteResultsScreen() {
     )[0];
   }, [filteredRoutes]);
   const displayedRoutes = useMemo(() => {
-    const familyOrder: Array<ReturnType<typeof routeTransportFamily>> = [
-      'walk-only',
-      'bus-only',
-      'subway-only',
-      'combined',
-      'other',
-    ];
-    const familyGroups = new Map<ReturnType<typeof routeTransportFamily>, RouteItem[]>();
-    for (const route of filteredRoutes) {
-      const family = routeTransportFamily(route);
-      const group = familyGroups.get(family) ?? [];
-      group.push(route);
-      familyGroups.set(family, group);
-    }
-    const picked: RouteItem[] = [];
-    const seen = new Set<string>();
-    if (mostAccessibleRoute) {
-      seen.add(routeSignature(mostAccessibleRoute));
-    }
-    for (const family of familyOrder) {
-      const first = familyGroups.get(family)?.[0];
-      if (!first) continue;
-      const sig = routeSignature(first);
-      if (seen.has(sig)) continue;
-      picked.push(first);
-      seen.add(sig);
-    }
-    if (picked.length < 4) {
-      for (const route of filteredRoutes) {
-        const sig = routeSignature(route);
-        if (seen.has(sig)) continue;
-        picked.push(route);
-        seen.add(sig);
-        if (picked.length >= 4) break;
-      }
-    }
-    return picked;
+    const featuredSig = mostAccessibleRoute ? routeSignature(mostAccessibleRoute) : null;
+    const list = featuredSig
+      ? filteredRoutes.filter((r) => routeSignature(r) !== featuredSig)
+      : [...filteredRoutes];
+    // Regra do produto: dentro da aba, ordenar por duração total (menor → maior),
+    // mantendo o card "rota mais acessível" separado no topo.
+    return [...list].sort((a, b) => routeDurationMinutes(a) - routeDurationMinutes(b));
   }, [filteredRoutes, mostAccessibleRoute]);
 
   const cardRoutes = useMemo(
@@ -1049,11 +1105,12 @@ export default function RouteResultsScreen() {
       .map((s) => extractPlaceName(s))
       .filter(Boolean)
       .filter((name, idx, arr) => idx === 0 || name.toLowerCase() !== arr[idx - 1]?.toLowerCase())
-      .slice(0, 3);
+      // todas as etapas (não truncar) — UX: o Text abaixo pode quebrar em 2 linhas
+      ;
 
     const odSummary =
       summaryPlaces.length >= 2
-        ? `${summaryPlaces[0]} › ${summaryPlaces[summaryPlaces.length - 1]}`
+        ? summaryPlaces.join(' › ')
         : summaryPlaces.length === 1
           ? summaryPlaces[0]
           : [headerOrigin.trim(), headerDestination.trim()].filter(Boolean).join(' › ') || 'Trajeto direto';
@@ -1078,26 +1135,33 @@ export default function RouteResultsScreen() {
               minutesLeft = minutesUntilClock(departureClock);
             }
             if (minutesLeft <= MAX_RELATIVE_WAIT_DISPLAY_MINUTES) {
-              return `Sai às ${departureClock} · em ${formatWaitTime(minutesLeft)}`;
+              return `O ônibus sai às ${departureClock} · em ${formatWaitTime(minutesLeft)}`;
             }
             if (selectedTimeFilter.key === 'leave_now') {
               return `Próxima partida · ${departureClock}`;
             }
             return `Partida prevista · ${departureClock}`;
           })()
-        : `Sai às ${departureTime}`;
+        : `O ônibus sai às ${departureTime}`;
 
     const stageRow = (orderedStages.length > 0 ? orderedStages : [{ mode: 'walk' }]) as Stage[];
     const allStagesAreWalk =
       stageRow.length > 0 && stageRow.every((stage) => isWalkStageMode(stage.mode));
-    const durationTopValue =
-      totalMinutes > 0
-        ? `${totalMinutes}`
-        : (() => {
-            const fallback = formatDurationLabel(route);
-            const digits = fallback.match(/\d+/)?.[0];
-            return digits ?? '--';
-          })();
+    const durationTopValue = (() => {
+      const asLabel = (totalM: number): string => {
+        const safe = Math.max(0, Math.floor(totalM));
+        if (safe < 60) return `${safe} min`;
+        const h = Math.floor(safe / 60);
+        const m = safe % 60;
+        return `${h}h ${String(m).padStart(2, '0')}min`;
+      };
+      if (totalMinutes > 0) return asLabel(totalMinutes);
+      const fallback = formatDurationLabel(route);
+      const digits = fallback.match(/\d+/)?.[0];
+      const asMinutes = digits ? Number(digits) : NaN;
+      if (Number.isFinite(asMinutes)) return asLabel(asMinutes);
+      return '--';
+    })();
 
     return (
       <View
@@ -1144,7 +1208,6 @@ export default function RouteResultsScreen() {
               <Text style={{ color: '#1E1D1D', fontSize: 32, fontWeight: '700', lineHeight: 36 }}>
                 {durationTopValue}
               </Text>
-              <Text style={{ color: '#999999', fontSize: 14 }}> min</Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={{ color: '#1E1D1D', fontSize: 13, fontWeight: '500' }}>{departureTime}</Text>
@@ -1231,7 +1294,7 @@ export default function RouteResultsScreen() {
               {departureInfoLine}
             </Text>
           </View>
-          <Text style={{ color: '#999999', fontSize: 12, marginBottom: 12 }} numberOfLines={1}>
+          <Text style={{ color: '#999999', fontSize: 12, marginBottom: 12 }} numberOfLines={2}>
             {odSummary}
           </Text>
 
@@ -1296,24 +1359,7 @@ export default function RouteResultsScreen() {
                   </TouchableOpacity>
                 );
               })()}
-              {typeof route.accessibility_score === 'number' && (
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 4,
-                    backgroundColor: '#EEF2FF',
-                    borderRadius: 20,
-                    paddingHorizontal: 10,
-                    paddingVertical: 4,
-                  }}
-                  accessibilityLabel={`Acessibilidade ${Math.round(route.accessibility_score)} de 100`}
-                >
-                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#3730A3' }}>
-                    {Math.round(route.accessibility_score)}/100
-                  </Text>
-                </View>
-              )}
+              {/* Score de acessibilidade existe no backend; não exibimos no card */}
               {rainChip && (
                 <View
                   style={{
@@ -1653,7 +1699,8 @@ export default function RouteResultsScreen() {
               <MaterialCommunityIcons name="chevron-down" size={16} color="#4B5563" />
             </TouchableOpacity>
             {ROUTE_PREFERENCE_OPTIONS.map((pref) => {
-              const selected = selectedRoutePreference === pref.key;
+              const selected =
+                pref.key === 'less_transfers' ? preferLessTransfers : preferLessWalking;
               return (
                 <TouchableOpacity
                   key={pref.key}
@@ -1661,11 +1708,18 @@ export default function RouteResultsScreen() {
                   activeOpacity={0.85}
                   onPress={() => {
                     Keyboard.dismiss();
-                    setSelectedRoutePreference(pref.key);
-                    fetchRoutesForHeader({ routePreference: pref.key });
+                    if (pref.key === 'less_transfers') {
+                      const next = !preferLessTransfers;
+                      setPreferLessTransfers(next);
+                      void fetchRoutesForHeader({ preferLessTransfers: next });
+                    } else {
+                      const next = !preferLessWalking;
+                      setPreferLessWalking(next);
+                      void fetchRoutesForHeader({ preferLessWalking: next });
+                    }
                   }}
                   accessibilityRole="button"
-                  accessibilityLabel={`Preferência de rota: ${pref.label}`}
+                  accessibilityLabel={`Preferência de rota: ${pref.label}. Toque para ligar ou desligar`}
                   accessibilityState={{ selected }}
                 >
                   <MaterialCommunityIcons
@@ -1751,7 +1805,12 @@ export default function RouteResultsScreen() {
         {mostAccessibleRoute ? renderRouteCard(mostAccessibleRoute, 'most-accessible', true, 0) : null}
 
         {filteredRoutes.length === 0 ? (
-          hasTypedAddress ? (
+        initialRoutesLoading ? (
+          <View style={styles.emptyRoutesWrap}>
+            <ActivityIndicator size="large" color="#0057A8" />
+            <Text style={styles.emptyRoutesHintText}>Carregando trajetos…</Text>
+          </View>
+        ) : hasTypedAddress ? (
             <Text style={styles.emptyRoutesText}>
               Nao encontramos uma rota tranquila para esse perfil agora. Tente ajustar o horario ou
               alternar entre Sozinho e Acompanhado.

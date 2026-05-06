@@ -3,6 +3,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   InteractionManager,
   Modal,
   Platform,
@@ -427,6 +428,18 @@ export default function RoutePlanScreen() {
     } catch {
       packagedRoutes = { alone: [], companied: [] };
       setFindRoutesLoading(false);
+    }
+
+    const aloneCount = Array.isArray(packagedRoutes.alone) ? packagedRoutes.alone.length : 0;
+    const companiedCount = Array.isArray(packagedRoutes.companied) ? packagedRoutes.companied.length : 0;
+    const totalCount = aloneCount + companiedCount;
+    if (totalCount === 0) {
+      // Fica no route-plan (com mapa) em vez de abrir `route-results` vazio.
+      // O usuário pode ajustar origem/destino e tentar novamente.
+      // (A API também pode retornar erro; aqui tratamos o caso de "sem rotas".)
+      // eslint-disable-next-line no-undef
+      Alert.alert('Nenhum trajeto encontrado', 'Tente ajustar origem/destino ou tente novamente em alguns instantes.');
+      return;
     }
 
     const p: Record<string, string> = {

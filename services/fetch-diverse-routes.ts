@@ -82,6 +82,8 @@ export async function fetchDiverseRoutes(
     destinationTitle?: string;
     originAddress?: string;
     destinationAddress?: string;
+    /** `less_transfers` e/ou `less_walking` — combináveis. */
+    routePreferences?: string[];
   },
 ): Promise<DiverseRoutesPayload> {
   const overallController = new AbortController();
@@ -129,6 +131,9 @@ export async function fetchDiverseRoutes(
       : {}),
     ...(historyExtras?.destinationAddress?.trim()
       ? { destinationAddress: historyExtras.destinationAddress.trim() }
+      : {}),
+    ...(historyExtras?.routePreferences?.length
+      ? { routePreferences: historyExtras.routePreferences }
       : {}),
   };
 

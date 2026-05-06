@@ -42,6 +42,19 @@ const PRESET_PLACEHOLDER_ADDRESS: Record<string, string> = {
   school: 'Escola',
 };
 
+function isConfiguredFavorite(item: HomeFavoriteRow): boolean {
+  const addr = (item.address ?? '').trim();
+  if (!addr) return false;
+  // Enquanto tiver "toque para editar", consideramos não configurado.
+  if ((item.subtitle ?? '').trim()) return false;
+  // Presets antigos podem ter address placeholder igual ao label (Casa/Trabalho/etc).
+  const id = String(item.id).trim();
+  const ph = PRESET_PLACEHOLDER_ADDRESS[id];
+  if (ph && addr === ph) return false;
+  if ((id === 'home' || id === 'work') && addr === item.label.trim()) return false;
+  return Number.isFinite(item.lat) && Number.isFinite(item.lng);
+}
+
 function favoriteCardSubtitle(item: HomeFavoriteRow): string {
   const hint = item.subtitle?.trim();
   if (hint) return hint;
@@ -140,8 +153,9 @@ export default function HomeScreen() {
   }, []);
 
   const goToDirections = (dest: string, origin?: string) => {
+    // Evita tela vazia: `route-plan` pré-carrega e só então abre `route-results`.
     router.push({
-      pathname: '/route-results',
+      pathname: '/route-plan',
       params: {
         destination: dest,
         ...(origin ? { origin } : {}),
@@ -187,6 +201,17 @@ export default function HomeScreen() {
         favoriteId: item.id,
         presetIcon: item.icon,
         screenTitle,
+      },
+    });
+  };
+
+  const openFavoriteRoutePlan = (item: HomeFavoriteRow) => {
+    router.push({
+      pathname: '/route-plan',
+      params: {
+        destination: item.address.trim(),
+        destLat: String(item.lat),
+        destLng: String(item.lng),
       },
     });
   };
@@ -287,11 +312,21 @@ export default function HomeScreen() {
             <View key={item.id} style={styles.favoriteCardWrap}>
               <TouchableOpacity
                 style={[styles.favoriteCard, sx.fillCard]}
-                onPress={() => openFavoriteEditor(item)}
+                onPress={() => {
+                  if (isConfiguredFavorite(item)) {
+                    openFavoriteRoutePlan(item);
+                    return;
+                  }
+                  openFavoriteEditor(item);
+                }}
                 activeOpacity={0.85}
                 accessibilityRole="button"
                 accessibilityLabel={`Favorito ${item.label}`}
-                accessibilityHint="Editar este endereço favorito"
+                accessibilityHint={
+                  isConfiguredFavorite(item)
+                    ? 'Abre o planejamento de rota para este destino'
+                    : 'Editar este endereço favorito'
+                }
               >
                 <MaterialCommunityIcons
                   name={item.icon as keyof typeof MaterialCommunityIcons.glyphMap}

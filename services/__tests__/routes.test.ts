@@ -124,6 +124,20 @@ describe('searchRoutes', () => {
     });
   });
 
+  it('prefere route_preferences no corpo e omite route_preference legado', async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ routes: [] }),
+    });
+    await searchRoutes('A', 'B', 1, 'bus', undefined, 'leave_now', undefined, 'less_transfers', {
+      routePreferences: ['less_transfers', 'less_walking'],
+    });
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(body.route_preferences).toEqual(['less_transfers', 'less_walking']);
+    expect(body).not.toHaveProperty('route_preference');
+  });
+
   it('omite time_filter quando vazio', async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce({
       ok: true,

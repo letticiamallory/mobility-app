@@ -14,7 +14,7 @@ export function parseScheduleEntry(value: unknown): string | null {
   }
   if (typeof value === 'string') {
     const s = value.trim();
-    if (!s || s === '[object Object]') return null;
+    if (!s || s === '[object Object]' || s === '{}' || s === '[]') return null;
     const match = s.match(TIME_TOKEN_RE);
     if (match) {
       const h = Number(match[1]);

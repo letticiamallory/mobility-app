@@ -55,6 +55,8 @@ export type SearchRoutesOptions = {
   /** Endereço completo persistido em `origin_address` / `destination_address` no histórico. */
   originAddress?: string;
   destinationAddress?: string;
+  /** Preferências combináveis enviadas como `route_preferences` na API. */
+  routePreferences?: string[];
 };
 
 export class SearchRoutesTimeoutError extends Error {
@@ -85,7 +87,11 @@ export async function searchRoutes(
     ...(accompanied !== undefined && accompanied !== '' ? { accompanied } : {}),
     ...(timeFilter ? { time_filter: timeFilter } : {}),
     ...(timeValue ? { time_value: timeValue } : {}),
-    ...(routePreference ? { route_preference: routePreference } : {}),
+    ...(options?.routePreferences?.length
+      ? { route_preferences: options.routePreferences }
+      : routePreference
+        ? { route_preference: routePreference }
+        : {}),
     ...(options?.originTitle?.trim() ? { origin_title: options.originTitle.trim() } : {}),
     ...(options?.destinationTitle?.trim()
       ? { destination_title: options.destinationTitle.trim() }
