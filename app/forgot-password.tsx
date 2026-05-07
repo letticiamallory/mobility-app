@@ -81,7 +81,7 @@ export default function ForgotPasswordScreen() {
       setLoading(true);
       await forgotPassword(email.trim());
       router.push({
-        pathname: '/email-confirmation',
+        pathname: '/reset-code',
         params: { email: email.trim() },
       });
     } catch (error) {
