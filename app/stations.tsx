@@ -181,10 +181,10 @@ export default function StationsScreen() {
 
   useEffect(() => {
     const load = async () => {
+      let lat = MAP_CENTER.latitude;
+      let lng = MAP_CENTER.longitude;
       try {
         setLoading(true);
-        let lat = MAP_CENTER.latitude;
-        let lng = MAP_CENTER.longitude;
 
         const permission = await Location.requestForegroundPermissionsAsync();
         if (permission.status === 'granted') {
@@ -199,7 +199,8 @@ export default function StationsScreen() {
         const response = await fetch(`${API_URL}/stations/nearby?lat=${lat}&lng=${lng}`);
         const data = response.ok ? ((await response.json()) as unknown) : [];
         const parsed = parseStations(data);
-        setStationsFetchError(!response.ok);
+        const apiFailed = !response.ok;
+        setStationsFetchError(apiFailed);
         setStations(parsed);
       } catch {
         setStationsFetchError(true);

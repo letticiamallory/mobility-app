@@ -225,6 +225,10 @@ export default function SearchDestinationScreen() {
     destination?: string | string[];
     originCoordinate?: string | string[];
     destinationCoordinate?: string | string[];
+    originLat?: string | string[];
+    originLng?: string | string[];
+    destLat?: string | string[];
+    destLng?: string | string[];
     editField?: string | string[];
   }>();
   const isFavoriteFlow = navParams.favoriteFlow === '1' || navParams.favoriteFlow === 'true';
@@ -341,6 +345,12 @@ export default function SearchDestinationScreen() {
         rp.originLng = String(lng);
         const dc = paramOne(navParams.destinationCoordinate);
         if (dc) rp.destinationCoordinate = dc;
+        const dLat = paramOne(navParams.destLat).trim();
+        const dLng = paramOne(navParams.destLng).trim();
+        if (dLat && dLng) {
+          rp.destLat = dLat;
+          rp.destLng = dLng;
+        }
       } else {
         rp.destination = fullDescription;
         rp.destLat = String(lat);
@@ -348,6 +358,12 @@ export default function SearchDestinationScreen() {
         if (baseO) rp.origin = baseO;
         const oc = paramOne(navParams.originCoordinate);
         if (oc) rp.originCoordinate = oc;
+        const oLat = paramOne(navParams.originLat).trim();
+        const oLng = paramOne(navParams.originLng).trim();
+        if (oLat && oLng) {
+          rp.originLat = oLat;
+          rp.originLng = oLng;
+        }
       }
       router.push({ pathname: '/route-plan', params: rp });
     },
@@ -1010,14 +1026,18 @@ export default function SearchDestinationScreen() {
                       {canQuickSaveToFavoriteCard ? (
                         <TouchableOpacity
                           style={styles.starBtn}
-                          onPress={() =>
-                            void quickSaveToFavoriteCard({
-                              address: dest,
-                              lat: station.lat,
-                              lng: station.lng,
-                              inferredIcon: station.type === 'subway' ? 'subway-variant' : 'bus',
-                            }, `station:${station.id}`)
-                          }
+                          onPress={() => {
+                            const addr = `${station.name} — ${station.address}`;
+                            void quickSaveToFavoriteCard(
+                              {
+                                address: addr,
+                                lat: station.lat,
+                                lng: station.lng,
+                                inferredIcon: station.type === 'subway' ? 'subway-variant' : 'bus',
+                              },
+                              `station:${station.id}`,
+                            );
+                          }}
                           disabled={savingFavorite}
                           hitSlop={A11Y_HIT_SLOP}
                           accessibilityRole="button"

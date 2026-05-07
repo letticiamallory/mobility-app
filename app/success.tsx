@@ -54,8 +54,13 @@ export default function SuccessScreen() {
   }, [reduceMotion, dotTL, dotTR, dotBL, dotBR, star1, star2, star3, centralScale]);
 
   useEffect(() => {
+    /**
+     * Após `/auth/verify-email`, o usuário ainda não tem token (cadastro+verificação não logam
+     * automaticamente). Mandar para `/home` força redirect imediato para login mesmo assim,
+     * mas é mais coerente já levar para a tela de login.
+     */
     const timer = setTimeout(() => {
-      router.replace('/home');
+      router.replace('/login');
     }, 3000);
     return () => clearTimeout(timer);
   }, [router]);

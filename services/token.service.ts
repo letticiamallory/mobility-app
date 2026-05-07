@@ -1,5 +1,4 @@
 import { Platform } from 'react-native';
-import { isDevSkipLogin } from '../constants/dev';
 
 const TOKEN_KEY = 'mobility_token';
 const USER_ID_KEY = 'mobility_user_id';
@@ -8,10 +7,35 @@ const USER_EMAIL_KEY = 'mobility_user_email';
 const REMEMBER_ME_KEY = 'mobility_remember_me';
 const USER_AVATAR_KEY = 'mobility_user_avatar';
 
-/** Placeholder só para ecrãs que exigem `if (token)`; chamadas à API podem falhar até fazeres login real. */
-const DEV_PLACEHOLDER_TOKEN = '__dev_skip_login__';
-
 const isWeb = Platform.OS === 'web';
+
+/**
+ * Avatar pode ser data URI base64 (até centenas de KB), e o SecureStore Android tem
+ * limite de ~2 KB por valor. Usar AsyncStorage para o avatar evita perdas silenciosas.
+ */
+async function asyncGet(key: string): Promise<string | null> {
+  if (isWeb) return webGet(key);
+  const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+  return AsyncStorage.getItem(key);
+}
+
+async function asyncSet(key: string, value: string) {
+  if (isWeb) {
+    webSet(key, value);
+    return;
+  }
+  const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+  await AsyncStorage.setItem(key, value);
+}
+
+async function asyncDelete(key: string) {
+  if (isWeb) {
+    webRemove(key);
+    return;
+  }
+  const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+  await AsyncStorage.removeItem(key);
+}
 
 function webGet(key: string): string | null {
   try {
@@ -72,14 +96,18 @@ export async function getStoredTokenOnly() {
 }
 
 export async function getToken() {
-  const stored = await secureGet(TOKEN_KEY);
-  if (stored) return stored;
-  if (isDevSkipLogin()) return DEV_PLACEHOLDER_TOKEN;
-  return null;
+  return secureGet(TOKEN_KEY);
 }
 
+/** Encerra sessão: JWT + identidade local (evita `user_id` antigo com token ausente). */
 export async function removeToken() {
   await secureDelete(TOKEN_KEY);
+  await secureDelete(USER_ID_KEY);
+  await secureDelete(USER_NAME_KEY);
+  await secureDelete(USER_EMAIL_KEY);
+  // Limpa as duas localizações usadas pelo avatar (legado em SecureStore e novo em AsyncStorage).
+  await secureDelete(USER_AVATAR_KEY);
+  await asyncDelete(USER_AVATAR_KEY);
 }
 
 export async function saveUserInfo(userId: number, name: string, email?: string) {
@@ -104,13 +132,6 @@ export async function getUserInfo() {
       email,
     };
   }
-  if (isDevSkipLogin()) {
-    return {
-      userId: 1,
-      name: 'Desenvolvimento',
-      email: 'dev@local.test',
-    };
-  }
   return {
     userId: null,
     name,
@@ -128,15 +149,29 @@ export async function getRememberMe() {
   return value === '1';
 }
 
-export async function saveUserAvatar(avatarUri?: string) {
-  if (avatarUri && avatarUri.trim()) {
-    await secureSet(USER_AVATAR_KEY, avatarUri.trim());
+/**
+ * Persiste o avatar do usuário em AsyncStorage. Suporta:
+ *  - URI local de `expo-image-picker` (`file://...`) — só salva se o caller tiver garantido
+ *    que o arquivo continua acessível; em geral preferir `data:image/...;base64,...`.
+ *  - data URI em base64.
+ *  - URL HTTP/HTTPS (futuro upload pra backend).
+ */
+export async function saveUserAvatar(avatarUri?: string | null) {
+  const trimmed = avatarUri?.trim();
+  if (trimmed) {
+    await asyncSet(USER_AVATAR_KEY, trimmed);
+    // Apaga eventual valor legado no SecureStore para não conflitar.
+    await secureDelete(USER_AVATAR_KEY);
     return;
   }
+  await asyncDelete(USER_AVATAR_KEY);
   await secureDelete(USER_AVATAR_KEY);
 }
 
 export async function getUserAvatar() {
+  // Primeiro AsyncStorage (novo padrão); fallback para o valor antigo no SecureStore.
+  const fresh = await asyncGet(USER_AVATAR_KEY);
+  if (fresh) return fresh;
   return secureGet(USER_AVATAR_KEY);
 }
 
@@ -148,6 +183,7 @@ export async function clearAllMobilityStorage() {
   await secureDelete(USER_EMAIL_KEY);
   await secureDelete(REMEMBER_ME_KEY);
   await secureDelete(USER_AVATAR_KEY);
+  await asyncDelete(USER_AVATAR_KEY);
   if (!isWeb) {
     const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
     await AsyncStorage.clear();

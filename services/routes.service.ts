@@ -1,4 +1,9 @@
 import { API_URL } from '../constants/api';
+import {
+  resolveRouteEndpointForApi,
+  toLatLngPair,
+  type RouteCoordInput,
+} from '@/utils/route-endpoint';
 import { getToken } from './token.service';
 
 /** Linha retornada por GET /routes/history/:userId */
@@ -55,13 +60,18 @@ export type SearchRoutesOptions = {
   /** Endereço completo persistido em `origin_address` / `destination_address` no histórico. */
   originAddress?: string;
   destinationAddress?: string;
+  /** Quando `origin`/`destination` é placeholder (ex.: "Local atual"), enviar coordenadas para a API. */
+  originCoord?: RouteCoordInput;
+  destinationCoord?: RouteCoordInput;
   /** Preferências combináveis enviadas como `route_preferences` na API. */
   routePreferences?: string[];
 };
 
 export class SearchRoutesTimeoutError extends Error {
-  constructor() {
-    super('Tempo limite de 15s excedido ao buscar rotas');
+  constructor(timeoutMs = ROUTES_FETCH_TIMEOUT_MS) {
+    super(
+      `Tempo limite de ${Math.round(timeoutMs / 1000)}s excedido ao buscar rotas`,
+    );
     this.name = 'SearchRoutesTimeoutError';
   }
 }
@@ -79,9 +89,13 @@ export async function searchRoutes(
 ) {
   const token = await getToken();
   const url = `${API_URL}/routes/check`;
+  const originForApi = resolveRouteEndpointForApi(origin, options?.originCoord);
+  const destinationForApi = resolveRouteEndpointForApi(destination, options?.destinationCoord);
+  const originPair = toLatLngPair(options?.originCoord);
+  const destPair = toLatLngPair(options?.destinationCoord);
   const body = {
-    origin,
-    destination,
+    origin: originForApi,
+    destination: destinationForApi,
     user_id: userId,
     transport_type: transportType,
     ...(accompanied !== undefined && accompanied !== '' ? { accompanied } : {}),
@@ -99,6 +113,15 @@ export async function searchRoutes(
     ...(options?.originAddress?.trim() ? { origin_address: options.originAddress.trim() } : {}),
     ...(options?.destinationAddress?.trim()
       ? { destination_address: options.destinationAddress.trim() }
+      : {}),
+    ...(originPair
+      ? { origin_latitude: originPair.latitude, origin_longitude: originPair.longitude }
+      : {}),
+    ...(destPair
+      ? {
+          destination_latitude: destPair.latitude,
+          destination_longitude: destPair.longitude,
+        }
       : {}),
   };
   const bodyString = JSON.stringify(body);
@@ -148,7 +171,7 @@ export async function searchRoutes(
     return result;
   } catch (error) {
     if ((error as { name?: string })?.name === 'AbortError') {
-      throw new SearchRoutesTimeoutError();
+      throw new SearchRoutesTimeoutError(timeoutMs);
     }
     throw error;
   } finally {

@@ -128,6 +128,16 @@ describe('fetchDiverseRoutes', () => {
     expect(n).toBeGreaterThanOrEqual(1);
   });
 
+  it('aceita API só com routes_alone (sem exigir routes_companied)', async () => {
+    searchRoutesMock.mockResolvedValue({
+      route: { id: 1 },
+      routes_alone: [{ total_duration: '5 min', stages: [{ mode: 'bus' }] }],
+    });
+    const out = await fetchDiverseRoutes('O', 'D', 1);
+    expect(out.alone).toHaveLength(1);
+    expect(out.companied).toEqual([]);
+  });
+
   it('não repete na aba acompanhado assinatura já presente em sozinho', async () => {
     const r = {
       total_duration: '8 min',

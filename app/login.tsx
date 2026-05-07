@@ -63,11 +63,10 @@ export function LoginScreenInner() {
       if (cancelled) return;
       setRememberMe(remember);
       if (!remember) return;
-      // Só JWT guardado — getToken() em dev devolve placeholder e redirecionava sem login real.
+      // Só JWT real guardado (nunca sessão fictícia).
       const token = await getStoredTokenOnly();
       if (cancelled) return;
       if (token) {
-        if (__DEV__) console.log('[login] Auto-redirect /home: token já existia no dispositivo');
         router.replace('/home');
       }
     })();
@@ -100,26 +99,46 @@ export function LoginScreenInner() {
 
     try {
       setLoadingEmail(true);
-      if (__DEV__) {
-        console.log('[login/email] Antes da API', { email: emailTrimmed, apiUrl: API_URL });
-      }
       const loginData = await login(emailTrimmed, password);
-      if (__DEV__) {
-        console.log('[login/email] Resposta OK do auth.login', {
-          user_id: loginData.user_id,
-          has_token: !!loginData.access_token,
-        });
-      }
       await saveRememberMe(rememberMe);
       await saveToken(loginData.access_token);
       await saveUserInfo(loginData.user_id, loginData.name, emailTrimmed.toLowerCase());
-      if (__DEV__) console.log('[login/email] Token e sessão gravados; navegando /home');
       router.replace('/home');
     } catch (error) {
-      if (__DEV__) console.log('[login/email] Falha', error);
       const message =
         error instanceof Error ? error.message : 'Não foi possível entrar. Tente de novo.';
-      Alert.alert('Erro', message);
+
+      /**
+       * Backend lança “Email não verificado…” quando o usuário ainda não confirmou o
+       * código por e-mail. Neste caso, oferecemos ação direta para a tela de verificação,
+       * em vez de só mostrar a string genérica.
+       */
+      const lower = message.toLowerCase();
+      const needsVerification =
+        lower.includes('email não verificado') ||
+        lower.includes('e-mail não verificado') ||
+        lower.includes('verifique sua caixa') ||
+        lower.includes('verifique seu email');
+
+      if (needsVerification) {
+        Alert.alert(
+          'Verifique seu e-mail',
+          'Sua conta ainda não foi confirmada. Quer abrir a tela de verificação?',
+          [
+            { text: 'Agora não', style: 'cancel' },
+            {
+              text: 'Verificar',
+              onPress: () =>
+                router.push({
+                  pathname: '/email-confirmation',
+                  params: { email: emailTrimmed.toLowerCase() },
+                }),
+            },
+          ],
+        );
+      } else {
+        Alert.alert('Erro', message);
+      }
     } finally {
       setLoadingEmail(false);
     }
@@ -266,7 +285,6 @@ export function LoginScreenInner() {
                   style={styles.devClearBtn}
                   onPress={async () => {
                     await clearAllMobilityStorage();
-                    if (__DEV__) console.log('[login/dev] SecureStore + AsyncStorage limpos');
                     Alert.alert('Dev', 'Armazenamento limpo. Tente entrar de novo.');
                   }}
                   accessibilityRole="button"

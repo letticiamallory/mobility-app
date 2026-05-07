@@ -179,4 +179,20 @@ describe('searchRoutes', () => {
     const headers = (global.fetch as jest.Mock).mock.calls[0][1].headers;
     expect(headers.Authorization).toBe('Bearer ');
   });
+
+  it('substitui placeholder "Local atual" por lat,lng quando há coordenadas', async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ routes: [] }),
+    });
+    await searchRoutes('Local atual', 'Shopping Centro', 1, 'bus', undefined, undefined, undefined, undefined, {
+      originCoord: { latitude: -16.7, longitude: -43.86 },
+    });
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(body.origin).toBe('-16.7,-43.86');
+    expect(body.destination).toBe('Shopping Centro');
+    expect(body.origin_latitude).toBe(-16.7);
+    expect(body.origin_longitude).toBe(-43.86);
+  });
 });

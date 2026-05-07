@@ -104,12 +104,15 @@ export default function RegisterScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordFocused, setPasswordFocused] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [disabilityType, setDisabilityType] = useState<DisabilityType>('');
   const [loading, setLoading] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  /** Enviado no POST /users junto com o cadastro (persistido no PostgreSQL). */
+  const [avatarForApi, setAvatarForApi] = useState<{ b64: string; mime: string } | null>(null);
   const [showAvatarAccessModal, setShowAvatarAccessModal] = useState(false);
 
   const [menu, setMenu] = useState<MenuKind | null>(null);
@@ -173,6 +176,12 @@ export default function RegisterScreen() {
     DISABILITY_OPTIONS.find((o) => o.value === disabilityType)?.label ?? null;
   const passwordsMatch = confirmPassword.length > 0 && confirmPassword === password;
 
+  const passwordRules = {
+    minLen: password.length >= 8,
+    hasSpecial: /[^A-Za-z0-9]/.test(password),
+    hasNumber: /\d/.test(password),
+  };
+
   const scrollPasswordFieldIntoView = useCallback(() => {
     requestAnimationFrame(() => {
       setTimeout(() => {
@@ -199,15 +208,25 @@ export default function RegisterScreen() {
 
     try {
       setLoading(true);
-      await register(name, email, password, disabilityType);
-      Alert.alert('Cadastro concluido', 'Voce ja pode entrar com seu email e senha.', [
-        { text: 'OK', onPress: () => router.replace('/login') },
-      ]);
+      await register(
+        name,
+        email,
+        password,
+        disabilityType,
+        undefined,
+        confirmPassword,
+        avatarForApi?.b64,
+        avatarForApi?.mime,
+      );
+      router.replace({
+        pathname: '/email-confirmation',
+        params: { email: email.trim().toLowerCase() },
+      });
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
-          : 'Nao foi possivel concluir o cadastro. Tente novamente.';
+          : 'Não foi possível concluir o cadastro. Tente novamente.';
       Alert.alert('Erro', message);
     } finally {
       setLoading(false);
@@ -219,10 +238,18 @@ export default function RegisterScreen() {
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.8,
+      quality: 0.55,
+      base64: true,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;
-    setAvatarUri(result.assets[0].uri);
+    const asset = result.assets[0];
+    if (!asset.base64) {
+      Alert.alert('Erro', 'Não foi possível ler a imagem. Tente outra foto.');
+      return;
+    }
+    const mime = asset.mimeType ?? 'image/jpeg';
+    setAvatarForApi({ b64: asset.base64, mime });
+    setAvatarUri(`data:${mime};base64,${asset.base64}`);
   };
 
   const handlePickAvatar = async (mode: 'full' | 'limited') => {
@@ -385,7 +412,11 @@ export default function RegisterScreen() {
             secureTextEntry={!showPassword}
             value={password}
             onChangeText={setPassword}
-            onFocus={scrollPasswordFieldIntoView}
+            onFocus={() => {
+              setPasswordFocused(true);
+              scrollPasswordFieldIntoView();
+            }}
+            onBlur={() => setPasswordFocused(false)}
             accessibilityLabel="Senha"
             textContentType="newPassword"
             autoComplete="password-new"
@@ -403,6 +434,63 @@ export default function RegisterScreen() {
             />
           </TouchableOpacity>
         </View>
+        {passwordFocused ? (
+          <View
+            style={styles.passwordRulesBox}
+            accessibilityRole="summary"
+            accessibilityLabel="Requisitos da senha"
+          >
+            <Text style={styles.passwordRulesTitle}>Requisitos da senha</Text>
+
+            <View style={styles.passwordRuleRow}>
+              <MaterialCommunityIcons
+                name={passwordRules.minLen ? 'check-circle' : 'circle-outline'}
+                size={16}
+                color={passwordRules.minLen ? '#22c55e' : '#94A3B8'}
+              />
+              <Text
+                style={[
+                  styles.passwordRuleText,
+                  passwordRules.minLen && styles.passwordRuleTextOk,
+                ]}
+              >
+                Mínimo de 8 caracteres
+              </Text>
+            </View>
+
+            <View style={styles.passwordRuleRow}>
+              <MaterialCommunityIcons
+                name={passwordRules.hasSpecial ? 'check-circle' : 'circle-outline'}
+                size={16}
+                color={passwordRules.hasSpecial ? '#22c55e' : '#94A3B8'}
+              />
+              <Text
+                style={[
+                  styles.passwordRuleText,
+                  passwordRules.hasSpecial && styles.passwordRuleTextOk,
+                ]}
+              >
+                Pelo menos 1 caractere especial
+              </Text>
+            </View>
+
+            <View style={styles.passwordRuleRow}>
+              <MaterialCommunityIcons
+                name={passwordRules.hasNumber ? 'check-circle' : 'circle-outline'}
+                size={16}
+                color={passwordRules.hasNumber ? '#22c55e' : '#94A3B8'}
+              />
+              <Text
+                style={[
+                  styles.passwordRuleText,
+                  passwordRules.hasNumber && styles.passwordRuleTextOk,
+                ]}
+              >
+                Pelo menos 1 número
+              </Text>
+            </View>
+          </View>
+        ) : null}
 
         <Text style={styles.label}>Confirmar senha</Text>
         <View style={styles.inputWithIcon}>
@@ -732,6 +820,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: -10,
     marginBottom: 12,
+  },
+  passwordRulesBox: {
+    marginTop: -6,
+    marginBottom: 14,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  passwordRulesTitle: {
+    color: '#111827',
+    fontSize: 12,
+    marginBottom: 8,
+    fontFamily: 'Agrandir-TextBold',
+  },
+  passwordRuleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+  },
+  passwordRuleText: {
+    color: '#64748B',
+    fontSize: 12,
+    fontFamily: 'Agrandir-Regular',
+  },
+  passwordRuleTextOk: {
+    color: '#16A34A',
+    fontFamily: 'Agrandir-TextBold',
   },
   continueText: {
     color: '#FFFFFF',

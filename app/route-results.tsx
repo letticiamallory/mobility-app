@@ -48,6 +48,7 @@ import {
   stageNeedsAttention,
   type CompanionTab,
 } from '../utils/route-results-logic';
+import { isRouteWithinMobilityCoverage } from '../utils/mobility-coverage';
 
 type Stage = {
   mode?: string;
@@ -589,6 +590,21 @@ export default function RouteResultsScreen() {
   >(null);
   const [manualTimeDigits, setManualTimeDigits] = useState<string[]>(['', '', '', '']);
 
+  /** Coordenadas efetivas para API (URL + estado; GPS pode preencher depois do primeiro paint). */
+  const mergedOriginCoordForApi = useMemo(() => {
+    const lat = activeOriginCoord?.lat ?? originCoordParam?.lat;
+    const lng = activeOriginCoord?.lng ?? originCoordParam?.lng;
+    if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+    return { lat, lng };
+  }, [activeOriginCoord?.lat, activeOriginCoord?.lng, originCoordParam?.lat, originCoordParam?.lng]);
+
+  const mergedDestCoordForApi = useMemo(() => {
+    const lat = activeDestCoord?.lat ?? destCoordParam?.lat;
+    const lng = activeDestCoord?.lng ?? destCoordParam?.lng;
+    if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+    return { lat, lng };
+  }, [activeDestCoord?.lat, activeDestCoord?.lng, destCoordParam?.lat, destCoordParam?.lng]);
+
   const hasPackagedRoutes = useMemo(() => {
     const rawParam = Array.isArray(params.routes) ? params.routes[0] : params.routes;
     return !!(rawParam && String(rawParam).trim());
@@ -643,6 +659,15 @@ export default function RouteResultsScreen() {
     const dest = destinationFromParams.trim();
     if (!dest) return;
 
+    if (
+      mergedOriginCoordForApi &&
+      mergedDestCoordForApi &&
+      !isRouteWithinMobilityCoverage(mergedOriginCoordForApi, mergedDestCoordForApi)
+    ) {
+      router.replace('/out-of-coverage');
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       setInitialRoutesLoading(true);
@@ -665,6 +690,8 @@ export default function RouteResultsScreen() {
           {
             originAddress: originQuery,
             destinationAddress: dest,
+            ...(mergedOriginCoordForApi ? { originCoord: mergedOriginCoordForApi } : {}),
+            ...(mergedDestCoordForApi ? { destinationCoord: mergedDestCoordForApi } : {}),
             ...(routePrefs ? { routePreferences: routePrefs } : {}),
           },
         );
@@ -673,9 +700,12 @@ export default function RouteResultsScreen() {
           setMiddleStop(null);
           setForcedServerResults(true);
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) setFetchedSplit({ alone: [], companied: [] });
         if (!cancelled) setForcedServerResults(true);
+        if ((error as { name?: string } | null)?.name === 'RoutesUnauthorizedError') {
+          if (!cancelled) router.replace('/login');
+        }
       } finally {
         if (!cancelled) setInitialRoutesLoading(false);
       }
@@ -690,6 +720,9 @@ export default function RouteResultsScreen() {
     selectedTimeFilter,
     preferLessTransfers,
     preferLessWalking,
+    mergedOriginCoordForApi,
+    mergedDestCoordForApi,
+    router,
   ]);
 
   useEffect(() => {
@@ -832,6 +865,14 @@ export default function RouteResultsScreen() {
     const routePrefs = buildRoutePreferences(nextLessTransfers, nextLessWalking);
     const destinationQuery = headerDestination.trim();
     if (!destinationQuery) return;
+    if (
+      mergedOriginCoordForApi &&
+      mergedDestCoordForApi &&
+      !isRouteWithinMobilityCoverage(mergedOriginCoordForApi, mergedDestCoordForApi)
+    ) {
+      router.replace('/out-of-coverage');
+      return;
+    }
     Keyboard.dismiss();
     setShowTimeFilterList(false);
     setActiveSearchField(null);
@@ -861,15 +902,20 @@ export default function RouteResultsScreen() {
         undefined,
         {
           ...historyExtras,
+          ...(mergedOriginCoordForApi ? { originCoord: mergedOriginCoordForApi } : {}),
+          ...(mergedDestCoordForApi ? { destinationCoord: mergedDestCoordForApi } : {}),
           ...(routePrefs ? { routePreferences: routePrefs } : {}),
         },
       );
       setFetchedSplit(payload);
       setForcedServerResults(true);
       setMiddleStop(null);
-    } catch {
+    } catch (error) {
       setFetchedSplit({ alone: [], companied: [] });
       setForcedServerResults(true);
+      if ((error as { name?: string } | null)?.name === 'RoutesUnauthorizedError') {
+        router.replace('/login');
+      }
     }
   };
 

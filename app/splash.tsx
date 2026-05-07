@@ -1,6 +1,15 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Image, StyleSheet, View } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
+import { removeToken } from '../services/token.service';
+
+function devForceLogoutEnabled(): boolean {
+  if (!__DEV__) return false;
+  const raw = String(process.env.EXPO_PUBLIC_DEV_FORCE_LOGOUT ?? '')
+    .trim()
+    .toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
 
 export default function SplashScreen() {
   const router = useRouter();
@@ -24,64 +33,82 @@ export default function SplashScreen() {
   const dot2Opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.sequence([
-      // M sobe
-      Animated.parallel([
-        Animated.timing(mTranslateY, {
-          toValue: 0,
-          duration: 700,
-          delay: 300,
-          easing: Easing.out(Easing.back(1.5)),
-          useNativeDriver: true,
-        }),
-        Animated.timing(mOpacity, {
-          toValue: 1,
-          duration: 500,
-          delay: 300,
-          useNativeDriver: true,
-        }),
-      ]),
-      // dot 1 aparece
-      Animated.parallel([
-        Animated.spring(dot1Scale, { toValue: 1, useNativeDriver: true }),
-        Animated.timing(dot1Opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-      ]),
-      // dash 1 cresce
-      Animated.parallel([
-        Animated.timing(dash1Width, {
-          toValue: 36,
-          duration: 300,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: false,
-        }),
-        Animated.timing(dash1Opacity, { toValue: 1, duration: 200, useNativeDriver: false }),
-      ]),
-      // dot meio aparece
-      Animated.parallel([
-        Animated.spring(dotMidScale, { toValue: 1, useNativeDriver: true }),
-        Animated.timing(dotMidOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-      ]),
-      // dash 2 cresce
-      Animated.parallel([
-        Animated.timing(dash2Width, {
-          toValue: 36,
-          duration: 300,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: false,
-        }),
-        Animated.timing(dash2Opacity, { toValue: 1, duration: 200, useNativeDriver: false }),
-      ]),
-      // dot final aparece
-      Animated.parallel([
-        Animated.spring(dot2Scale, { toValue: 1, useNativeDriver: true }),
-        Animated.timing(dot2Opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-      ]),
-    ]).start(() => {
-      setTimeout(() => {
-        router.replace('/login');
-      }, 500);
-    });
-  }, []);
+    let cancelled = false;
+
+    const run = async () => {
+      /** Antes da animação: em dev, pode forçar logout para testar cadastro/login de novo. */
+      if (devForceLogoutEnabled()) {
+        await removeToken();
+      }
+      if (cancelled) return;
+
+      Animated.sequence([
+        // M sobe
+        Animated.parallel([
+          Animated.timing(mTranslateY, {
+            toValue: 0,
+            duration: 700,
+            delay: 300,
+            easing: Easing.out(Easing.back(1.5)),
+            useNativeDriver: true,
+          }),
+          Animated.timing(mOpacity, {
+            toValue: 1,
+            duration: 500,
+            delay: 300,
+            useNativeDriver: true,
+          }),
+        ]),
+        // dot 1 aparece
+        Animated.parallel([
+          Animated.spring(dot1Scale, { toValue: 1, useNativeDriver: true }),
+          Animated.timing(dot1Opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+        ]),
+        // dash 1 cresce
+        Animated.parallel([
+          Animated.timing(dash1Width, {
+            toValue: 36,
+            duration: 300,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: false,
+          }),
+          Animated.timing(dash1Opacity, { toValue: 1, duration: 200, useNativeDriver: false }),
+        ]),
+        // dot meio aparece
+        Animated.parallel([
+          Animated.spring(dotMidScale, { toValue: 1, useNativeDriver: true }),
+          Animated.timing(dotMidOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+        ]),
+        // dash 2 cresce
+        Animated.parallel([
+          Animated.timing(dash2Width, {
+            toValue: 36,
+            duration: 300,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: false,
+          }),
+          Animated.timing(dash2Opacity, { toValue: 1, duration: 200, useNativeDriver: false }),
+        ]),
+        // dot final aparece
+        Animated.parallel([
+          Animated.spring(dot2Scale, { toValue: 1, useNativeDriver: true }),
+          Animated.timing(dot2Opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+        ]),
+      ]).start(() => {
+        if (cancelled) return;
+        setTimeout(() => {
+          if (!cancelled) router.replace('/login');
+        }, 500);
+      });
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+    // Valores animados vêm de useRef — estáveis; só precisamos do router.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router]);
 
   return (
     <>

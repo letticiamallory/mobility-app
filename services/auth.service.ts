@@ -33,7 +33,6 @@ export type LoginResponse = {
 export async function login(email: string, password: string) {
   const loginUrl = `${API_URL}/auth/login`;
   const payload = { email: email.trim().toLowerCase(), password };
-  console.log('[auth.login] Calling URL:', loginUrl);
 
   let response: Response;
   try {
@@ -47,12 +46,10 @@ export async function login(email: string, password: string) {
       err instanceof TypeError
         ? ' Verifique se o celular/emulador acessa o mesmo IP em constants/api.ts e se o backend está ligado.'
         : '';
-    console.error('[auth.login] Fetch failed:', err);
     throw new Error(`Não foi possível conectar ao servidor (${API_URL}).${hint}`);
   }
 
   const text = await response.text();
-  console.log('[auth.login] HTTP Status:', response.status, 'body:', text);
 
   let data: Record<string, unknown> = {};
   try {
@@ -96,14 +93,22 @@ export async function register(
   password: string,
   disability_type: string,
   accompanied?: string,
+  confirmPassword?: string,
+  avatarBase64?: string,
+  avatarMime?: string,
 ) {
   const body: Record<string, string> = {
     name,
     email: email.trim().toLowerCase(),
     password,
+    confirm_password: confirmPassword ?? password,
     disability_type,
   };
   if (accompanied) body.accompanied = accompanied;
+  if (avatarBase64?.trim()) {
+    body.avatar_base64 = avatarBase64.trim();
+    if (avatarMime?.trim()) body.avatar_mime = avatarMime.trim();
+  }
 
   const url = `${API_URL}/users`;
   let response: Response;
@@ -118,12 +123,10 @@ export async function register(
       err instanceof TypeError
         ? ' Verifique constants/api.ts e se o backend está acessível deste aparelho/emulador.'
         : '';
-    console.error('[auth.register] Fetch failed:', err);
     throw new Error(`Não foi possível conectar ao servidor (${API_URL}).${hint}`);
   }
 
   const text = await response.text();
-  console.log('[auth.register] HTTP', response.status, 'body:', text);
 
   let data: Record<string, unknown> = {};
   try {

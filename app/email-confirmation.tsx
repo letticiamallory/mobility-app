@@ -2,7 +2,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
@@ -15,6 +16,7 @@ import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import ForgotPasswordSvg from '../assets/images/undraw_forgot-password_nttj (1).svg';
 import { API_URL } from '../constants/api';
+import { saveRememberMe, saveToken, saveUserInfo } from '../services/token.service';
 
 export default function EmailConfirmationScreen() {
   const router = useRouter();
@@ -25,6 +27,7 @@ export default function EmailConfirmationScreen() {
   const [digits, setDigits] = useState(['', '', '', '', '', '']);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
   const [resendLeftSeconds, setResendLeftSeconds] = useState(0);
   const inputsRef = useRef<Array<TextInput | null>>([]);
@@ -38,6 +41,7 @@ export default function EmailConfirmationScreen() {
     const next = [...digits];
     next[index] = char;
     setDigits(next);
+    if (confirmError) setConfirmError(null);
 
     if (char && index < 5) {
       inputsRef.current[index + 1]?.focus();
@@ -56,8 +60,15 @@ export default function EmailConfirmationScreen() {
   const handleConfirm = async () => {
     const email = userEmail.trim();
     const code = digits.join('');
-    if (!email) return Alert.alert('Atenção', 'Email inválido para confirmação.');
-    if (code.length < 6) return Alert.alert('Atenção', 'Digite o código completo');
+    setConfirmError(null);
+    if (!email) {
+      setConfirmError('Email inválido para confirmação.');
+      return;
+    }
+    if (code.length < 6) {
+      setConfirmError('Digite o código completo.');
+      return;
+    }
 
     try {
       setConfirming(true);
@@ -66,12 +77,33 @@ export default function EmailConfirmationScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(typeof data.message === 'string' ? data.message : 'Falha ao verificar');
-      router.replace('/success');
+      const data = (await response.json()) as {
+        message?: string | string[];
+        access_token?: string;
+        user_id?: number;
+        name?: string;
+      };
+      if (!response.ok) {
+        const msg = Array.isArray(data.message)
+          ? data.message.filter(Boolean).join(' ')
+          : typeof data.message === 'string'
+            ? data.message
+            : 'Falha ao verificar';
+        setConfirmError(msg);
+        return;
+      }
+
+      if (!data.access_token || !data.user_id || !data.name) {
+        setConfirmError('Resposta inválida do servidor.');
+        return;
+      }
+
+      await saveRememberMe(true);
+      await saveToken(data.access_token);
+      await saveUserInfo(data.user_id, data.name, email.toLowerCase());
+      router.replace('/home');
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erro ao verificar.';
-      Alert.alert('Erro', message);
+      setConfirmError(error instanceof Error ? error.message : 'Erro ao verificar.');
     } finally {
       setConfirming(false);
     }
@@ -90,7 +122,7 @@ export default function EmailConfirmationScreen() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.message);
 
-      Alert.alert('Código reenviado!', 'Verifique sua caixa de entrada.');
+      // Feedback silencioso: o usuário vê o cooldown do botão.
 
       // Inicia cooldown de 60 segundos
       setResendLeftSeconds(60);
@@ -104,7 +136,7 @@ export default function EmailConfirmationScreen() {
         });
       }, 1000);
     } catch (error: any) {
-      Alert.alert('Erro', error.message);
+      setConfirmError(typeof error?.message === 'string' ? error.message : 'Não foi possível reenviar o código.');
     } finally {
       setResending(false);
     }
@@ -113,89 +145,96 @@ export default function EmailConfirmationScreen() {
   return (
     <SafeAreaView style={[styles.safeArea, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backBtn}
-          hitSlop={A11Y_HIT_SLOP}
-          accessibilityRole="button"
-          accessibilityLabel="Voltar"
-        >
-          <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
-        </TouchableOpacity>
-        <View style={styles.illustrationWrap}>
-          <ForgotPasswordSvg width={260} height={200} />
-        </View>
-
-        <Text style={styles.title}>Verifique seu email</Text>
-        <Text style={styles.subtitle}>Enviamos um código de confirmação para</Text>
-        <Text style={styles.email}>{userEmail}</Text>
-
-        <View style={styles.codeRow}>
-          {digits.map((digit, index) => {
-            const isFocused = focusedIndex === index;
-            return (
-              <TextInput
-                key={`digit-${index}`}
-                ref={(ref) => {
-                  inputsRef.current[index] = ref;
-                }}
-                style={[styles.codeInput, isFocused && styles.codeInputFocused]}
-                value={digit}
-                onChangeText={(text) => handleDigitChange(text, index)}
-                onKeyPress={(e) => handleKeyPress(e, index)}
-                onFocus={() => setFocusedIndex(index)}
-                onBlur={() => setFocusedIndex((prev) => (prev === index ? null : prev))}
-                keyboardType="number-pad"
-                maxLength={1}
-                textAlign="center"
-                accessibilityLabel={`Dígito ${index + 1} do código de 6 dígitos`}
-              />
-            );
-          })}
-        </View>
-
-        <TouchableOpacity
-          style={styles.confirmButton}
-          onPress={handleConfirm}
-          disabled={confirming}
-          accessibilityRole="button"
-          accessibilityLabel={confirming ? 'Validando código' : 'Confirmar email'}
-          accessibilityState={{ disabled: confirming }}
-        >
-          <Text style={styles.confirmText}>{confirming ? 'Validando...' : 'Confirmar'}</Text>
-        </TouchableOpacity>
-
-        <View style={styles.resendRow}>
-          <Text style={styles.resendText}>Não recebeu? </Text>
+      <KeyboardAvoidingView
+        style={styles.safeArea}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+      >
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <TouchableOpacity
-            onPress={handleResend}
-            disabled={resendLeftSeconds > 0 || resending}
+            onPress={() => router.back()}
+            style={styles.backBtn}
+            hitSlop={A11Y_HIT_SLOP}
             accessibilityRole="button"
-            accessibilityLabel={
-              resending
-                ? 'Reenviando código'
-                : resendLeftSeconds > 0
-                  ? `Reenviar código em ${resendLeftSeconds} segundos`
-                  : 'Reenviar código de confirmação'
-            }
-            accessibilityState={{ disabled: resendLeftSeconds > 0 || resending }}
+            accessibilityLabel="Voltar"
           >
-            <Text
-              style={{
-                color: resendLeftSeconds > 0 ? '#AAAAAA' : '#0057A8',
-                fontSize: 13,
-              }}
-            >
-              {resending
-                ? 'Enviando...'
-                : resendLeftSeconds > 0
-                  ? `Reenviar em ${resendLeftSeconds}s`
-                  : 'Reenviar código'}
-            </Text>
+            <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
           </TouchableOpacity>
-        </View>
-      </ScrollView>
+          <View style={styles.illustrationWrap}>
+            <ForgotPasswordSvg width={260} height={200} />
+          </View>
+
+          <Text style={styles.title}>Verifique seu email</Text>
+          <Text style={styles.subtitle}>Enviamos um código de confirmação para</Text>
+          <Text style={styles.email}>{userEmail}</Text>
+
+          <View style={styles.codeRow}>
+            {digits.map((digit, index) => {
+              const isFocused = focusedIndex === index;
+              return (
+                <TextInput
+                  key={`digit-${index}`}
+                  ref={(ref) => {
+                    inputsRef.current[index] = ref;
+                  }}
+                  style={[styles.codeInput, isFocused && styles.codeInputFocused]}
+                  value={digit}
+                  onChangeText={(text) => handleDigitChange(text, index)}
+                  onKeyPress={(e) => handleKeyPress(e, index)}
+                  onFocus={() => setFocusedIndex(index)}
+                  onBlur={() => setFocusedIndex((prev) => (prev === index ? null : prev))}
+                  keyboardType="number-pad"
+                  maxLength={1}
+                  textAlign="center"
+                  accessibilityLabel={`Dígito ${index + 1} do código de 6 dígitos`}
+                />
+              );
+            })}
+          </View>
+          {confirmError ? <Text style={styles.errorText}>{confirmError}</Text> : null}
+
+          <TouchableOpacity
+            style={styles.confirmButton}
+            onPress={handleConfirm}
+            disabled={confirming}
+            accessibilityRole="button"
+            accessibilityLabel={confirming ? 'Validando código' : 'Confirmar email'}
+            accessibilityState={{ disabled: confirming }}
+          >
+            <Text style={styles.confirmText}>{confirming ? 'Validando...' : 'Confirmar'}</Text>
+          </TouchableOpacity>
+
+          <View style={styles.resendRow}>
+            <Text style={styles.resendText}>Não recebeu? </Text>
+            <TouchableOpacity
+              onPress={handleResend}
+              disabled={resendLeftSeconds > 0 || resending}
+              accessibilityRole="button"
+              accessibilityLabel={
+                resending
+                  ? 'Reenviando código'
+                  : resendLeftSeconds > 0
+                    ? `Reenviar código em ${resendLeftSeconds} segundos`
+                    : 'Reenviar código de confirmação'
+              }
+              accessibilityState={{ disabled: resendLeftSeconds > 0 || resending }}
+            >
+              <Text
+                style={{
+                  color: resendLeftSeconds > 0 ? '#AAAAAA' : '#0057A8',
+                  fontSize: 13,
+                }}
+              >
+                {resending
+                  ? 'Enviando...'
+                  : resendLeftSeconds > 0
+                    ? `Reenviar em ${resendLeftSeconds}s`
+                    : 'Reenviar código'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -260,6 +299,14 @@ const styles = StyleSheet.create({
   },
   codeInputFocused: {
     borderColor: '#0057A8',
+  },
+  errorText: {
+    width: '100%',
+    marginTop: 12,
+    color: '#EF4444',
+    fontSize: 13,
+    textAlign: 'center',
+    fontFamily: 'Agrandir-Regular',
   },
   confirmButton: {
     backgroundColor: '#0057A8',

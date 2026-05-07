@@ -20,7 +20,7 @@ import { useAccessibilityPreferences, useAccessibilitySurfaces } from '@/context
 import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { API_URL } from '../constants/api';
 import type { FontSizeTier } from '../services/accessibility-prefs.service';
-import { getToken, getUserAvatar, saveUserAvatar, saveUserInfo } from '../services/token.service';
+import { getToken, saveUserInfo } from '../services/token.service';
 
 type MeResponse = {
   id?: number;
@@ -30,6 +30,8 @@ type MeResponse = {
   accompanied?: string;
   phone?: string;
   birth_date?: string;
+  /** Data URL da foto salva no servidor (PostgreSQL). */
+  avatar_data_url?: string | null;
 };
 
 async function readApiErrorMessage(response: Response, fallback: string): Promise<string> {
@@ -124,15 +126,14 @@ export default function ProfileInfoScreen() {
           router.replace('/login');
           return;
         }
-        const [meRes, avatar] = await Promise.all([
-          fetch(`${API_URL}/users/me`, { headers: { Authorization: `Bearer ${token}` } }),
-          getUserAvatar(),
-        ]);
-        if (!cancelled) setAvatarUri(avatar);
+        const meRes = await fetch(`${API_URL}/users/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
         if (!meRes.ok) return;
         const data = (await meRes.json()) as MeResponse;
         if (cancelled) return;
         setForm(data);
+        if (!cancelled) setAvatarUri(data.avatar_data_url ?? null);
         const bd = parseYmd(data.birth_date);
         if (bd) setPickerDate(bd);
       } finally {
@@ -158,13 +159,46 @@ export default function ProfileInfoScreen() {
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.85,
+      quality: 0.55,
+      base64: true,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;
-    const uri = result.assets[0].uri;
-    setAvatarUri(uri);
-    await saveUserAvatar(uri);
-  }, []);
+    const asset = result.assets[0];
+    if (!asset.base64) {
+      Alert.alert('Erro', 'Não foi possível ler a imagem. Tente outra foto.');
+      return;
+    }
+    const mime = asset.mimeType ?? 'image/jpeg';
+    setAvatarUri(`data:${mime};base64,${asset.base64}`);
+
+    try {
+      const token = await getToken();
+      if (!token) {
+        router.replace('/login');
+        return;
+      }
+      const response = await fetch(`${API_URL}/users/me`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          avatar_base64: asset.base64,
+          avatar_mime: mime,
+        }),
+      });
+      if (!response.ok) {
+        const msg = await readApiErrorMessage(response, 'Não foi possível salvar a foto.');
+        Alert.alert('Erro', msg);
+        return;
+      }
+      const data = (await response.json()) as MeResponse;
+      if (data.avatar_data_url) setAvatarUri(data.avatar_data_url);
+    } catch {
+      Alert.alert('Erro', 'Não foi possível salvar sua foto. Tente novamente.');
+    }
+  }, [router]);
 
   const onDateChange = (event: DateTimePickerEvent, date?: Date) => {
     if (Platform.OS === 'android') setShowDatePicker(false);

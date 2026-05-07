@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
-import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from 'react';
+import { Component, type ErrorInfo, type ReactNode, useState } from 'react';
 import { Alert, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { API_URL } from '@/constants/api';
@@ -31,8 +31,8 @@ export class GoogleAuthErrorBoundary extends Component<BoundaryProps, BoundarySt
     return { hasError: true };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo): void {
-    if (__DEV__) console.warn('[GoogleAuthErrorBoundary]', error.message, info.componentStack);
+  componentDidCatch(_error: Error, _info: ErrorInfo): void {
+    /* boundary: formulário email/senha permanece utilizável */
   }
 
   render(): ReactNode {
@@ -58,15 +58,6 @@ export function GoogleLoginSection() {
     webClientId: GOOGLE_WEB_CLIENT_ID,
     clientId: GOOGLE_WEB_CLIENT_ID,
   });
-
-  useEffect(() => {
-    if (__DEV__ && googleRequest && isExpoGo()) {
-      console.log(
-        '[Google / Expo Go] Cadastre esta URL em Google Cloud → OAuth Web client → Authorized redirect URIs:',
-        googleRequest.redirectUri,
-      );
-    }
-  }, [googleRequest]);
 
   const handleGoogleLogin = async () => {
     try {
@@ -94,7 +85,7 @@ export function GoogleLoginSection() {
         const idToken = result.params.id_token ?? result.authentication?.idToken ?? '';
         if (!idToken) {
           throw new Error(
-            'Não foi possível obter o token do Google. Verifique o redirect URI no Google Cloud Console (veja o log [Google / Expo Go]).',
+            'Não foi possível obter o token do Google. Confira o redirect URI no Google Cloud (cliente Web OAuth).',
           );
         }
         googleData = googlePayloadFromIdToken(idToken);
@@ -103,22 +94,48 @@ export function GoogleLoginSection() {
       }
 
       if (!googleData.email || !googleData.googleId || !googleData.token) {
-        throw new Error('Não foi possível obter os dados da conta Google.');
+        throw new Error(
+          'Não foi possível obter os dados da conta Google. Verifique no Google Cloud o Web Client ID e SHA-1 do app.',
+        );
       }
 
-      const response = await fetch(`${API_URL}/auth/google`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(googleData),
-      });
+      const url = `${API_URL}/auth/google`;
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(googleData),
+        });
+      } catch {
+        throw new Error(
+          `Não foi possível conectar à API (${API_URL}). Confira EXPO_PUBLIC_API_URL e se o backend está acessível.`,
+        );
+      }
 
-      const data = (await response.json()) as {
+      const text = await response.text();
+
+      let data: {
         access_token?: string;
         user_id?: number;
         name?: string;
-        message?: string;
-      };
-      if (!response.ok) throw new Error(data.message ?? 'Falha no login com Google');
+        message?: string | string[];
+      } = {};
+      try {
+        data = text ? (JSON.parse(text) as typeof data) : {};
+      } catch {
+        if (!response.ok) {
+          throw new Error(
+            `Login Google recusado (HTTP ${response.status}). Resposta não é JSON — veja logs do servidor.`,
+          );
+        }
+      }
+      if (!response.ok) {
+        const detail = Array.isArray(data.message)
+          ? data.message.filter(Boolean).join(' ')
+          : data.message;
+        throw new Error(detail || `Falha no login com Google (HTTP ${response.status}).`);
+      }
       if (!data.access_token || !data.user_id || !data.name) {
         throw new Error('Resposta inválida no login com Google.');
       }

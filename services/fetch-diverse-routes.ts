@@ -1,5 +1,25 @@
+import type { RouteCoordInput } from '../utils/route-endpoint';
 import { routeDurationMinutes, routeSignature } from '../utils/route-results-logic';
-import { ROUTES_FETCH_TIMEOUT_MS, searchRoutes } from './routes.service';
+import { searchRoutes, SearchRoutesTimeoutError } from './routes.service';
+
+/** Lançado quando toda(s) chamada(s) de rota deram 401/403 — UI deve direcionar para login. */
+export class RoutesUnauthorizedError extends Error {
+  constructor(message = 'Sessão expirada. Faça login novamente.') {
+    super(message);
+    this.name = 'RoutesUnauthorizedError';
+  }
+}
+
+/** Lançado quando todas as chamadas de transporte deram timeout — UI pode sugerir tentar de novo. */
+export class RoutesAllTimedOutError extends Error {
+  constructor(message = 'O servidor demorou demais. Tente buscar novamente.') {
+    super(message);
+    this.name = 'RoutesAllTimedOutError';
+  }
+}
+
+/** Uma única `searchRoutes` usa 15s; aqui rodamos 4 em paralelo + fallback — precisa de folga. */
+const DIVERSE_ROUTES_TIMEOUT_MS = 55_000;
 
 const DEFAULT_TRANSPORT_TYPE = 'bus';
 
@@ -24,10 +44,10 @@ export type DiverseRoutesPayload = {
 function dualFromApiBody(body: Record<string, unknown>): DiverseRoutesPayload {
   const ra = body.routes_alone;
   const rc = body.routes_companied;
-  if (Array.isArray(ra) && Array.isArray(rc)) {
+  if (Array.isArray(ra) || Array.isArray(rc)) {
     return {
-      alone: ra as FetchedRouteItem[],
-      companied: rc as FetchedRouteItem[],
+      alone: Array.isArray(ra) ? (ra as FetchedRouteItem[]) : [],
+      companied: Array.isArray(rc) ? (rc as FetchedRouteItem[]) : [],
     };
   }
   const legacy = Array.isArray(body.routes) ? (body.routes as FetchedRouteItem[]) : [];
@@ -82,6 +102,8 @@ export async function fetchDiverseRoutes(
     destinationTitle?: string;
     originAddress?: string;
     destinationAddress?: string;
+    originCoord?: RouteCoordInput;
+    destinationCoord?: RouteCoordInput;
     /** `less_transfers` e/ou `less_walking` — combináveis. */
     routePreferences?: string[];
   },
@@ -89,7 +111,7 @@ export async function fetchDiverseRoutes(
   const overallController = new AbortController();
   const overallTimer = setTimeout(
     () => overallController.abort(),
-    ROUTES_FETCH_TIMEOUT_MS,
+    DIVERSE_ROUTES_TIMEOUT_MS,
   );
   const accompaniedToSend = accompanied && accompanied.trim() ? accompanied : undefined;
   const mergeSettled = (results: PromiseSettledResult<unknown>[]) => {
@@ -120,6 +142,7 @@ export async function fetchDiverseRoutes(
 
   const searchOpts = {
     signal: overallController.signal,
+    timeoutMs: DIVERSE_ROUTES_TIMEOUT_MS,
     ...(historyExtras?.originTitle?.trim()
       ? { originTitle: historyExtras.originTitle.trim() }
       : {}),
@@ -131,6 +154,10 @@ export async function fetchDiverseRoutes(
       : {}),
     ...(historyExtras?.destinationAddress?.trim()
       ? { destinationAddress: historyExtras.destinationAddress.trim() }
+      : {}),
+    ...(historyExtras?.originCoord != null ? { originCoord: historyExtras.originCoord } : {}),
+    ...(historyExtras?.destinationCoord != null
+      ? { destinationCoord: historyExtras.destinationCoord }
       : {}),
     ...(historyExtras?.routePreferences?.length
       ? { routePreferences: historyExtras.routePreferences }
@@ -154,6 +181,29 @@ export async function fetchDiverseRoutes(
         ),
       ),
     );
+
+    /**
+     * Se TODAS as chamadas falharam, vale a pena erguer um erro tipado em vez de
+     * voltar lista vazia silenciosa — assim a tela mostra mensagem útil
+     * (ex.: 401 → mandar pro login; timeout → sugerir tentar de novo).
+     */
+    const fulfilled = allResults.filter((r) => r.status === 'fulfilled');
+    if (fulfilled.length === 0) {
+      const reasons = allResults
+        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+        .map((r) => r.reason);
+      const allUnauthorized =
+        reasons.length > 0 &&
+        reasons.every((reason) => {
+          const status = (reason as { status?: number } | undefined)?.status;
+          return status === 401 || status === 403;
+        });
+      if (allUnauthorized) throw new RoutesUnauthorizedError();
+      const allTimedOut =
+        reasons.length > 0 && reasons.every((reason) => reason instanceof SearchRoutesTimeoutError);
+      if (allTimedOut) throw new RoutesAllTimedOutError();
+    }
+
     let merged = mergeSettled(allResults);
 
     if (

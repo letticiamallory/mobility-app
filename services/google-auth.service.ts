@@ -91,6 +91,11 @@ export async function signInWithGoogleNative(): Promise<GoogleAuthPayload> {
     if (error.code === statusCodes.IN_PROGRESS) throw new Error('Login em andamento');
     if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE)
       throw new Error('Google Play Services indisponível');
-    throw new Error('Erro ao fazer login com Google');
+    /**
+     * DEVELOPER_ERROR (cód. 10) costuma ser SHA-1 não cadastrado no Google Cloud,
+     * package name diferente ou Web Client ID errado. Repassar a mensagem ajuda no diagnóstico.
+     */
+    const detail = typeof error?.message === 'string' && error.message ? ` (${error.message})` : '';
+    throw new Error(`Erro ao fazer login com Google${detail}`);
   }
 }

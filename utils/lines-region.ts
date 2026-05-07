@@ -42,12 +42,13 @@ export function detectLinesRegionFromCoords(
   return null;
 }
 
-export const LINES_REGION_OPTIONS: {
-  id: LinesRegionId;
-  label: string;
-  short: string;
-}[] = [
-  { id: 'montes_claros', label: 'Montes Claros (MG)', short: 'MOC' },
-  { id: 'brasilia', label: 'Brasília (DF)', short: 'DF' },
-  { id: 'sao_paulo', label: 'São Paulo (SP)', short: 'SP' },
-];
+export function linesRegionLabel(id: LinesRegionId): string {
+  switch (id) {
+    case 'brasilia':
+      return 'Brasília (DF)';
+    case 'sao_paulo':
+      return 'São Paulo (SP)';
+    default:
+      return 'Montes Claros (MG)';
+  }
+}

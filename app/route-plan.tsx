@@ -22,6 +22,7 @@ import * as Location from 'expo-location';
 import { API_URL } from '../constants/api';
 import { fetchDiverseRoutes } from '../services/fetch-diverse-routes';
 import { getToken, getUserInfo } from '../services/token.service';
+import { isRouteWithinMobilityCoverage } from '../utils/mobility-coverage';
 
 const PRIMARY = '#0057A8';
 const BG = '#F5F5F5';
@@ -37,17 +38,42 @@ const PREFETCH_DEBOUNCE_MS = 450;
 
 type PackagedRoutesPayload = { alone: unknown[]; companied: unknown[] };
 
-function routesPayloadCacheKey(userId: number, origin: string, destination: string): string {
-  return `${userId}\u001f${origin.trim()}\u001f${destination.trim()}`;
+function coordKey(c: { latitude: number; longitude: number } | null | undefined): string {
+  if (!c || !Number.isFinite(c.latitude) || !Number.isFinite(c.longitude)) return '';
+  return `${c.latitude.toFixed(5)},${c.longitude.toFixed(5)}`;
+}
+
+function routesPayloadCacheKey(
+  userId: number,
+  origin: string,
+  destination: string,
+  originCoord: { latitude: number; longitude: number } | null,
+  destCoord: { latitude: number; longitude: number } | null,
+): string {
+  return `${userId}\u001f${origin.trim()}\u001f${destination.trim()}\u001f${coordKey(originCoord)}\u001f${coordKey(destCoord)}`;
 }
 
 async function fetchPackagedRoutes(
   origin: string,
   destination: string,
   userId: number,
+  originCoord?: { latitude: number; longitude: number } | null,
+  destCoord?: { latitude: number; longitude: number } | null,
 ): Promise<PackagedRoutesPayload> {
   try {
-    const payload = await fetchDiverseRoutes(origin, destination, userId);
+    const payload = await fetchDiverseRoutes(
+      origin,
+      destination,
+      userId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        ...(originCoord ? { originCoord } : {}),
+        ...(destCoord ? { destinationCoord: destCoord } : {}),
+      },
+    );
     return {
       alone: payload.alone as unknown[],
       companied: payload.companied as unknown[],
@@ -160,9 +186,28 @@ export default function RoutePlanScreen() {
   const [selectedPoint, setSelectedPoint] = useState<any>(null);
   const [placeDetails, setPlaceDetails] = useState<any>(null);
 
+  /** Params da URL aplicados no mesmo render (evita buscar com GPS antigo antes do effect). */
+  const originCoordResolved = useMemo((): { latitude: number; longitude: number } | null => {
+    if (originLatParam != null && originLngParam != null) {
+      return { latitude: originLatParam, longitude: originLngParam };
+    }
+    const oj = parseCoordJsonString(paramOne(params.originCoordinate));
+    if (oj) return oj;
+    return originCoord;
+  }, [originLatParam, originLngParam, params.originCoordinate, originCoord]);
+
+  const destCoordResolved = useMemo((): { latitude: number; longitude: number } | null => {
+    if (destLatParam != null && destLngParam != null) {
+      return { latitude: destLatParam, longitude: destLngParam };
+    }
+    const dj = parseCoordJsonString(paramOne(params.destinationCoordinate));
+    if (dj) return dj;
+    return destCoord;
+  }, [destLatParam, destLngParam, params.destinationCoordinate, destCoord]);
+
   const fitBoth = useCallback(() => {
-    const o = originCoord;
-    const d = destCoord;
+    const o = originCoordResolved;
+    const d = destCoordResolved;
     const destAnchor = d ?? MAP_FALLBACK;
     if (!mapRef.current) return;
     if (o && d) {
@@ -188,7 +233,7 @@ export default function RoutePlanScreen() {
       },
       220,
     );
-  }, [originCoord, destCoord]);
+  }, [originCoordResolved, destCoordResolved]);
 
   useEffect(() => {
     let cancelled = false;
@@ -309,15 +354,21 @@ export default function RoutePlanScreen() {
 
   /** Pré-busca alone + companied emBackground quando O/D estão definidos — o botão reaproveita cache ou a mesma promise. */
   useEffect(() => {
-    if (!originCoord || !destCoord) {
+    if (!originCoordResolved || !destCoordResolved) {
       prefetchGenerationRef.current += 1;
       routesCacheRef.current = null;
       return;
     }
 
-    const dest = destLabel.trim() || destinationParam.trim();
-    const orig = originLabel.trim() || 'Local atual';
+    const dest = destinationParam.trim() || destLabel.trim();
+    const orig = originParam.trim() || originLabel.trim() || 'Local atual';
     if (!dest) {
+      return;
+    }
+
+    if (!isRouteWithinMobilityCoverage(originCoordResolved, destCoordResolved)) {
+      prefetchGenerationRef.current += 1;
+      routesCacheRef.current = null;
       return;
     }
 
@@ -331,12 +382,12 @@ export default function RoutePlanScreen() {
           if (typeof userId !== 'number' || Number.isNaN(userId)) return;
           if (generation !== prefetchGenerationRef.current) return;
 
-          const key = routesPayloadCacheKey(userId, orig, dest);
+          const key = routesPayloadCacheKey(userId, orig, dest, originCoordResolved, destCoordResolved);
           if (routesCacheRef.current?.key === key) return;
 
           let promise = inflightRoutesByKeyRef.current.get(key);
           if (!promise) {
-            promise = fetchPackagedRoutes(orig, dest, userId).finally(() => {
+            promise = fetchPackagedRoutes(orig, dest, userId, originCoordResolved, destCoordResolved).finally(() => {
               inflightRoutesByKeyRef.current.delete(key);
             });
             inflightRoutesByKeyRef.current.set(key, promise);
@@ -352,9 +403,16 @@ export default function RoutePlanScreen() {
     }, PREFETCH_DEBOUNCE_MS);
 
     return () => clearTimeout(debounceId);
-  }, [originCoord, destCoord, originLabel, destLabel, destinationParam]);
+  }, [
+    originCoordResolved,
+    destCoordResolved,
+    originLabel,
+    destLabel,
+    destinationParam,
+    originParam,
+  ]);
 
-  const canSwapCoords = !!(originCoord && destCoord);
+  const canSwapCoords = !!(originCoordResolved && destCoordResolved);
 
   const handleSwap = useCallback(() => {
     const oLabel = originLabel;
@@ -371,31 +429,44 @@ export default function RoutePlanScreen() {
   const goEditLocations = useCallback(
     (field: 'origin' | 'destination') => {
       const p: Record<string, string> = {
-        origin: originLabel.trim() || 'Local atual',
-        destination: destLabel.trim() || destinationParam,
+        origin: originLabel.trim() || originParam.trim() || 'Local atual',
+        destination: destLabel.trim() || destinationParam.trim(),
         editField: field,
       };
-      if (originCoord) {
+      if (originCoordResolved) {
         p.originCoordinate = JSON.stringify({
-          latitude: originCoord.latitude,
-          longitude: originCoord.longitude,
+          latitude: originCoordResolved.latitude,
+          longitude: originCoordResolved.longitude,
         });
+        p.originLat = String(originCoordResolved.latitude);
+        p.originLng = String(originCoordResolved.longitude);
       }
-      if (destCoord) {
+      if (destCoordResolved) {
         p.destinationCoordinate = JSON.stringify({
-          latitude: destCoord.latitude,
-          longitude: destCoord.longitude,
+          latitude: destCoordResolved.latitude,
+          longitude: destCoordResolved.longitude,
         });
+        p.destLat = String(destCoordResolved.latitude);
+        p.destLng = String(destCoordResolved.longitude);
       }
       router.push({ pathname: '/search-destination', params: p });
     },
-    [router, originLabel, destLabel, destinationParam, originCoord, destCoord],
+    [router, originLabel, destLabel, destinationParam, originParam, originCoordResolved, destCoordResolved],
   );
 
   const goFindRoutes = useCallback(async () => {
-    const dest = destLabel.trim() || destinationParam;
-    const orig = originLabel.trim() || 'Local atual';
+    const dest = destinationParam.trim() || destLabel.trim();
+    const orig = originParam.trim() || originLabel.trim() || 'Local atual';
     if (!dest) return;
+
+    if (
+      originCoordResolved &&
+      destCoordResolved &&
+      !isRouteWithinMobilityCoverage(originCoordResolved, destCoordResolved)
+    ) {
+      router.push('/out-of-coverage');
+      return;
+    }
 
     let packagedRoutes: PackagedRoutesPayload = { alone: [], companied: [] };
 
@@ -404,14 +475,14 @@ export default function RoutePlanScreen() {
       if (typeof userId !== 'number' || Number.isNaN(userId)) {
         packagedRoutes = { alone: [], companied: [] };
       } else {
-        const key = routesPayloadCacheKey(userId, orig, dest);
+        const key = routesPayloadCacheKey(userId, orig, dest, originCoordResolved, destCoordResolved);
 
         if (routesCacheRef.current?.key === key) {
           packagedRoutes = routesCacheRef.current.data;
         } else {
           let promise = inflightRoutesByKeyRef.current.get(key);
           if (!promise) {
-            promise = fetchPackagedRoutes(orig, dest, userId).finally(() => {
+            promise = fetchPackagedRoutes(orig, dest, userId, originCoordResolved, destCoordResolved).finally(() => {
               inflightRoutesByKeyRef.current.delete(key);
             });
             inflightRoutesByKeyRef.current.set(key, promise);
@@ -425,9 +496,26 @@ export default function RoutePlanScreen() {
           }
         }
       }
-    } catch {
+    } catch (error) {
       packagedRoutes = { alone: [], companied: [] };
       setFindRoutesLoading(false);
+
+      const name = (error as { name?: string } | null)?.name;
+      if (name === 'RoutesUnauthorizedError') {
+        Alert.alert(
+          'Sessão expirada',
+          'Você precisa entrar de novo para buscar trajetos.',
+          [{ text: 'OK', onPress: () => router.replace('/login') }],
+        );
+        return;
+      }
+      if (name === 'RoutesAllTimedOutError') {
+        Alert.alert(
+          'Tempo esgotado',
+          'O servidor demorou demais para responder. Tente novamente em instantes.',
+        );
+        return;
+      }
     }
 
     const aloneCount = Array.isArray(packagedRoutes.alone) ? packagedRoutes.alone.length : 0;
@@ -438,7 +526,10 @@ export default function RoutePlanScreen() {
       // O usuário pode ajustar origem/destino e tentar novamente.
       // (A API também pode retornar erro; aqui tratamos o caso de "sem rotas".)
       // eslint-disable-next-line no-undef
-      Alert.alert('Nenhum trajeto encontrado', 'Tente ajustar origem/destino ou tente novamente em alguns instantes.');
+      Alert.alert(
+        'Nenhum trajeto encontrado',
+        'Ajuste origem e destino. Se persistir: confirme login, conexão com a API (EXPO_PUBLIC_API_URL no app) e no servidor as variáveis OTP_URL / GOOGLE_API_KEY.',
+      );
       return;
     }
 
@@ -447,43 +538,43 @@ export default function RoutePlanScreen() {
       destination: dest,
       routes: encodeURIComponent(JSON.stringify(packagedRoutes)),
     };
-    if (originCoord) {
+    if (originCoordResolved) {
       p.originCoordinate = JSON.stringify({
-        latitude: originCoord.latitude,
-        longitude: originCoord.longitude,
+        latitude: originCoordResolved.latitude,
+        longitude: originCoordResolved.longitude,
       });
     }
-    if (destCoord) {
+    if (destCoordResolved) {
       p.destinationCoordinate = JSON.stringify({
-        latitude: destCoord.latitude,
-        longitude: destCoord.longitude,
+        latitude: destCoordResolved.latitude,
+        longitude: destCoordResolved.longitude,
       });
     }
     router.push({ pathname: '/route-results', params: p });
-  }, [router, originLabel, destLabel, destinationParam, originCoord, destCoord]);
+  }, [router, originLabel, destLabel, destinationParam, originParam, originCoordResolved, destCoordResolved]);
 
   const lineCoords =
-    originCoord && destCoord
+    originCoordResolved && destCoordResolved
       ? [
-          { latitude: originCoord.latitude, longitude: originCoord.longitude },
-          { latitude: destCoord.latitude, longitude: destCoord.longitude },
+          { latitude: originCoordResolved.latitude, longitude: originCoordResolved.longitude },
+          { latitude: destCoordResolved.latitude, longitude: destCoordResolved.longitude },
         ]
       : [];
   const route = useMemo(() => {
-    if (!originCoord || !destCoord) return null;
+    if (!originCoordResolved || !destCoordResolved) return null;
     return {
       stages: [
         {
           points: [
             {
-              latitude: (originCoord.latitude + destCoord.latitude) / 2,
-              longitude: (originCoord.longitude + destCoord.longitude) / 2,
+              latitude: (originCoordResolved.latitude + destCoordResolved.latitude) / 2,
+              longitude: (originCoordResolved.longitude + destCoordResolved.longitude) / 2,
             },
           ],
         },
       ],
     };
-  }, [originCoord, destCoord]);
+  }, [originCoordResolved, destCoordResolved]);
 
   useEffect(() => {
     if (!route) return;
@@ -554,7 +645,7 @@ export default function RoutePlanScreen() {
   const originDisplay = originLabel.trim() || 'Local atual';
   const destDisplay = destLabel.trim() || destinationParam;
   const hasDestination = destinationParam.trim().length > 0;
-  const mapRegionCenter = destCoord ?? MAP_FALLBACK;
+  const mapRegionCenter = destCoordResolved ?? MAP_FALLBACK;
 
   return (
     <SafeAreaView style={[styles.safe, sx.fillScreen]} edges={['top', 'left', 'right']}>
@@ -658,13 +749,13 @@ export default function RoutePlanScreen() {
             }}
             onMapReady={fitBoth}
           >
-            {originCoord ? (
-              <Marker coordinate={originCoord} anchor={{ x: 0.5, y: 0.5 }}>
+            {originCoordResolved ? (
+              <Marker coordinate={originCoordResolved} anchor={{ x: 0.5, y: 0.5 }}>
                 <View style={styles.originMarker} />
               </Marker>
             ) : null}
-            {destCoord ? (
-              <Marker coordinate={destCoord} anchor={{ x: 0.5, y: 1 }}>
+            {destCoordResolved ? (
+              <Marker coordinate={destCoordResolved} anchor={{ x: 0.5, y: 1 }}>
                 <MaterialCommunityIcons name="map-marker" size={36} color={PRIMARY} />
               </Marker>
             ) : null}

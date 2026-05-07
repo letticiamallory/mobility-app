@@ -25,8 +25,8 @@ import type { LineItem } from '../mocks/lines';
 import { MOCK_LINES, MOCK_LINE_STOPS } from '../mocks/lines';
 import { getToken } from '../services/token.service';
 import {
-  LINES_REGION_OPTIONS,
   detectLinesRegionFromCoords,
+  linesRegionLabel,
   type LinesRegionId,
 } from '../utils/lines-region';
 import { nextScheduleToday, normalizeSchedulesFromApi } from '../utils/schedule-time';
@@ -234,8 +234,6 @@ export default function LinesScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [linesRegion, setLinesRegion] = useState<LinesRegionId>('montes_claros');
-  /** Se true, não sobrescreve a região pela localização GPS. */
-  const [regionLocked, setRegionLocked] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem('favorite_lines').then((favs) => {
@@ -261,13 +259,13 @@ export default function LinesScreen() {
   }, []);
 
   useEffect(() => {
-    if (regionLocked || !userLocation) return;
+    if (!userLocation) return;
     const detected = detectLinesRegionFromCoords(
       userLocation.latitude,
       userLocation.longitude,
     );
     if (detected) setLinesRegion(detected);
-  }, [userLocation, regionLocked]);
+  }, [userLocation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -362,7 +360,7 @@ export default function LinesScreen() {
     }).start(() => setModalVisible(false));
   };
 
-  const busSectionSubtitle = LINES_REGION_OPTIONS.find((o) => o.id === linesRegion)?.label ?? 'Ônibus';
+  const busSectionSubtitle = linesRegionLabel(linesRegion);
 
   const sections = useMemo(
     () => [
@@ -462,32 +460,6 @@ export default function LinesScreen() {
           );
         })}
       </View>
-
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={[styles.regionRow, sx.fillCard, sx.hairlineBottom]}
-        contentContainerStyle={styles.regionRowContent}
-      >
-        {LINES_REGION_OPTIONS.map((opt) => {
-          const active = linesRegion === opt.id;
-          return (
-            <TouchableOpacity
-              key={opt.id}
-              style={[styles.regionChip, active && styles.regionChipActive]}
-              onPress={() => {
-                setRegionLocked(true);
-                setLinesRegion(opt.id);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`Região ${opt.label}`}
-              accessibilityState={{ selected: active }}
-            >
-              <Text style={[styles.regionChipText, active && styles.regionChipTextActive]}>{opt.short}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
 
       {loading ? (
         <View style={styles.centerWrap}>
@@ -806,20 +778,6 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#1E1D1D', fontWeight: '700' },
   tabIndicator: { marginTop: 10, width: 30, height: 3, borderRadius: 2, backgroundColor: 'transparent' },
   tabIndicatorActive: { backgroundColor: '#0057A8' },
-  regionRow: { maxHeight: 48, borderBottomWidth: 1, borderBottomColor: '#EEEEEE', backgroundColor: '#FFFFFF' },
-  regionRowContent: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12 },
-  regionChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: '#F5F5F5',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    marginRight: 8,
-  },
-  regionChipActive: { backgroundColor: '#E8F0FE', borderColor: '#0057A8' },
-  regionChipText: { fontSize: 13, fontWeight: '600', color: '#666666' },
-  regionChipTextActive: { color: '#0057A8' },
   centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { color: '#999999' },
   sectionContent: { paddingBottom: 24 },

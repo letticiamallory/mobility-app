@@ -1,7 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { FlatList, SafeAreaView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { FlatList, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { ScaledText as Text } from '@/components/ScaledText';
 import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { A11Y_HIT_SLOP } from '@/constants/accessibility';
@@ -52,7 +53,7 @@ export default function ProfileHistoryScreen() {
   }, []);
 
   return (
-    <SafeAreaView style={[styles.safeArea, sx.fillScreen]}>
+    <SafeAreaView style={[styles.safeArea, sx.fillScreen]} edges={['top', 'left', 'right']}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.header, sx.fillCard]}>
         <TouchableOpacity

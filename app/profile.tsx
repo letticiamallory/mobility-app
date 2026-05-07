@@ -7,13 +7,14 @@ import { useAccessibilitySurfaces } from '@/contexts/accessibility-preferences';
 import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
-import { getToken, getUserAvatar, getUserInfo, removeToken } from '../services/token.service';
+import { getToken, getUserInfo, removeToken } from '../services/token.service';
 
 type MeResponse = {
   name?: string;
   email?: string;
   disability_type?: string;
   accompanied?: string;
+  avatar_data_url?: string | null;
 };
 
 const DISABILITY_LABELS: Record<string, string> = {
@@ -38,6 +39,10 @@ function normalizeMePayload(raw: unknown): MeResponse {
     email: typeof r.email === 'string' ? r.email : undefined,
     disability_type: typeof r.disability_type === 'string' ? r.disability_type : undefined,
     accompanied: typeof r.accompanied === 'string' ? r.accompanied : undefined,
+    avatar_data_url:
+      typeof r.avatar_data_url === 'string' && r.avatar_data_url.length > 0
+        ? r.avatar_data_url
+        : null,
   };
 }
 
@@ -74,16 +79,16 @@ export default function ProfileScreen() {
     }
 
     try {
-      const savedAvatar = await getUserAvatar();
-      setAvatarUri(savedAvatar);
       const meResponse = await fetch(`${API_URL}/users/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (meResponse.ok) {
         const raw = await meResponse.json();
         const meData = normalizeMePayload(raw);
+        setAvatarUri(meData.avatar_data_url ?? null);
         setProfile(await mergeWithLocalInfo(meData));
       } else {
+        setAvatarUri(null);
         setProfile(await mergeWithLocalInfo({}));
       }
     } catch {

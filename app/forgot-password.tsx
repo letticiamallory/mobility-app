@@ -5,6 +5,8 @@ import { useReduceMotion } from '@/hooks/useReduceMotion';
 import {
   Alert,
   Animated,
+  KeyboardAvoidingView,
+  Platform,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -94,72 +96,82 @@ export default function ForgotPasswordScreen() {
   return (
     <SafeAreaView style={[styles.screen, sx.fillScreen]}>
       <Stack.Screen options={{ headerShown: false }} />
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backBtn}
-          hitSlop={A11Y_HIT_SLOP}
-          accessibilityRole="button"
-          accessibilityLabel="Voltar"
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+      >
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
-        </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.backBtn}
+            hitSlop={A11Y_HIT_SLOP}
+            accessibilityRole="button"
+            accessibilityLabel="Voltar"
+          >
+            <MaterialCommunityIcons name="arrow-left" size={24} color="#1E1D1D" />
+          </TouchableOpacity>
 
-        <Animated.View
-          style={[
-            styles.illustrationWrap,
-            {
-              opacity: entryOpacity,
-              transform: [{ translateY: entryTranslateY }, { translateY: floatY }],
-            },
-          ]}
-        >
-          <MailIllustration width={260} height={200} />
-        </Animated.View>
-        <Text style={styles.title}>Insira seu e-mail</Text>
-        <Text style={styles.subtitle}>
-          Informe seu e-mail cadastrado e enviaremos um link para você criar uma nova senha
-        </Text>
-
-        <Text style={styles.label}>Email</Text>
-        <View style={styles.inputWrap}>
-          <TextInput
-            style={styles.input}
-            value={email}
-            onChangeText={setEmail}
-            placeholder="Digite seu email"
-            placeholderTextColor="#AAAAAA"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            accessibilityLabel="Email"
-            textContentType="emailAddress"
-            autoComplete="email"
-          />
-          <MaterialCommunityIcons name="email-outline" size={20} color="#AAAAAA" />
-        </View>
-
-        <TouchableOpacity
-          style={[styles.sendBtn, loading ? styles.sendBtnDisabled : null]}
-          onPress={handleSendCode}
-          disabled={loading}
-          accessibilityRole="button"
-          accessibilityLabel={loading ? 'Enviando código' : 'Enviar código de recuperação'}
-          accessibilityState={{ disabled: loading }}
-        >
-          <Text style={styles.sendBtnText}>{loading ? 'Enviando...' : 'Enviar código'}</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => router.replace('/login')}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-          accessibilityLabel="Lembrou a senha? Fazer login"
-        >
-          <Text style={styles.loginBackText}>
-            Lembrou a senha? <Text style={styles.loginBackLink}>Fazer login</Text>
+          <Animated.View
+            style={[
+              styles.illustrationWrap,
+              {
+                opacity: entryOpacity,
+                transform: [{ translateY: entryTranslateY }, { translateY: floatY }],
+              },
+            ]}
+          >
+            <MailIllustration width={260} height={200} />
+          </Animated.View>
+          <Text style={styles.title}>Insira seu e-mail</Text>
+          <Text style={styles.subtitle}>
+            Informe seu e-mail cadastrado e enviaremos um link para você criar uma nova senha
           </Text>
-        </TouchableOpacity>
-      </ScrollView>
+
+          <Text style={styles.label}>Email</Text>
+          <View style={styles.inputWrap}>
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="Digite seu email"
+              placeholderTextColor="#AAAAAA"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              accessibilityLabel="Email"
+              textContentType="emailAddress"
+              autoComplete="email"
+            />
+            <MaterialCommunityIcons name="email-outline" size={20} color="#AAAAAA" />
+          </View>
+
+          <TouchableOpacity
+            style={[styles.sendBtn, loading ? styles.sendBtnDisabled : null]}
+            onPress={handleSendCode}
+            disabled={loading}
+            accessibilityRole="button"
+            accessibilityLabel={loading ? 'Enviando código' : 'Enviar código de recuperação'}
+            accessibilityState={{ disabled: loading }}
+          >
+            <Text style={styles.sendBtnText}>{loading ? 'Enviando...' : 'Enviar código'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => router.replace('/login')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Lembrou a senha? Fazer login"
+          >
+            <Text style={styles.loginBackText}>
+              Lembrou a senha? <Text style={styles.loginBackLink}>Fazer login</Text>
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
