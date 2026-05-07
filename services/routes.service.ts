@@ -65,6 +65,11 @@ export type SearchRoutesOptions = {
   destinationCoord?: RouteCoordInput;
   /** Preferências combináveis enviadas como `route_preferences` na API. */
   routePreferences?: string[];
+  /**
+   * Token já lido (ex.: uma vez antes de várias chamadas em paralelo).
+   * Se omitido, `getToken()` roda dentro desta função.
+   */
+  authToken?: string | null;
 };
 
 export class SearchRoutesTimeoutError extends Error {
@@ -87,7 +92,10 @@ export async function searchRoutes(
   routePreference?: string,
   options?: SearchRoutesOptions,
 ) {
-  const token = await getToken();
+  const token =
+    options && 'authToken' in options && options.authToken !== undefined
+      ? options.authToken
+      : await getToken();
   const url = `${API_URL}/routes/check`;
   const originForApi = resolveRouteEndpointForApi(origin, options?.originCoord);
   const destinationForApi = resolveRouteEndpointForApi(destination, options?.destinationCoord);

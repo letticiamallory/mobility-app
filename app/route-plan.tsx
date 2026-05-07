@@ -468,6 +468,7 @@ export default function RoutePlanScreen() {
       return;
     }
 
+    setFindRoutesLoading(true);
     let packagedRoutes: PackagedRoutesPayload = { alone: [], companied: [] };
 
     try {
@@ -477,8 +478,9 @@ export default function RoutePlanScreen() {
       } else {
         const key = routesPayloadCacheKey(userId, orig, dest, originCoordResolved, destCoordResolved);
 
+        let loadPromise: Promise<PackagedRoutesPayload>;
         if (routesCacheRef.current?.key === key) {
-          packagedRoutes = routesCacheRef.current.data;
+          loadPromise = Promise.resolve(routesCacheRef.current.data);
         } else {
           let promise = inflightRoutesByKeyRef.current.get(key);
           if (!promise) {
@@ -487,18 +489,16 @@ export default function RoutePlanScreen() {
             });
             inflightRoutesByKeyRef.current.set(key, promise);
           }
-          setFindRoutesLoading(true);
-          try {
-            packagedRoutes = await promise;
-            routesCacheRef.current = { key, data: packagedRoutes };
-          } finally {
-            setFindRoutesLoading(false);
-          }
+          loadPromise = promise.then((data) => {
+            routesCacheRef.current = { key, data };
+            return data;
+          });
         }
+
+        packagedRoutes = await loadPromise;
       }
     } catch (error) {
       packagedRoutes = { alone: [], companied: [] };
-      setFindRoutesLoading(false);
 
       const name = (error as { name?: string } | null)?.name;
       if (name === 'RoutesUnauthorizedError') {
@@ -516,16 +516,14 @@ export default function RoutePlanScreen() {
         );
         return;
       }
+    } finally {
+      setFindRoutesLoading(false);
     }
 
     const aloneCount = Array.isArray(packagedRoutes.alone) ? packagedRoutes.alone.length : 0;
     const companiedCount = Array.isArray(packagedRoutes.companied) ? packagedRoutes.companied.length : 0;
     const totalCount = aloneCount + companiedCount;
     if (totalCount === 0) {
-      // Fica no route-plan (com mapa) em vez de abrir `route-results` vazio.
-      // O usuário pode ajustar origem/destino e tentar novamente.
-      // (A API também pode retornar erro; aqui tratamos o caso de "sem rotas".)
-      // eslint-disable-next-line no-undef
       Alert.alert(
         'Nenhum trajeto encontrado',
         'Ajuste origem e destino. Se persistir: confirme login, conexão com a API (EXPO_PUBLIC_API_URL no app) e no servidor as variáveis OTP_URL / GOOGLE_API_KEY.',

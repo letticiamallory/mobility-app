@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Fragment, useCallback, useEffect, useMemo, useState, type ComponentProps } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { ACTIVE_MOCK_WEATHER } from '../mocks';
 import {
   fetchDiverseRoutes,
@@ -158,6 +158,11 @@ function splitTimeToDigits(timeValue?: string): string[] {
   const match = `${timeValue ?? ''}`.match(/^(\d{2}):(\d{2})$/);
   if (!match) return ['', '', '', ''];
   return [match[1][0], match[1][1], match[2][0], match[2][1]];
+}
+
+/** Até 4 dígitos para um único campo (preenche HH:MM em sequência). */
+function splitTimeToRawDigits(timeValue?: string): string {
+  return splitTimeToDigits(timeValue).join('').replace(/\D/g, '').slice(0, 4);
 }
 
 const uberDeepLink = 'uber://?action=setPickup';
@@ -582,13 +587,22 @@ export default function RouteResultsScreen() {
   const [showTimeFilterList, setShowTimeFilterList] = useState(false);
   const [forcedServerResults, setForcedServerResults] = useState(false);
   const [initialRoutesLoading, setInitialRoutesLoading] = useState(false);
+  /** Busca disparada pelo header (filtros, “Buscar rotas”): esconde cards até a API responder. */
+  const [suggestedRoutesRefetchLoading, setSuggestedRoutesRefetchLoading] = useState(false);
   const [preferLessTransfers, setPreferLessTransfers] = useState(false);
   const [preferLessWalking, setPreferLessWalking] = useState(false);
   const [showManualTimeModal, setShowManualTimeModal] = useState(false);
   const [pendingTimeFilterKey, setPendingTimeFilterKey] = useState<
     'set_departure_time' | 'set_arrival_time' | null
   >(null);
-  const [manualTimeDigits, setManualTimeDigits] = useState<string[]>(['', '', '', '']);
+  /** Somente dígitos (máx. 4); um campo invisível preenche os quadrados em sequência. */
+  const [manualTimeRaw, setManualTimeRaw] = useState('');
+  const manualTimeInputRef = useRef<TextInput>(null);
+  /**
+   * Evita que o fetch automático (ao abrir / mudar destino na URL) sobrescreva resultados
+   * depois que o usuário já pediu outra busca via filtros ou “Buscar rotas” (endereços do header).
+   */
+  const autoInitialRoutesFetchEpochRef = useRef(0);
 
   /** Coordenadas efetivas para API (URL + estado; GPS pode preencher depois do primeiro paint). */
   const mergedOriginCoordForApi = useMemo(() => {
@@ -620,12 +634,13 @@ export default function RouteResultsScreen() {
     setShowTimeFilterList(false);
     setForcedServerResults(false);
     setInitialRoutesLoading(false);
+    setSuggestedRoutesRefetchLoading(false);
     setSelectedTimeFilter(TIME_FILTER_OPTIONS[0]);
     setPreferLessTransfers(false);
     setPreferLessWalking(false);
     setShowManualTimeModal(false);
     setPendingTimeFilterKey(null);
-    setManualTimeDigits(['', '', '', '']);
+    setManualTimeRaw('');
     setHistoryOriginTitle(undefined);
     setHistoryDestinationTitle(undefined);
   }, [originFromParams, destinationFromParams, originCoordParam, destCoordParam]);
@@ -668,24 +683,30 @@ export default function RouteResultsScreen() {
       return;
     }
 
+    const epoch = ++autoInitialRoutesFetchEpochRef.current;
     let cancelled = false;
     (async () => {
       setInitialRoutesLoading(true);
       try {
         const { userId } = await getUserInfo();
         if (typeof userId !== 'number' || Number.isNaN(userId) || cancelled) {
-          if (!cancelled) setFetchedSplit({ alone: [], companied: [] });
+          if (!cancelled && epoch === autoInitialRoutesFetchEpochRef.current) {
+            setFetchedSplit({ alone: [], companied: [] });
+            setForcedServerResults(true);
+          }
           return;
         }
         const originQuery = originFromParams.trim() || 'Local atual';
-        const routePrefs = buildRoutePreferences(preferLessTransfers, preferLessWalking);
+        /** Só para carga inicial / mudança de rota na URL — filtros usam `fetchRoutesForHeader`. */
+        const defaultTime = TIME_FILTER_OPTIONS[0];
+        const routePrefs = buildRoutePreferences(false, false);
         const payload = await fetchDiverseRoutes(
           originQuery,
           dest,
           userId,
           undefined,
-          selectedTimeFilter.key,
-          selectedTimeFilter.timeValue,
+          defaultTime.key,
+          defaultTime.timeValue,
           undefined,
           {
             originAddress: originQuery,
@@ -695,14 +716,16 @@ export default function RouteResultsScreen() {
             ...(routePrefs ? { routePreferences: routePrefs } : {}),
           },
         );
-        if (!cancelled) {
+        if (!cancelled && epoch === autoInitialRoutesFetchEpochRef.current) {
           setFetchedSplit(payload);
           setMiddleStop(null);
           setForcedServerResults(true);
         }
       } catch (error) {
-        if (!cancelled) setFetchedSplit({ alone: [], companied: [] });
-        if (!cancelled) setForcedServerResults(true);
+        if (!cancelled && epoch === autoInitialRoutesFetchEpochRef.current) {
+          setFetchedSplit({ alone: [], companied: [] });
+          setForcedServerResults(true);
+        }
         if ((error as { name?: string } | null)?.name === 'RoutesUnauthorizedError') {
           if (!cancelled) router.replace('/login');
         }
@@ -717,9 +740,6 @@ export default function RouteResultsScreen() {
     destinationFromParams,
     originFromParams,
     params.routes,
-    selectedTimeFilter,
-    preferLessTransfers,
-    preferLessWalking,
     mergedOriginCoordForApi,
     mergedDestCoordForApi,
     router,
@@ -877,10 +897,13 @@ export default function RouteResultsScreen() {
     setShowTimeFilterList(false);
     setActiveSearchField(null);
     setPlaceSuggestions([]);
+    autoInitialRoutesFetchEpochRef.current += 1;
+    setSuggestedRoutesRefetchLoading(true);
     try {
       const { userId } = await getUserInfo();
       if (typeof userId !== 'number' || Number.isNaN(userId)) {
         setFetchedSplit({ alone: [], companied: [] });
+        setForcedServerResults(true);
         return;
       }
       const originQuery = headerOrigin.trim() || 'Local atual';
@@ -916,33 +939,41 @@ export default function RouteResultsScreen() {
       if ((error as { name?: string } | null)?.name === 'RoutesUnauthorizedError') {
         router.replace('/login');
       }
+    } finally {
+      setSuggestedRoutesRefetchLoading(false);
     }
   };
 
   const openManualTimeModal = useCallback(
     (filterKey: 'set_departure_time' | 'set_arrival_time') => {
       setPendingTimeFilterKey(filterKey);
-      setManualTimeDigits(splitTimeToDigits(selectedTimeFilter.timeValue));
+      setManualTimeRaw(splitTimeToRawDigits(selectedTimeFilter.timeValue));
       setShowManualTimeModal(true);
     },
     [selectedTimeFilter.timeValue],
   );
 
+  useEffect(() => {
+    if (!showManualTimeModal) return;
+    const id = setTimeout(() => manualTimeInputRef.current?.focus(), 280);
+    return () => clearTimeout(id);
+  }, [showManualTimeModal]);
+
   const handleManualTimeCancel = useCallback(() => {
     setShowManualTimeModal(false);
     setPendingTimeFilterKey(null);
-    setManualTimeDigits(['', '', '', '']);
+    setManualTimeRaw('');
   }, []);
 
   const handleManualTimeConfirm = useCallback(() => {
     if (!pendingTimeFilterKey) return;
-    const [h1, h2, m1, m2] = manualTimeDigits;
-    if (![h1, h2, m1, m2].every((d) => /^\d$/.test(d))) {
-      Alert.alert('Horário inválido', 'Preencha os 4 campos com números.');
+    const raw = manualTimeRaw.replace(/\D/g, '');
+    if (raw.length !== 4) {
+      Alert.alert('Horário inválido', 'Digite 4 números (hora e minuto), por exemplo 0830.');
       return;
     }
-    const hour = Number(`${h1}${h2}`);
-    const minute = Number(`${m1}${m2}`);
+    const hour = Number(raw.slice(0, 2));
+    const minute = Number(raw.slice(2, 4));
     if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
       Alert.alert('Horário inválido', 'Informe um horário válido entre 00:00 e 23:59.');
       return;
@@ -952,9 +983,9 @@ export default function RouteResultsScreen() {
     setSelectedTimeFilter(nextFilter);
     setShowManualTimeModal(false);
     setPendingTimeFilterKey(null);
-    setManualTimeDigits(['', '', '', '']);
+    setManualTimeRaw('');
     fetchRoutesForHeader({ timeOption: nextFilter });
-  }, [fetchRoutesForHeader, manualTimeDigits, pendingTimeFilterKey]);
+  }, [fetchRoutesForHeader, manualTimeRaw, pendingTimeFilterKey]);
 
   const packagedRoutesByTab = useMemo<PackagedRoutesByTab | null>(() => {
     const rawParam = Array.isArray(params.routes) ? params.routes[0] : params.routes;
@@ -1757,15 +1788,24 @@ export default function RouteResultsScreen() {
                     if (pref.key === 'less_transfers') {
                       const next = !preferLessTransfers;
                       setPreferLessTransfers(next);
-                      void fetchRoutesForHeader({ preferLessTransfers: next });
+                      if (next) setPreferLessWalking(false);
+                      void fetchRoutesForHeader({
+                        preferLessTransfers: next,
+                        preferLessWalking: next ? false : preferLessWalking,
+                      });
                     } else {
                       const next = !preferLessWalking;
                       setPreferLessWalking(next);
-                      void fetchRoutesForHeader({ preferLessWalking: next });
+                      if (next) setPreferLessTransfers(false);
+                      void fetchRoutesForHeader({
+                        preferLessWalking: next,
+                        preferLessTransfers: next ? false : preferLessTransfers,
+                      });
                     }
                   }}
                   accessibilityRole="button"
                   accessibilityLabel={`Preferência de rota: ${pref.label}. Toque para ligar ou desligar`}
+                  accessibilityHint="Menos trocas e Caminhar menos não podem ficar ativos ao mesmo tempo"
                   accessibilityState={{ selected }}
                 >
                   <MaterialCommunityIcons
@@ -1848,28 +1888,41 @@ export default function RouteResultsScreen() {
           <Text style={styles.sectionTitleStrong}>Rotas sugeridas</Text>
         </View>
 
-        {mostAccessibleRoute ? renderRouteCard(mostAccessibleRoute, 'most-accessible', true, 0) : null}
-
-        {filteredRoutes.length === 0 ? (
-        initialRoutesLoading ? (
-          <View style={styles.emptyRoutesWrap}>
+        {suggestedRoutesRefetchLoading ? (
+          <View
+            style={styles.emptyRoutesWrap}
+            accessibilityLiveRegion="polite"
+            accessibilityLabel="Carregando trajetos"
+          >
             <ActivityIndicator size="large" color="#0057A8" />
             <Text style={styles.emptyRoutesHintText}>Carregando trajetos…</Text>
           </View>
-        ) : hasTypedAddress ? (
-            <Text style={styles.emptyRoutesText}>
-              Nao encontramos uma rota tranquila para esse perfil agora. Tente ajustar o horario ou
-              alternar entre Sozinho e Acompanhado.
-            </Text>
-          ) : (
-            <View style={styles.emptyRoutesWrap}>
-              <MaterialCommunityIcons name="map-search-outline" size={40} color="#CCCCCC" />
-              <Text style={styles.emptyRoutesHintText}>Digite um endereco para ver sugestoes de trajetos.</Text>
-            </View>
-          )
-        ) : null}
-        {displayedRoutes.map((route, index) =>
-          renderRouteCard(route, `route-${index}`, false, mostAccessibleRoute ? index + 1 : index),
+        ) : (
+          <>
+            {mostAccessibleRoute ? renderRouteCard(mostAccessibleRoute, 'most-accessible', true, 0) : null}
+
+            {filteredRoutes.length === 0 ? (
+            initialRoutesLoading ? (
+              <View style={styles.emptyRoutesWrap}>
+                <ActivityIndicator size="large" color="#0057A8" />
+                <Text style={styles.emptyRoutesHintText}>Carregando trajetos…</Text>
+              </View>
+            ) : hasTypedAddress ? (
+                <Text style={styles.emptyRoutesText}>
+                  Nao encontramos uma rota tranquila para esse perfil agora. Tente ajustar o horario ou
+                  alternar entre Sozinho e Acompanhado.
+                </Text>
+              ) : (
+                <View style={styles.emptyRoutesWrap}>
+                  <MaterialCommunityIcons name="map-search-outline" size={40} color="#CCCCCC" />
+                  <Text style={styles.emptyRoutesHintText}>Digite um endereco para ver sugestoes de trajetos.</Text>
+                </View>
+              )
+            ) : null}
+            {displayedRoutes.map((route, index) =>
+              renderRouteCard(route, `route-${index}`, false, mostAccessibleRoute ? index + 1 : index),
+            )}
+          </>
         )}
       </ScrollView>
       ) : (
@@ -1895,49 +1948,31 @@ export default function RouteResultsScreen() {
                 : 'Definir horário de saída'}
             </Text>
             <View style={styles.manualTimeDigitsRow}>
-              {[0, 1].map((idx) => (
+              <View style={styles.manualTimeDigitsInner} pointerEvents="box-none">
+                {[0, 1].map((idx) => (
+                  <View key={`d-${idx}`} style={styles.manualTimeDigitBox}>
+                    <Text style={styles.manualTimeDigitText}>{manualTimeRaw[idx] ?? ''}</Text>
+                  </View>
+                ))}
+                <Text style={styles.manualTimeSeparator}>:</Text>
+                {[2, 3].map((idx) => (
+                  <View key={`d-${idx}`} style={styles.manualTimeDigitBox}>
+                    <Text style={styles.manualTimeDigitText}>{manualTimeRaw[idx] ?? ''}</Text>
+                  </View>
+                ))}
                 <TextInput
-                  key={`h-${idx}`}
-                  value={manualTimeDigits[idx] ?? ''}
-                  onChangeText={(value) => {
-                    const digit = value.replace(/\D/g, '').slice(-1);
-                    setManualTimeDigits((prev) => {
-                      const next = [...prev];
-                      next[idx] = digit;
-                      return next;
-                    });
-                  }}
+                  ref={manualTimeInputRef}
+                  value={manualTimeRaw}
+                  onChangeText={(t) => setManualTimeRaw(t.replace(/\D/g, '').slice(0, 4))}
                   keyboardType="number-pad"
-                  maxLength={1}
-                  style={styles.manualTimeDigitInput}
+                  maxLength={4}
+                  caretHidden
+                  style={styles.manualTimeHiddenInput}
                   textAlign="center"
-                  placeholder="0"
-                  placeholderTextColor="#9CA3AF"
-                  accessibilityLabel={`Hora, dígito ${idx + 1} de 2`}
+                  accessibilityLabel="Horário em 4 dígitos, hora e minuto"
+                  accessibilityHint="Toque nos quadrados e digite quatro números; eles preenchem em sequência"
                 />
-              ))}
-              <Text style={styles.manualTimeSeparator}>:</Text>
-              {[2, 3].map((idx) => (
-                <TextInput
-                  key={`m-${idx}`}
-                  value={manualTimeDigits[idx] ?? ''}
-                  onChangeText={(value) => {
-                    const digit = value.replace(/\D/g, '').slice(-1);
-                    setManualTimeDigits((prev) => {
-                      const next = [...prev];
-                      next[idx] = digit;
-                      return next;
-                    });
-                  }}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  style={styles.manualTimeDigitInput}
-                  textAlign="center"
-                  placeholder="0"
-                  placeholderTextColor="#9CA3AF"
-                  accessibilityLabel={`Minutos, dígito ${idx - 1} de 2`}
-                />
-              ))}
+              </View>
             </View>
             <View style={styles.manualTimeActions}>
               <TouchableOpacity
@@ -2283,23 +2318,40 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   manualTimeDigitsRow: {
+    marginBottom: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  manualTimeDigitsInner: {
+    position: 'relative',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    marginBottom: 20,
+    minHeight: 54,
+    minWidth: 220,
   },
-  manualTimeDigitInput: {
+  manualTimeDigitBox: {
     width: 46,
     height: 54,
     borderRadius: 10,
     borderWidth: 1.5,
     borderColor: '#93C5FD',
     backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  manualTimeDigitText: {
     color: '#0F172A',
     fontSize: 28,
     fontWeight: '700',
-    paddingVertical: 0,
+  },
+  manualTimeHiddenInput: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0.04,
+    color: 'transparent',
+    fontSize: 1,
+    zIndex: 2,
   },
   manualTimeSeparator: {
     color: '#334155',

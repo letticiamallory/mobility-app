@@ -1,5 +1,6 @@
 import type { RouteCoordInput } from '../utils/route-endpoint';
 import { routeDurationMinutes, routeSignature } from '../utils/route-results-logic';
+import { getToken } from './token.service';
 import { searchRoutes, SearchRoutesTimeoutError } from './routes.service';
 
 /** Lançado quando toda(s) chamada(s) de rota deram 401/403 — UI deve direcionar para login. */
@@ -114,6 +115,8 @@ export async function fetchDiverseRoutes(
     DIVERSE_ROUTES_TIMEOUT_MS,
   );
   const accompaniedToSend = accompanied && accompanied.trim() ? accompanied : undefined;
+  /** Uma leitura de token para as 4 requisições paralelas (evita fila em SecureStore). */
+  const authToken = await getToken();
   const mergeSettled = (results: PromiseSettledResult<unknown>[]) => {
     const mergedAlone: FetchedRouteItem[] = [];
     const mergedCompanied: FetchedRouteItem[] = [];
