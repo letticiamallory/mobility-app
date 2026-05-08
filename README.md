@@ -7,6 +7,8 @@ Cliente mobile do ecossistema **Mobility**: aplicativo em **React Native** com *
 ## Sumário
 
 - [Visão geral](#visão-geral)
+- [Demo](#demo)
+- [Screenshots](#screenshots)
 - [Stack e requisitos](#stack-e-requisitos)
 - [Estrutura do repositório](#estrutura-do-repositório)
 - [Configuração da API](#configuração-da-api)
@@ -28,6 +30,40 @@ Identidade visual centrada no **cão guia** e na paleta azul de acesso (**#0057A
 
 ---
 
+## Demo
+
+Demonstração do app em vídeo curto no YouTube — clique na imagem para abrir o Short:
+
+[![Pré-visualização do vídeo — demo Mobility no YouTube](https://img.youtube.com/vi/OAHwycyjaSU/hqdefault.jpg)](https://www.youtube.com/shorts/OAHwycyjaSU)
+
+**[Abrir demo no YouTube (Short)](https://www.youtube.com/shorts/OAHwycyjaSU)** — se a miniatura não carregar, use o link direto.
+
+---
+
+## Screenshots
+
+Telas do app em uso (fluxo de direções e linhas — exemplo em São Paulo).
+
+| Splash | Início (home) |
+|:------:|:-------------:|
+| ![Splash](docs/screenshots/01-splash.png) | ![Início — busca e favoritos](docs/screenshots/02-home.png) |
+
+| Busca de destino | Plano de rota no mapa |
+|:----------------:|:---------------------:|
+| ![Para onde você quer ir](docs/screenshots/03-busca-destino.png) | ![Origem, destino e mapa](docs/screenshots/04-plano-rota-mapa.png) |
+
+| Resultados — Sozinho | Resultados — Acompanhado |
+|:--------------------:|:------------------------:|
+| ![Rotas sugeridas — aba Sozinho](docs/screenshots/05-resultados-sozinho.png) | ![Rotas sugeridas — aba Acompanhado](docs/screenshots/06-resultados-acompanhado.png) |
+
+| Detalhe da rota | Linhas |
+|:---------------:|:------:|
+| ![Trechos, horários e acessibilidade](docs/screenshots/07-detalhe-rota.png) | ![Linhas — ônibus e metrô](docs/screenshots/08-linhas.png) |
+
+_Arquivos em `docs/screenshots/` (PNG)._
+
+---
+
 ## Stack e requisitos
 
 | Item | Versão / notas |
@@ -41,7 +77,7 @@ Identidade visual centrada no **cão guia** e na paleta azul de acesso (**#0057A
 | **Mapas** | `react-native-maps` |
 | **Testes** | Jest + `jest-expo`, Testing Library React Native |
 
-**Dispositivo:** [Expo Go](https://expo.dev/go) ou **development build** (`expo-dev-client`) para recursos nativos completos.
+**Dispositivo:** **Expo Go** ou **development build** (`expo-dev-client`) para recursos nativos completos.
 
 ---
 
@@ -66,7 +102,7 @@ Mobility/
 ├── tests/                  # Testes RTL do app
 ├── assets/                 # Imagens, fontes
 ├── mocks/                  # Dados e flags de mock
-├── docs/                   # Documentação auxiliar (ex.: testes)
+├── docs/                   # Documentação auxiliar, testes, screenshots do README
 ├── .maestro/               # Fluxos E2E (Maestro)
 ├── jest.config.js
 ├── jest.setup.js

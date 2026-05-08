@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Image, StyleSheet, View } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
-import { removeToken } from '../services/token.service';
+import { removeToken, saveToken, saveUserInfo } from '../services/token.service';
 
 function devForceLogoutEnabled(): boolean {
   if (!__DEV__) return false;
@@ -9,6 +9,26 @@ function devForceLogoutEnabled(): boolean {
     .trim()
     .toLowerCase();
   return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
+/** Só __DEV__: injeta token fixo + userId para combinar com AUTH_LETTICIA_* na API (nunca produção). */
+function letticiaSkipAuthEnabled(): boolean {
+  if (!__DEV__) return false;
+  const raw = String(process.env.EXPO_PUBLIC_LETTICIA_SKIP_AUTH ?? '')
+    .trim()
+    .toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
+async function applyLetticiaBypassAuth(): Promise<void> {
+  const token = String(process.env.EXPO_PUBLIC_LETTICIA_BYPASS_TOKEN ?? '').trim();
+  const userId = Number.parseInt(
+    String(process.env.EXPO_PUBLIC_LETTICIA_USER_ID ?? '1'),
+    10,
+  );
+  if (!token || !Number.isFinite(userId) || userId < 1) return;
+  await saveToken(token);
+  await saveUserInfo(userId, 'Letticia', 'letticia@local.test');
 }
 
 export default function SplashScreen() {
@@ -36,9 +56,13 @@ export default function SplashScreen() {
     let cancelled = false;
 
     const run = async () => {
-      /** Antes da animação: em dev, pode forçar logout para testar cadastro/login de novo. */
-      if (devForceLogoutEnabled()) {
+      /** Logout forçado em dev só sem bypass Letticia (senão apagaria o token recém-injetado). */
+      if (devForceLogoutEnabled() && !letticiaSkipAuthEnabled()) {
         await removeToken();
+      }
+      /** Bypass cedo: `userId`/token disponíveis durante a animação (ex.: efeitos em paralelo). */
+      if (letticiaSkipAuthEnabled()) {
+        await applyLetticiaBypassAuth();
       }
       if (cancelled) return;
 
@@ -97,7 +121,12 @@ export default function SplashScreen() {
       ]).start(() => {
         if (cancelled) return;
         setTimeout(() => {
-          if (!cancelled) router.replace('/login');
+          if (cancelled) return;
+          if (letticiaSkipAuthEnabled()) {
+            router.replace('/home');
+          } else {
+            router.replace('/login');
+          }
         }, 500);
       });
     };

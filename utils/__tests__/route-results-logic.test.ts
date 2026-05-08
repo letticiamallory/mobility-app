@@ -97,6 +97,17 @@ describe('routeSignature — deduplicação estável', () => {
       routeSignature({ ...base, stages: [{ mode: 'bus', line_code: '2', stop_name: 'A' }] }),
     );
   });
+
+  it('route_id diferente evita colisão mesmo com trechos genéricos iguais (OTP)', () => {
+    const base = {
+      total_duration: '45 minutos',
+      total_distance: '10 km',
+      stages: [{ mode: 'bus', line_code: '', stop_name: '' }],
+    };
+    expect(routeSignature({ ...base, route_id: 1 })).not.toBe(
+      routeSignature({ ...base, route_id: 2 }),
+    );
+  });
 });
 
 describe('routeTransportFamily', () => {

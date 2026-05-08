@@ -25,6 +25,8 @@ export type RouteLogicStage = {
   warning?: string;
   slope_warning?: boolean;
   accessibility_report?: RouteLogicAccessibilityReport;
+  /** Polilinha do trecho (OTP/Google) — usada para não colidir alternativas no dedupe. */
+  points?: { latitude?: number; longitude?: number; lat?: number; lng?: number }[];
 };
 
 export type RouteLogicItem = {
@@ -32,6 +34,8 @@ export type RouteLogicItem = {
   totalDuration?: string;
   totalTime?: string;
   total_distance?: string;
+  /** Índice da alternativa no OTP/Google (1, 2, …) — evita colidir no dedupe. */
+  route_id?: number;
   accessible?: boolean;
   slope_warning?: boolean;
   accompanied?: string;
@@ -137,7 +141,39 @@ export function normalizeStageMode(mode?: string): 'walk' | 'bus' | 'subway' | '
   return 'other';
 }
 
+/** `route_id` pode vir como número ou string do JSON. */
+function normalizedRouteId(route: RouteLogicItem): string {
+  const raw = route.route_id as unknown;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(Math.trunc(raw));
+  if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) return raw.trim();
+  return '';
+}
+
+/** Primeiro/último ponto de cada trecho — diferencia itinerários OTP com mesmos modos genéricos. */
+function routeGeometryDigest(route: RouteLogicItem): string {
+  const parts: string[] = [];
+  for (const s of route.stages ?? []) {
+    const pts = s.points;
+    if (!Array.isArray(pts) || pts.length === 0) continue;
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    const lat0 = Number(first?.latitude ?? first?.lat);
+    const lng0 = Number(first?.longitude ?? first?.lng);
+    const lat1 = Number(last?.latitude ?? last?.lat);
+    const lng1 = Number(last?.longitude ?? last?.lng);
+    if (![lat0, lng0, lat1, lng1].every((n) => Number.isFinite(n))) continue;
+    const q = (n: number) => n.toFixed(4);
+    parts.push(`${q(lat0)},${q(lng0)}→${q(lat1)},${q(lng1)}`);
+  }
+  return parts.join('|');
+}
+
 export function routeSignature(route: RouteLogicItem): string {
+  const rid = normalizedRouteId(route);
+  /** Diferencia a mesma rota promovida às duas abas no backend (`ensureNonEmptyTabs`) sem esconder Acompanhado no cliente. */
+  const profile = route.search_profile;
+  const profileBit =
+    profile === 'alone' || profile === 'companied' ? `sp:${profile}` : '';
   const modes = (route.stages ?? [])
     .map((s) => {
       const mode = normalizeStageMode(s.mode);
@@ -148,7 +184,19 @@ export function routeSignature(route: RouteLogicItem): string {
     .join('|');
   const duration = `${route.total_duration ?? route.totalDuration ?? route.totalTime ?? ''}`.trim().toLowerCase();
   const distance = `${route.total_distance ?? ''}`.trim().toLowerCase();
-  return `${duration}::${distance}::${modes}`;
+  const score =
+    typeof route.accessibility_score === 'number' && Number.isFinite(route.accessibility_score)
+      ? String(Math.round(route.accessibility_score))
+      : '';
+  const geo = routeGeometryDigest(route);
+  const core = `${duration}::${distance}::${modes}`;
+  const bits: string[] = [];
+  if (profileBit) bits.push(profileBit);
+  if (rid) bits.push(`id:${rid}`);
+  if (score) bits.push(`sc:${score}`);
+  if (geo) bits.push(`g:${geo}`);
+  bits.push(core);
+  return bits.join('::');
 }
 
 export function routeTransportFamily(

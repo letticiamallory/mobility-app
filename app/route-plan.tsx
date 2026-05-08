@@ -20,7 +20,12 @@ import { A11Y_HIT_SLOP } from '@/constants/accessibility';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { API_URL } from '../constants/api';
-import { fetchDiverseRoutes } from '../services/fetch-diverse-routes';
+import {
+  fetchDiverseRoutes,
+  RoutesAllRequestsFailedError,
+  RoutesAllTimedOutError,
+  RoutesUnauthorizedError,
+} from '../services/fetch-diverse-routes';
 import { getToken, getUserInfo } from '../services/token.service';
 import { isRouteWithinMobilityCoverage } from '../utils/mobility-coverage';
 
@@ -78,7 +83,14 @@ async function fetchPackagedRoutes(
       alone: payload.alone as unknown[],
       companied: payload.companied as unknown[],
     };
-  } catch {
+  } catch (err) {
+    if (
+      err instanceof RoutesUnauthorizedError ||
+      err instanceof RoutesAllTimedOutError ||
+      err instanceof RoutesAllRequestsFailedError
+    ) {
+      throw err;
+    }
     return { alone: [], companied: [] };
   }
 }
@@ -474,7 +486,12 @@ export default function RoutePlanScreen() {
     try {
       const { userId } = await getUserInfo();
       if (typeof userId !== 'number' || Number.isNaN(userId)) {
-        packagedRoutes = { alone: [], companied: [] };
+        Alert.alert(
+          'Entrar',
+          'Faça login para buscar trajetos.',
+          [{ text: 'OK', onPress: () => router.replace('/login') }],
+        );
+        return;
       } else {
         const key = routesPayloadCacheKey(userId, orig, dest, originCoordResolved, destCoordResolved);
 
@@ -513,6 +530,13 @@ export default function RoutePlanScreen() {
         Alert.alert(
           'Tempo esgotado',
           'O servidor demorou demais para responder. Tente novamente em instantes.',
+        );
+        return;
+      }
+      if (name === 'RoutesAllRequestsFailedError') {
+        Alert.alert(
+          'Conexão com a API',
+          'Nenhuma busca de trajeto respondeu. Confira se o celular alcança o endereço em EXPO_PUBLIC_API_URL (mesma Wi‑Fi, firewall no PC) e se o mobility-api está rodando.',
         );
         return;
       }

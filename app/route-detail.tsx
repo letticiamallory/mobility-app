@@ -376,27 +376,47 @@ function formatPriceDisplay(raw?: string): string {
   return `R$ ${t}`;
 }
 
+function safeDecodeUriComponent(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+function readCoordNumber(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v.trim().replace(',', '.'));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/** Aceita `{ latitude, longitude }` ou `{ lat, lng }` e strings numéricas (comum em JSON da API). */
+function readOriginDestCoord(o: unknown): { latitude: number; longitude: number } | null {
+  if (!o || typeof o !== 'object') return null;
+  const r = o as Record<string, unknown>;
+  const lat = readCoordNumber(r.latitude ?? r.lat);
+  const lng = readCoordNumber(r.longitude ?? r.lng);
+  if (lat == null || lng == null) return null;
+  return { latitude: lat, longitude: lng };
+}
+
 function parseRouteParam(raw: string | string[] | undefined): SerializedRouteDetail | null {
   if (raw == null) return null;
   const str = Array.isArray(raw) ? raw[0] : raw;
-  if (!str) return null;
+  if (!str || !String(str).trim()) return null;
   try {
-    const decoded = decodeURIComponent(str);
+    const decoded = safeDecodeUriComponent(String(str).trim());
     const parsed = JSON.parse(decoded) as unknown;
     if (!parsed || typeof parsed !== 'object') return null;
     const o = parsed as Record<string, unknown>;
     const stagesRaw = o.stages;
     if (!Array.isArray(stagesRaw)) return null;
-    const originCoord = o.originCoordinate as SerializedRouteDetail['originCoordinate'];
-    const destCoord = o.destinationCoordinate as SerializedRouteDetail['destinationCoordinate'];
-    if (
-      !originCoord ||
-      typeof originCoord.latitude !== 'number' ||
-      typeof originCoord.longitude !== 'number' ||
-      !destCoord ||
-      typeof destCoord.latitude !== 'number' ||
-      typeof destCoord.longitude !== 'number'
-    ) {
+    const originCoord = readOriginDestCoord(o.originCoordinate);
+    const destCoord = readOriginDestCoord(o.destinationCoordinate);
+    if (!originCoord || !destCoord) {
       return null;
     }
     const stages: RouteStage[] = stagesRaw.map((s) => {
@@ -443,11 +463,14 @@ function parseRouteParam(raw: string | string[] | undefined): SerializedRouteDet
             : undefined;
         })(),
         points: Array.isArray(st.points)
-          ? (st.points as { latitude: number; longitude: number }[]).filter(
-              (p) =>
-                typeof p?.latitude === 'number' &&
-                typeof p?.longitude === 'number',
-            )
+          ? (st.points as { latitude?: unknown; longitude?: unknown }[])
+              .map((p) => {
+                const lat = readCoordNumber(p?.latitude);
+                const lng = readCoordNumber(p?.longitude);
+                if (lat == null || lng == null) return null;
+                return { latitude: lat, longitude: lng };
+              })
+              .filter((p): p is { latitude: number; longitude: number } => p != null)
           : undefined,
       };
     });
@@ -523,8 +546,17 @@ export default function RouteDetailScreen() {
     routeListParams.length > 0
       ? Math.max(0, Math.min(activeRouteIndex, routeListParams.length - 1))
       : 0;
-  const currentRouteParam = routeListParams.length > 0 ? routeListParams[clampedRouteIndex] : params.route;
-  const route = useMemo(() => parseRouteParam(currentRouteParam), [currentRouteParam]);
+  const singleRouteParam = useMemo(() => {
+    const r = params.route;
+    return Array.isArray(r) ? r[0] : r;
+  }, [params.route]);
+  const route = useMemo(() => {
+    if (routeListParams.length > 0) {
+      const fromList = parseRouteParam(routeListParams[clampedRouteIndex]);
+      if (fromList) return fromList;
+    }
+    return parseRouteParam(singleRouteParam);
+  }, [routeListParams, clampedRouteIndex, singleRouteParam]);
   const rainHint = useMemo(() => routeRainHint(route), [route]);
 
   const polylineCoords = useMemo(() => (route ? buildPolylineCoords(route) : []), [route]);

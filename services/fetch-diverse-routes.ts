@@ -19,6 +19,14 @@ export class RoutesAllTimedOutError extends Error {
   }
 }
 
+/** Nenhuma busca completou (rede, 5xx, etc.) — diferente de “zero rotas” com HTTP 200. */
+export class RoutesAllRequestsFailedError extends Error {
+  constructor(message = 'Não foi possível obter resposta da API. Verifique rede, URL da API e se o servidor está no ar.') {
+    super(message);
+    this.name = 'RoutesAllRequestsFailedError';
+  }
+}
+
 /** Uma única `searchRoutes` usa 15s; aqui rodamos 4 em paralelo + fallback — precisa de folga. */
 const DIVERSE_ROUTES_TIMEOUT_MS = 55_000;
 
@@ -167,6 +175,11 @@ export async function fetchDiverseRoutes(
       : {}),
   };
 
+  /**
+   * Quando o OTP atende, as quatro chamadas repetem o mesmo plano — o merge deduplica.
+   * No fallback Google, `subway` vs `bus` usam `transit_mode` diferentes e somam alternativas
+   * distintas (ex.: SP trechos longos). `walk` traz rota só a pé (Here).
+   */
   const transportTypes = ['bus', 'subway', 'combined', 'walk'] as const;
   try {
     const allResults = await Promise.allSettled(
@@ -205,6 +218,7 @@ export async function fetchDiverseRoutes(
       const allTimedOut =
         reasons.length > 0 && reasons.every((reason) => reason instanceof SearchRoutesTimeoutError);
       if (allTimedOut) throw new RoutesAllTimedOutError();
+      throw new RoutesAllRequestsFailedError();
     }
 
     let merged = mergeSettled(allResults);
